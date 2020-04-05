@@ -857,7 +857,7 @@ class BinaryField(GaloisField):
 	def __str__(self):
 		val = bin(self.binary_field_value)[2:]
 		lz = '0' * (self.algebra.exponent - len(val))
-		return 'BF{' + lz + val + '}'
+		return '0b' + lz + val
 	
 	def __int__(self):
 		return self.binary_field_value

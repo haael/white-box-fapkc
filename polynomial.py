@@ -38,7 +38,7 @@ class Polynomial(Immutable, AlgebraicStructure):
 				operands = [base_ring(operator)]
 				operator = self.symbol.const
 		
-		if __debug__: len(operands) # cause TypeError if `operands` is not iterable
+		if __debug__: len(operands) # raise TypeError if `operands` is not iterable
 		
 		if operator != self.symbol.var and operator != self.symbol.const:
 			try:
@@ -133,10 +133,11 @@ class Polynomial(Immutable, AlgebraicStructure):
 		
 		ds = []
 		for n in range(order + 1):
-			vs = list(random_sample(variables, len(variables), n))
-			vs.append(algebra.const(base_ring.random()))
-			monomial = algebra(cls.symbol.mul, vs)
-			ds.append(monomial)
+			for m in range(min(n, order - n) + 1): # TODO: factorial
+				vs = list(random_sample(iter(variables), len(variables), n))
+				vs.append(algebra.const(base_ring.random()))
+				monomial = algebra(cls.symbol.mul, vs)
+				ds.append(monomial)
 		
 		return algebra(cls.symbol.add, ds)
 	
@@ -149,10 +150,11 @@ class Polynomial(Immutable, AlgebraicStructure):
 		
 		ds = []
 		for n in range(order + 1):
-			vs = list(random_sample(variables, len(variables), n))
-			vs.append(algebra.const(base_ring.random()))
-			monomial = algebra(cls.symbol.mul, vs)
-			ds.append(monomial)
+			for m in range(min(n, order - n) + 1): # TODO: factorial
+				vs = list(random_sample(iter(variables), len(variables), n))
+				vs.append(algebra.const(base_ring.random()))
+				monomial = algebra(cls.symbol.mul, vs)
+				ds.append(monomial)
 		
 		result = algebra(cls.symbol.add, ds).canonical()
 		if not result: result += base_ring.random_nonzero()
