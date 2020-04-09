@@ -16,13 +16,15 @@ Yes, and that what this project is about.
 
 ## Can any program be secured this way?
 
-Only a program that can be represented as a finite automaton. In short, it is possible to add numbers and multiply by a constant, but multiplication is impossible. However it is possible to perform multiplication in a finite ring (i.e. 64 bits).
+Only a program that can be represented as a finite automaton. In short, it is possible to add numbers and multiply by a constant, but multiplication of two variables is impossible. However it is possible to perform multiplication in a finite ring (i.e. 64 bits).
+
+White-Box-FAPKC works best on programs that have iterative structure, for instance encryption algorithm that consist of many identical "rounds". While non-iterative programs may be obfuscated too, their representation will be much larger.
 
 ## What are the security guarantees of FAPKC?
 
 Security of FAPKC is based on a hardness of factorizing compound finite automata, and the related problem of finding the automaton inverse.
-If you have two automata F(x) and G(x), it is possible to create a composition of the automata: (F * G)(x) = F(G(x)). Now, given the composition F * G and one of the automata (for instance F) it is computationally hard to find the other automaton (in this case, G).
-The related problem is finding the inverse automaton. Given the automaton performing function y = F(x) it is hard to find the automaton performing the inverse function x = F_inv(y).
+If you have two automata `F(x)` and `G(x)`, it is possible to create a composition of the automata: `(F * G)(x) = F(G(x))`. Now, given the composition `F * G` and one of the automata (for instance `F`) it is computationally hard to find the other automaton (in this case, `G`).
+The related problem is finding the inverse automaton. Given the automaton performing function `y = F(x)` it is hard to find the automaton performing the inverse function `x = F_inv(y)`.
 
 ## What are practical applications of White-Box Cryptography?
 
@@ -36,6 +38,7 @@ Limitless. For instance:
 ## What are the uses of White-Box Cryptography in blockchains?
 
 You can use it as an alternative to Ethereum-style contract evaluation. In Ethereum, thousands of nodes execute the same code and then vote on the right result. With white-box cryptography only one node is neccessary to do the computations.
+
 You can also use it to implement a "private virtual machine", where rules are enforced by the network, but the state of the contract is secret.
 
 One exciting possibility is management of an external resource (like a bank account) by a trustless network.

@@ -50,6 +50,8 @@ class Polynomial(Immutable, AlgebraicStructure):
 				if algebra.algebra_name != 'Polynomial':
 					raise ValueError("Constants not allowed outside of the `const` container.")
 				
+				#print("operator", operator, "operands", operands)
+				
 				if any(_op.algebra != algebra for _op in operands[1:]):
 					raise ValueError("All operands must be from the same ring: {}.".format(operands))
 			except IndexError:
@@ -161,9 +163,6 @@ class Polynomial(Immutable, AlgebraicStructure):
 		
 		return result
 	
-	#def minimal(self):
-	#	(a + b) * (c + d) = a * c + a * d + b * c + b * d
-	
 	def canonical(self):
 		"Return algebraic normal form of this polynomial. Two polynomials are equal everywhere if their algebraic normal forms are identical."
 		
@@ -261,17 +260,26 @@ class Polynomial(Immutable, AlgebraicStructure):
 			addends_sorted = []
 			for monomial, factor in addends_grouped.items():
 				assert isinstance(monomial, tuple)
-				if not factor.is_zero() and ((not factor.is_one()) or (not monomial)):
-					addends_sorted.append(self.__class__(self.symbol.mul, [self.const(factor)] + list(monomial), base_ring))
-				elif factor.is_one():
+				assert all(_factor.operator in (self.symbol.const, self.symbol.var) for _factor in monomial)
+				if factor.is_zero():
+					pass
+				elif len(monomial) == 0:
+					addends_sorted.append(self.const(factor))
+				elif factor.is_one() and len(monomial) > 1:
 					addends_sorted.append(self.__class__(self.symbol.mul, list(monomial), base_ring))
+				elif factor.is_one() and len(monomial) == 1:
+					addends_sorted.append(monomial[0])
+				else:
+					addends_sorted.append(self.__class__(self.symbol.mul, [self.const(factor)] + list(monomial), base_ring))
 			addends_sorted.sort(key=self.__class__.sort_ordering)
 			
 			if len(addends_sorted) == 0:
 				result = self.algebra.zero()
 			elif len(addends_sorted) == 1:
 				monomial = addends_sorted[0]
-				if len(monomial.operands) == 1:
+				if monomial.operator in (self.symbol.const, self.symbol.var):
+					result = monomial
+				elif len(monomial.operands) == 1:
 					result = monomial.operands[0]
 					if result.operator == self.symbol.const and result.is_zero():
 						result = self.algebra.zero()
@@ -281,6 +289,14 @@ class Polynomial(Immutable, AlgebraicStructure):
 				for addend in addends_sorted:
 					addend.is_canonical = True
 				result = self.__class__(self.symbol.add, addends_sorted, base_ring)
+			
+			assert result.operator in (self.symbol.mul, self.symbol.add, self.symbol.const, self.symbol.var), repr(result)
+			assert len(result.operands) > 1 if result.operator in (self.symbol.add, self.symbol.mul) else True, repr(result)
+			assert all(_addend.operator in (self.symbol.mul, self.symbol.const, self.symbol.var) for _addend in result.operands) if result.operator == self.symbol.add else True, repr(result)
+			assert all(len(_addend.operands) > 1 for _addend in result.operands if _addend.operator == self.symbol.mul) if result.operator == self.symbol.add else True, repr(result)
+			assert all(all(_factor.operator in (self.symbol.const, self.symbol.var) for _factor in _addend.operands) for _addend in result.operands if _addend.operator == self.symbol.mul) if result.operator == self.symbol.add else True, repr(result)
+			assert all(all(_factor.operator == self.symbol.var for _factor in _addend.operands[1:]) for _addend in result.operands if _addend.operator == self.symbol.mul) if result.operator == self.symbol.add else True, repr(result)
+			assert all(_factor.operator in (self.symbol.const, self.symbol.var) for _factor in result.operands) if result.operator == self.symbol.mul else True, repr(result)
 			
 			#print("canonical:", str(result))
 			result.is_canonical = True
@@ -398,7 +414,7 @@ class Polynomial(Immutable, AlgebraicStructure):
 			return str(term)
 	
 	def __repr__(self):
-		return ''.join(['<', self.__class__.__qualname__, ': ', str(self.operator), ', ', repr(self.operands), '>'])
+		return self.__class__.__qualname__ + '(' + str(self.operator) + ', ' + repr(self.operands) + ')'
 	
 	def __str__(self):
 		if self.operator == self.symbol.var:
@@ -928,6 +944,7 @@ if __debug__:
 		assert (x * y + x)(x=y) == no if x**2 + x == no else True
 		assert (x * y)(x=z, y=z) == z if x**2 == x else True
 		
+		'''
 		def r():
 			return Ring.random()
 		
@@ -960,6 +977,23 @@ if __debug__:
 		test_size = min(len(field_samples), 4)
 		
 		for n, a in enumerate(random_sample(iter(field_samples), len(field_samples), test_size)):
+			pass
+		
+		'''
+		
+		def random_polynomials(n):
+			for i in range(n):
+				yield Polynomial.random(variables=[x, y, z], order=3)
+		
+		for a in random_polynomials(32):
+			
+			a_canonical = a.canonical()
+			for n in range(64):
+				rx = Ring.random()
+				ry = Ring.random()
+				rz = Ring.random()
+				assert a_canonical(x=rx, y=ry, z=rz) == a(x=rx, y=ry, z=rz)
+			
 			assert a - a == no
 			assert -a == (-yes) * a
 			assert yes * a == a * yes == a
@@ -998,11 +1032,8 @@ if __debug__:
 				assert a * a + a == no
 				assert a | a == a
 				assert a**2 == a
-			
 		
-		sample1 = random_sample(iter(field_samples), len(field_samples), test_size)
-		sample2 = random_sample(iter(field_samples), len(field_samples), test_size)
-		for n, (a, b) in enumerate(random_sample(product(sample1, sample2), test_size**2, test_size)):
+		for a, b in product(random_polynomials(8), random_polynomials(8)):
 			assert a + b == b + a
 			assert a * b == b * a
 			assert a - b == a + (-b) == -b + a
@@ -1018,10 +1049,7 @@ if __debug__:
 			except ZeroDivisionError:
 				assert not b
 		
-		sample1 = random_sample(iter(field_samples), len(field_samples), test_size)
-		sample2 = random_sample(iter(field_samples), len(field_samples), test_size)
-		sample3 = random_sample(iter(field_samples), len(field_samples), test_size)
-		for n, (a, b, c) in enumerate(random_sample(product(sample1, sample2, sample3), test_size**3, test_size)):
+		for a, b, c in product(random_polynomials(4), random_polynomials(4), random_polynomials(4)):
 			assert (a + b) + c == a + (b + c)
 			assert (a + b) * c == a * c + b * c
 			assert (a - b) * c == a * c - b * c

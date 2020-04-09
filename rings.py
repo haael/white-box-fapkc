@@ -49,7 +49,7 @@ class AbstractRing(Immutable, AlgebraicStructure):
 			yield cls(i, *args, **kwargs)
 	
 	def __hash__(self):
-		super().__hash__() # call superclass to ensure the object has been initialized properly, especially when unpickling
+		if __debug__: super().__hash__() # call superclass to ensure the object has been initialized properly, especially when unpickling
 		return hash(int(self))
 	
 	def __bool__(self):
@@ -153,7 +153,7 @@ class AbstractRing(Immutable, AlgebraicStructure):
 		if modulus != None:
 			if modulus > self.algebra.size:
 				raise ArithmeticError("Modulus ({}) greater than the field size ({}) in pow() operator.".format(modulus, self.size))
-
+			
 			if not modulus:
 				raise ZeroDivisionError("Zero modulus in pow() operator.")
 			
@@ -539,7 +539,7 @@ class GaloisField(AbstractRing):
 				return NotImplemented
 		except AttributeError:
 			return NotImplemented
-			
+		
 		components_a = self.field_value
 		components_b = other.field_value
 		l = max(len(components_a), len(components_b))

@@ -17,7 +17,9 @@ __all__ = 'automaton_factory',
 def automaton_factory(base_ring):
 	base_polynomial = Polynomial.get_algebra(base_ring=base_ring)
 	base_vector = Vector.get_algebra(base_ring=base_polynomial)
+	base_const_vector = Vector.get_algebra(base_ring=base_ring)
 	base_matrix = Matrix.get_algebra(base_ring=base_polynomial)
+	base_const_matrix = Matrix.get_algebra(base_ring=base_ring)
 	
 	class Automaton:
 		"Finite automaton."
@@ -81,13 +83,13 @@ def automaton_factory(base_ring):
 				in_switch |= (s[i] - set_point[i])
 				in_switch = in_switch.canonical()
 			
-			def add(a, b, c):
+			def full_adder(a, b, c):
 				return a + b + c, a * b | b * c | c * a
 			
 			bsum = []
 			c = base_ring.zero()
 			for i in range(block_size):
-				r, c = add(s[i], (in_switch if i == 0 else base_ring.zero()), c.canonical())
+				r, c = full_adder(s[i], (in_switch if i == 0 else base_ring.zero()), c.canonical())
 				bsum.append(r)
 			state_transition = base_vector(bsum)
 			
@@ -115,17 +117,19 @@ def automaton_factory(base_ring):
 			for n in range(1, memory_size + 1):
 				s.append(base_vector(cls.s[n, _i] for _i in range(block_size)))
 			
-			ms, mi = base_matrix.random_inverse_pair(block_size)
+			ms, mi = base_const_matrix.random_inverse_pair(block_size)
+			ms = base_matrix(ms)
+			mi = base_matrix(mi)
 			
 			ya = ms @ x
 			yb = mi @ x
 			for n in range(1, memory_size + 1):
-				m = base_matrix.random(block_size, block_size)
+				m = base_matrix(base_const_matrix.random(block_size, block_size))
 				ya += m @ s[n]
-				yb -= m @ mi @ s[n]
+				yb -= mi @ m @ s[n]
 			
-			ya = ya.canonical()
-			yb = yb.canonical()
+			#ya = ya.canonical()
+			#yb = yb.canonical()
 			
 			automaton_A = cls(output_transition=ya, state_transition=x)
 			automaton_B = cls(output_transition=yb, state_transition=yb)
@@ -133,10 +137,13 @@ def automaton_factory(base_ring):
 		
 		@classmethod
 		def linear_delay_wifa_pair(cls, block_size=8, memory_size=32):
+			"Generate a linear FA with the delay specified by `memory_size`."
+			
 			class BadLuck(BaseException):
+				"Exception that is thrown when the random objects do not have desired properties and need to be generated again."
 				pass
 			
-			while True:
+			while True: # repeat until successful
 				try:
 					coefficients_A = []
 					for n in range(memory_size + 1):
@@ -347,12 +354,18 @@ def automaton_factory(base_ring):
 				for i in range(len(self.state_transition)):
 					substitution[str(self.s[t + 1, i])] = self.s[t + 1, i + shift]
 			
-			output_transition = base_vector(_trans(**substitution) for _trans in self.output_transition).canonical()
-			state_transition = base_vector(chain(other.state_transition, (_trans(**substitution) for _trans in self.state_transition))).canonical()
+			output_transition = base_vector(_trans(**substitution) for _trans in self.output_transition)
+			state_transition = base_vector(chain(other.state_transition, (_trans(**substitution) for _trans in self.state_transition)))
 			
 			return self.__class__(output_transition, state_transition)
+		
+		def optimize(self):
+			self.output_transition = self.output_transition.canonical()
+			self.state_transition = self.state_transition.canonical()
 	
 	Automaton.base_ring = base_ring
+	Automaton.base_const_vector = base_const_vector
+	Automaton.base_const_matrix = base_const_matrix
 	Automaton.base_polynomial = base_polynomial
 	Automaton.base_vector = base_vector
 	Automaton.base_matrix = base_matrix
@@ -362,50 +375,84 @@ def automaton_factory(base_ring):
 
 if __debug__:
 	import pickle
-	from itertools import chain
+	from itertools import chain, tee
 	
-	def test_automaton(Ring):
-		zero = Ring.zero()
-		one = Ring.one()
-		
+	def test_automaton(Ring, block_size, memblock_size, length):
 		Automaton = automaton_factory(Ring)
 		Vector = Automaton.base_vector
+		ConstVector = Automaton.base_const_vector
 		
-		x = Vector([Automaton.x[_i] for _i in range(8)])
-		s_1_0 = Automaton.s[1, 0]
+		x = Vector([Automaton.x[_i] for _i in range(block_size)])
+		s_1 = Vector([Automaton.s[1, _i] for _i in range(memblock_size)])
+		s_2 = Vector([Automaton.s[2, _i] for _i in range(memblock_size)])
+		s_3 = Vector([Automaton.s[3, _i] for _i in range(memblock_size)])
 		
-		automaton_input = [Vector([one, zero]), Vector([zero, zero]), Vector([one, zero]), Vector([zero, one]), Vector([zero, zero]), Vector([zero, zero]), Vector([zero, one]), Vector([one, one])]
+		variables = list(x) + list(s_1) + list(s_2) + list(s_3)
 		
-		automaton1 = Automaton(Vector([x[1], x[0]]), Vector([], base_ring=Ring))
-		automaton2 = automaton1 @ automaton1
-		assert list(automaton2(automaton_input)) == list(automaton1(automaton1(automaton_input)))
+		def automaton_input():
+			for i in range(length):
+				yield ConstVector.random(block_size)
 		
-		automaton3 = Automaton(Vector([x[1], s_1_0]), Vector([x[0]]))
-		automaton4 = automaton1 @ automaton3
-		assert list(automaton4(automaton_input)) == list(automaton1(automaton3(automaton_input)))
-		
-		adder = Automaton(Vector([x[0] + x[1] + s_1_0, x[1], x[2], x[3], x[4], x[5], x[6], x[7]]), Vector([x[0] * x[1] | x[0] * s_1_0 | x[1] * s_1_0]))
-		
-		mixer_input = [Vector.random(8) for _i in range(256)]
-		
-		for mo in (0, 7):
-			print("testing automaton of memory order", mo)
-			mixer, unmixer = Automaton.linear_nodelay_wifa_pair(block_size=8, memory_size=mo)
+		for i in range(5):
+			print("tick", i)
+			automaton1 = Automaton(Vector.random(dimension=block_size, variables=variables, order=i), Vector.random(dimension=memblock_size, variables=variables, order=i))
+			automaton2 = Automaton(Vector.random(dimension=block_size, variables=variables, order=i), Vector.random(dimension=memblock_size, variables=variables, order=i))
+			automaton3 = automaton1 @ automaton2
 			
-			mixer_output = list(mixer(mixer_input))
-			mixer_recode = list(unmixer(mixer_output))
+			automaton1.optimize()
+			automaton2.optimize()
+			automaton3.optimize()
 			
-			assert mixer_input == mixer_recode, "memory_size = {}".format(mo)
+			input1, input2 = tee(automaton_input())
+			for a, b in zip(automaton3(input1), automaton1(automaton2(input2))):
+				assert a == b
+	
+	def test_mixer(Ring, block_size, memblock_size, length):
+		Automaton = automaton_factory(Ring)
+		ConstVector = Automaton.base_const_vector
+				
+		def automaton_input():
+			for i in range(length):
+				yield ConstVector.random(block_size)
+		
+		for i in range(5):
+			print("tick", i)
+			mixer, unmixer = Automaton.linear_nodelay_wifa_pair(block_size=block_size, memory_size=i)
 			
-			encoded_input1 = list((mixer @ adder)(mixer_input))
-			encoded_input2 = list(mixer(adder(mixer_input)))
+			input1, input2 = tee(automaton_input())
+			for a, b in zip(input1, unmixer(mixer(input2))):
+				assert a == b
+		
+	def test_homomorphism(Ring, block_size, memblock_size, length):
+		Automaton = automaton_factory(Ring)
+		Vector = Automaton.base_vector
+		ConstVector = Automaton.base_const_vector
+		
+		x = Vector([Automaton.x[_i] for _i in range(block_size)])
+		s_1 = Vector([Automaton.s[1, _i] for _i in range(memblock_size)])
+		s_2 = Vector([Automaton.s[2, _i] for _i in range(memblock_size)])
+		s_3 = Vector([Automaton.s[3, _i] for _i in range(memblock_size)])
+		
+		variables = list(x) + list(s_1) + list(s_2) + list(s_3)
+		
+		def automaton_input():
+			for i in range(length):
+				yield ConstVector.random(block_size)
+		
+		for i in range(5):
+			print("tick", i)
+			mixer, unmixer = Automaton.linear_nodelay_wifa_pair(block_size=block_size, memory_size=4)
+			plain_automaton = Automaton(Vector.random(dimension=block_size, variables=variables, order=3), Vector.random(dimension=memblock_size, variables=variables, order=3))
+			homo_automaton = mixer @ plain_automaton @ unmixer
 			
-			assert encoded_input1 == encoded_input2, "memory_size = {}".format(mo)
+			mixer.optimize()
+			unmixer.optimize()
+			plain_automaton.optimize()
+			homo_automaton.optimize()
 			
-			plain_output = list(adder(mixer_input))
-			homo_output = list(unmixer(encoded_input1))
-			
-			assert plain_output == homo_output
+			input1, input2 = tee(automaton_input())
+			for a, b in zip(plain_automaton(input1), unmixer(homo_automaton(mixer(input2)))):
+				assert a == b
 	
 	def automaton_test_suite(verbose=False):
 		if verbose: print("running test suite")
@@ -490,18 +537,24 @@ if __debug__:
 
 
 if __debug__ and __name__ == '__main__':
-	#automaton_test_suite(verbose=True)
-
-
-	Automaton = automaton_factory(BooleanRing.get_algebra())
-	Vector = Automaton.base_vector
+	test_automaton(BooleanRing.get_algebra(), 8, 4, 256)
+	test_automaton(RijndaelField.get_algebra(), 4, 2, 64)
 	
-	cd10a = Automaton.countdown_gadget(ticks=10, prefix=True)
-	cd10b = Automaton.countdown_gadget(ticks=10, prefix=False)
+	test_mixer(BooleanRing.get_algebra(), 8, 4, 16)
+	test_mixer(RijndaelField.get_algebra(), 4, 2, 16)
 	
-	input_stream = [Vector(_n, dimension=8) for _n in range(20)]
-	print(list(int(_x) for _x in cd10a(input_stream)))
-	print(list(int(_x) for _x in cd10b(input_stream)))
+	test_homomorphism(BooleanRing.get_algebra(), 8, 4, 16)
+	test_homomorphism(RijndaelField.get_algebra(), 4, 2, 16)
+	
+	#Automaton = automaton_factory(BooleanRing.get_algebra())
+	#Vector = Automaton.base_vector
+	
+	#cd10a = Automaton.countdown_gadget(ticks=10, prefix=True)
+	#cd10b = Automaton.countdown_gadget(ticks=10, prefix=False)
+	
+	#input_stream = [Vector(_n, dimension=8) for _n in range(20)]
+	#print(list(int(_x) for _x in cd10a(input_stream)))
+	#print(list(int(_x) for _x in cd10b(input_stream)))
 
 
 

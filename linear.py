@@ -66,13 +66,24 @@ class Vector(AlgebraicStructure):
 		return cls(((base_ring.one() if (_i == index) else base_ring.zero()) for _i in range(dimension)), base_ring=base_ring)
 	
 	@classmethod
-	def random(cls, dimension, base_ring=default_ring):
-		"Return random vector of the specified length."
-		return cls((base_ring.random() for _i in range(dimension)), base_ring=base_ring)
+	def random(cls, dimension, variables=None, order=0, base_ring=default_ring):
+		"Return random vector of the specified length. If `variables` are specified, generates random polynomial vector."
+		if variables:
+			return cls((base_ring.random(variables=variables, order=order) for _i in range(dimension)), base_ring=base_ring)
+		else:
+			return cls((base_ring.random() for _i in range(dimension)), base_ring=base_ring)
+	
+	@classmethod
+	def random_nonzero(cls, dimension, base_ring=default_ring): # FIXME: at least one component should be nonzero
+		"Return random vector of the specified length. If `variables` are specified, generates random polynomial vector."
+		if variables:
+			return cls((base_ring.random_nonzero(variables=variables, order=order) for _i in range(dimension)), base_ring=base_ring)
+		else:
+			return cls((base_ring.random_nonzero() for _i in range(dimension)), base_ring=base_ring)
 	
 	@classmethod
 	def domain(cls, dimension, base_ring=default_ring):
-		"Yield all possible vectors of the specified length, filled with all possible values of the Galois field of the specified size. The stream has `2**(length * field_size)` elements, so it may take very long to finish."
+		"Yield all possible vectors of the specified length, filled with all possible values of the specified ring. The stream has `2**(length * field_size)` elements, so it may take very long to finish."
 		if dimension == 0:
 			yield cls([], base_ring=base_ring)
 		elif dimension < 0:
@@ -89,7 +100,10 @@ class Vector(AlgebraicStructure):
 	__hash__ = None
 	
 	def __str__(self):
-		return "Vector[" + ", ".join([str(_x) for _x in self]) + "]"
+		return "Vector([" + ", ".join([str(_x) for _x in self]) + "])"
+	
+	def __repr__(self):
+		return "Vector([" + ", ".join([repr(_x) for _x in self]) + "])"
 	
 	def __len__(self):
 		return len(self.value)
