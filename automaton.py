@@ -80,8 +80,7 @@ def automaton_factory(base_ring):
 			
 			in_switch = base_ring.zero()
 			for i in range(block_size):
-				in_switch |= (s[i] - set_point[i])
-				in_switch = in_switch.canonical()
+				in_switch |= s[i] - set_point[i]
 			
 			def full_adder(a, b, c):
 				return a + b + c, a * b | b * c | c * a
@@ -89,24 +88,24 @@ def automaton_factory(base_ring):
 			bsum = []
 			c = base_ring.zero()
 			for i in range(block_size):
-				r, c = full_adder(s[i], (in_switch if i == 0 else base_ring.zero()), c.canonical())
+				r, c = full_adder(s[i], (in_switch if i == 0 else base_ring.zero()), c)
 				bsum.append(r)
 			state_transition = base_vector(bsum)
 			
 			out_switch = base_ring.zero()
 			for i in range(block_size):
-				out_switch |= (s[i] - set_point[i])
-				out_switch = out_switch.canonical()
+				out_switch |= s[i] - set_point[i]
 			out_switch = (base_ring.zero() if prefix else base_ring.one()) - out_switch
 			output_transition = x * out_switch
 			
-			return cls(output_transition=output_transition.canonical(), state_transition=state_transition.canonical())
+			return cls(output_transition=output_transition, state_transition=state_transition)
 		
 		@classmethod
 		def state_initialization_gadget(cls, block_size=8, memory_size=32):
+			raise NotImplementedError
 			state_transition = base_vector(cls.x[_i] for _i in range(block_size))
 			output_transition = base_vector.zero(block_size)
-			return cls(output_transition=output_transition.canonical(), state_transition=state_transition.canonical())
+			return cls(output_transition=output_transition, state_transition=state_transition)
 		
 		@classmethod
 		def linear_nodelay_wifa_pair(cls, block_size=8, memory_size=32):
@@ -127,9 +126,6 @@ def automaton_factory(base_ring):
 				m = base_matrix(base_const_matrix.random(block_size, block_size))
 				ya += m @ s[n]
 				yb -= mi @ m @ s[n]
-			
-			#ya = ya.canonical()
-			#yb = yb.canonical()
 			
 			automaton_A = cls(output_transition=ya, state_transition=x)
 			automaton_B = cls(output_transition=yb, state_transition=yb)
@@ -359,6 +355,24 @@ def automaton_factory(base_ring):
 			
 			return self.__class__(output_transition, state_transition)
 		
+		def __and__(self, other):
+			"2 automata running in parallel."
+			raise NotImplementedError
+		
+		def __or__(self, other):
+			"Choice of 1 automaton from 2 running in parallel."
+			raise NotImplementedError
+		
+		@classmethod
+		def cast(cls, begin, end):
+			"Narrow the output to the range given."
+			raise NotImplementedError
+		
+		@classmethod
+		def delay(cls, steps):
+			"Delayed sequence."
+			raise NotImplementedError
+		
 		def optimize(self):
 			self.output_transition = self.output_transition.canonical()
 			self.state_transition = self.state_transition.canonical()
@@ -410,7 +424,7 @@ if __debug__:
 	def test_mixer(Ring, block_size, memblock_size, length):
 		Automaton = automaton_factory(Ring)
 		ConstVector = Automaton.base_const_vector
-				
+		
 		def automaton_input():
 			for i in range(length):
 				yield ConstVector.random(block_size)
@@ -422,7 +436,7 @@ if __debug__:
 			input1, input2 = tee(automaton_input())
 			for a, b in zip(input1, unmixer(mixer(input2))):
 				assert a == b
-		
+	
 	def test_homomorphism(Ring, block_size, memblock_size, length):
 		Automaton = automaton_factory(Ring)
 		Vector = Automaton.base_vector
