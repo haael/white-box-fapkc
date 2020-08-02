@@ -103,6 +103,10 @@ def automaton_factory(base_ring):
 		@classmethod
 		def state_initialization_gadget(cls, block_size=8, memory_size=32):
 			raise NotImplementedError
+			
+			(repeater | worker) @ (counter(t) & cast())
+			
+			
 			state_transition = base_vector(cls.x[_i] for _i in range(block_size))
 			output_transition = base_vector.zero(block_size)
 			return cls(output_transition=output_transition, state_transition=state_transition)
@@ -310,7 +314,7 @@ def automaton_factory(base_ring):
 		
 		def transition(self, x, history):
 			"""
-			Takes the input symbol `x` (vector of Galois fields)
+			Takes the input symbol `x` (vector over a ring)
 			and the automaton state (`history`) collection (preferably queue) of vectors.
 			Inserts the new state vector at position 0 in `history` and deletes the tail
 			if `history` is longer than memory order.
@@ -356,11 +360,11 @@ def automaton_factory(base_ring):
 			return self.__class__(output_transition, state_transition)
 		
 		def __and__(self, other):
-			"2 automata running in parallel."
+			"2 automata running in parallel (aka tuple)."
 			raise NotImplementedError
 		
 		def __or__(self, other):
-			"Choice of 1 automaton from 2 running in parallel."
+			"Choice of 1 automaton from 2 running in parallel (aka tagged union)."
 			raise NotImplementedError
 		
 		@classmethod
