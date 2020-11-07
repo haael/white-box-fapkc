@@ -15,6 +15,8 @@ __all__ = 'automaton_factory',
 
 
 def automaton_factory(base_ring):
+	"Returns an `Automaton` class using the specified `base_ring` for calculations."
+	
 	base_polynomial = Polynomial.get_algebra(base_ring=base_ring)
 	base_vector = Vector.get_algebra(base_ring=base_polynomial)
 	base_const_vector = Vector.get_algebra(base_ring=base_ring)
@@ -157,7 +159,7 @@ def automaton_factory(base_ring):
 					for n in range(memory_size + 1):
 						y += coefficients_A[n] @ x[n]
 					
-					automaton_A = cls(output_transition=y.canonical(), state_transition=x[0])
+					automaton_A = cls(output_transition=y.optimized(), state_transition=x[0])
 					
 					del x, y
 					
@@ -269,14 +271,14 @@ def automaton_factory(base_ring):
 					
 					del A00, matrix_A
 					
-					coefficients_P = [(A00_inv @ matrix_P[0, _j]).canonical() for _j in range(memory_size + 1)]
+					coefficients_P = [(A00_inv @ matrix_P[0, _j]).optimized() for _j in range(memory_size + 1)]
 					
 					coefficients_Q = [zero_m]
 					for q in range(1, memory_size + 1):
 						r = zero_m[...]
 						for k in range(memory_size + 1):
 							r += matrix_P[0, k] @ (coefficients_A[k + q][...] if (k + q < memory_size) else zero_m[...]) # FIXME: correct?
-						coefficients_Q.append((A00_inv @ r).canonical())
+						coefficients_Q.append((A00_inv @ r).optimized())
 					
 					x = [base_vector.zero(block_size)]
 					y = [base_vector(cls.x[_i] for _i in range(block_size))]
@@ -289,7 +291,7 @@ def automaton_factory(base_ring):
 					for n in range(memory_size + 1):
 						x0 += coefficients_Q[n] @ x[n]
 						x0 += coefficients_P[n] @ y[-n]
-					x[0] = x0.canonical()
+					x[0] = x0.optimized()
 					
 					automaton_B = cls(output_transition=x[0], state_transition=base_vector(list(x[0]) + list(y[0])))
 					
@@ -378,8 +380,8 @@ def automaton_factory(base_ring):
 			raise NotImplementedError
 		
 		def optimize(self):
-			self.output_transition = self.output_transition.canonical()
-			self.state_transition = self.state_transition.canonical()
+			self.output_transition = self.output_transition.optimized()
+			self.state_transition = self.state_transition.optimized()
 	
 	Automaton.base_ring = base_ring
 	Automaton.base_const_vector = base_const_vector

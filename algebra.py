@@ -32,8 +32,8 @@ class Algebra(Immutable):
 		self.immutable = True
 	
 	def __getattr__(self, key):
-		if key.find('algebra_') == 0:
-			return object.__getattr__(self, key)
+		if key.startswith('algebra_'):
+			return super().__getattribute__(key)
 		
 		try:
 			return self.algebra_kwparams[key]

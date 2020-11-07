@@ -8,7 +8,7 @@ from collections import Counter
 from itertools import chain, product
 import operator
 
-from utils import randbelow, random_permutation, random_sample, parallel_map, parallel_starmap, canonical, evaluate
+from utils import randbelow, random_permutation, random_sample, parallel_map, parallel_starmap, canonical, optimized, evaluate
 from algebra import AlgebraicStructure
 from rings import BooleanRing
 
@@ -273,6 +273,9 @@ class Vector(AlgebraicStructure):
 	
 	def canonical(self):
 		return self.algebra(list(parallel_map(canonical, self)))
+	
+	def optimized(self):
+		return self.algebra(list(parallel_map(optimized, self)))
 	
 	def evaluate(self):
 		return self.algebra(list(parallel_map(evaluate, self)))
@@ -683,7 +686,7 @@ class Matrix(AlgebraicStructure):
 		sign = base_ring.one()
 		while power:
 			inverse += sign * power
-			power @= strict # This sequence will converge to zero after few steps.
+			power @= strict # This sequence will converge to zero after few steps. Better algorithm needed for fields of size > 2.
 			sign = -sign
 		
 		del power, strict
@@ -707,7 +710,7 @@ class Matrix(AlgebraicStructure):
 		sign = base_ring.one()
 		while power:
 			inverse += sign * power
-			power @= strict # This sequence will converge to zero after few steps.
+			power @= strict # This sequence will converge to zero after few steps. Better algorithm needed for fields of size > 2.
 			sign = -sign
 		
 		del power, strict
@@ -927,7 +930,7 @@ class Matrix(AlgebraicStructure):
 			#print(v.dimension, m.column_dimension, m.row_dimension)
 			assert v.dimension == m.row_dimension
 		
-		results = [self.algebra((lambda _i, _j: _row[_i][_j].canonical()), column_dimension=self.column_dimension, row_dimension=_m.row_dimension) for (_row, _m) in zip(rows, (self,) + matrices)]
+		results = [self.algebra((lambda _i, _j: _row[_i][_j]), column_dimension=self.column_dimension, row_dimension=_m.row_dimension) for (_row, _m) in zip(rows, (self,) + matrices)]
 		for n, m in enumerate(matrices):
 			m[...] = results[n + 1]
 		
@@ -1008,6 +1011,9 @@ class Matrix(AlgebraicStructure):
 	def canonical(self):
 		return self.algebra(dict(zip(self.keys(), parallel_map(canonical, self.values()))), column_dimension=self.column_dimension, row_dimension=self.row_dimension)
 	
+	def optimized(self):
+		return self.algebra(dict(zip(self.keys(), parallel_map(optimized, self.values()))), column_dimension=self.column_dimension, row_dimension=self.row_dimension)
+	
 	def evaluate(self):
 		return self.algebra(dict(zip(self.keys(), parallel_map(evaluate, self.values()))), column_dimension=self.column_dimension, row_dimension=self.row_dimension)
 	
@@ -1038,7 +1044,7 @@ class Matrix(AlgebraicStructure):
 		sign = self.algebra.base_ring.one()
 		while power:
 			inverse += sign * power
-			power @= strict # This sequence will converge to zero after few steps.
+			power @= strict # This sequence will converge to zero after few steps. Better algorithm needed for fields of size > 2.
 			sign = -sign
 		
 		assert inverse @ triangular == self.algebra.unit(dimension)
@@ -1047,7 +1053,10 @@ class Matrix(AlgebraicStructure):
 		del power, strict, triangular
 		
 		return inverse @ rowop
-		
+	
+	def circuit_size(self):
+		return sum(_value.circuit_size() for _value in self.values())
+
 
 
 if __debug__:
@@ -1257,12 +1266,20 @@ if __debug__:
 		assert match == redc
 	
 	def test_matrix_random_operations(Matrix):
-		print("  1")
+		import time
+		
+		start = time.process_time()
+		current = start
+		prev = current
+		print("  1 ", end="")
 		Vector = Matrix.vector_algebra
 		Ring = Matrix.base_ring
 		Polynomial = globals()['Polynomial'].get_algebra(base_ring=Matrix.base_ring)
+		current = time.process_time()
+		print(current - start, current - prev)
+		prev = current
 		
-		print("  2")
+		print("  2 ", end="")
 		ks, ki = Matrix.random_inverse_pair(8)
 		kse = ks.echelon()
 		ks.echelon(ks, ki)
@@ -1270,12 +1287,18 @@ if __debug__:
 		ki1 = Matrix.unit(8)
 		ki2 = ki.echelon(ki1)
 		assert ki1 @ ki == ki2
+		current = time.process_time()
+		print(current - start, current - prev)
+		prev = current
 		
-		print("  3")
+		print("  3 ", end="")
 		yes = Ring.one()
 		no = Ring.zero()
+		current = time.process_time()
+		print(current - start, current - prev)
+		prev = current
 		
-		print("  4")
+		print("  4 ", end="")
 		x0 = Polynomial.var('x0')
 		x1 = Polynomial.var('x1')
 		x2 = Polynomial.var('x2')
@@ -1284,61 +1307,114 @@ if __debug__:
 		x5 = Polynomial.var('x5')
 		x6 = Polynomial.var('x6')
 		x7 = Polynomial.var('x7')
+		current = time.process_time()
+		print(current - start, current - prev)
+		prev = current
 		
-		print("  5")
+		print("  5 ", end="")
 		cs0, ci0 = Matrix.random_variable_cycle_pair(8, x0 + x4, cycle_length=5)
 		cs1, ci1 = Matrix.random_variable_cycle_pair(8, x1 + x5, cycle_length=5)
 		cs2, ci2 = Matrix.random_variable_cycle_pair(8, x2 + x6, cycle_length=5)
 		cs3, ci3 = Matrix.random_variable_cycle_pair(8, x3 + x7, cycle_length=5)
+		current = time.process_time()
+		print(current - start, current - prev)
+		prev = current
 		
-		print("  6")
+		print("  6 ", end="")
 		cs = cs0 @ cs1 @ cs2 @ cs3
 		ci = ci3 @ ci2 @ ci1 @ ci0
+		current = time.process_time()
+		print(current - start, current - prev)
+		prev = current
 		
-		print("  7")
+		print("  7 ", end="")
 		es, ei = Matrix.random_inverse_pair(8)
 		fs, fi = Matrix.random_inverse_pair(8)
+		current = time.process_time()
+		print(current - start, current - prev)
+		prev = current
 		
-		print("  8")
+		print("  8 ", end="")
 		cs = es @ cs @ fi
 		ci = fs @ ci @ ei
+		current = time.process_time()
+		print(current - start, current - prev)
+		prev = current
+
+		print("  9.0 ", end="")
+		current = time.process_time()
+		print(current - start, current - prev)
+		prev = current
+		print(cs.circuit_size(), ci.circuit_size())
 		
-		print("  9")
+		#print("  9.1 ", end="")
+		#with parallel():
+		#	cs = cs.canonical()
+		#	ci = ci.canonical()
+		#current = time.process_time()
+		#print(current - start, current - prev)
+		#prev = current
+		#print(cs.circuit_size(), ci.circuit_size())
+		
+		print("  9.5 ", end="")
 		with parallel():
-			cs = cs.canonical()
-			ci = ci.canonical()
+			cs = cs.optimized()
+			ci = ci.optimized()
+		current = time.process_time()
+		print(current - start, current - prev)
+		prev = current
+		print(cs.circuit_size(), ci.circuit_size())
 		
 		#print(str(cs))
 		#print()
 		#print(str(ci))
 		#print()
 		
-		print("  10")
+		print("  10 ", end="")
 		with parallel():
 			assert cs @ ci == ci @ cs == Matrix.unit(8)
+		current = time.process_time()
+		print(current - start, current - prev)
+		prev = current
 		
-		print("  11")
+		print("  11 ", end="")
 		csA = Matrix({_key: _value(x0=no, x1=no, x2=no, x3=no, x4=no, x5=no, x6=no, x7=no).evaluate() for (_key, _value) in cs.items()}, 8, 8)
 		ciA = Matrix({_key: _value(x0=no, x1=no, x2=no, x3=no, x4=no, x5=no, x6=no, x7=no).evaluate() for (_key, _value) in ci.items()}, 8, 8)
+		current = time.process_time()
+		print(current - start, current - prev)
+		prev = current
 		
 		#csA.print_bool()
 		#ciA.print_bool()
 		#print()
 		
-		print("  12")
+		print("  12 ", end="")
 		assert csA @ ciA == ciA @ csA == Matrix.unit(8)
+		current = time.process_time()
+		print(current - start, current - prev)
+		prev = current
 		
-		print("  13")
+		print("  13 ", end="")
 		csB = Matrix({_key: _value(x0=yes, x1=no, x2=no, x3=no, x4=no, x5=no, x6=no, x7=no).evaluate() for (_key, _value) in cs.items()}, 8, 8)
 		ciB = Matrix({_key: _value(x0=yes, x1=no, x2=no, x3=no, x4=no, x5=no, x6=no, x7=no).evaluate() for (_key, _value) in ci.items()}, 8, 8)
+		current = time.process_time()
+		print(current - start, current - prev)
+		prev = current
 		
 		#csB.print_bool()
 		#ciB.print_bool()
 		#print()
 		
-		print("  14")
+		print("  14 ", end="")
 		assert csB @ ciB == ciB @ csB == Matrix.unit(8)
-		print("  15")
+		current = time.process_time()
+		print(current - start, current - prev)
+		prev = current
+
+		print("  15 ", end="")
+		current = time.process_time()
+		print(current - start, current - prev)
+		prev = current
 	
 	def linear_test_suite(verbose=False):
 		if verbose: print("running test suite")

@@ -30,6 +30,20 @@ class AbstractRing(Immutable, AlgebraicStructure):
 		return cls(1, *args, **kwargs)
 	
 	@classmethod
+	def sum(cls, addends, *args, **kwargs):
+		result = cls.zero(*args, **kwargs)
+		for addend in addends:
+			result += addend
+		return result
+	
+	@classmethod
+	def product(cls, factors, *args, **kwargs):
+		result = cls.one(*args, **kwargs)
+		for factor in factors:
+			result *= factor
+		return result
+	
+	@classmethod
 	def random(cls, *args, **kwargs):
 		"Return random ring element."
 		size = cls.get_algebra(*args, **kwargs).size
@@ -278,6 +292,7 @@ class ModularRing(AbstractRing):
 	
 	def __repr__(self):
 		return ''.join(['<', self.__class__.__qualname__, ': ', str(self.ring_value), ', ', repr(self.algebra), '>'])
+		#return self.__class__.__qualname__ + '(' + str(self.operator) + ', ' + repr(self.operands) + ')'
 	
 	def __str__(self):
 		return str(int(self))

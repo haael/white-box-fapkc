@@ -8,7 +8,7 @@ from multiprocessing import current_process, cpu_count
 from multiprocessing.pool import Pool
 
 
-__all__ = 'randbelow', 'parallel', 'parallel_map', 'parallel_starmap', 'random_sample', 'random_permutation', 'Immutable', 'memoize', 'canonical', 'evaluate', 'substitute', 'valuations'
+__all__ = 'randbelow', 'parallel', 'parallel_map', 'parallel_starmap', 'random_sample', 'random_permutation', 'Immutable', 'memoize', 'canonical', 'optimized', 'evaluate', 'substitute', 'valuations'
 
 
 if __debug__:
@@ -24,6 +24,10 @@ else:
 
 def canonical(x):
 	return x.canonical()
+
+
+def optimized(x):
+	return x.optimized()
 
 
 def evaluate(x):
