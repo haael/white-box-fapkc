@@ -74,6 +74,9 @@ class Algebra(Immutable):
 	
 	def __repr__(self):
 		return 'Algebra(' + ', '.join(repr(_x) for _x in self.__getnewargs__()) + ')'
+	
+	def __str__(self):
+		return self.algebra_name + '(' + ', '.join(self.algebra_params) + (', ' if self.algebra_params and self.algebra_kwparams else '') + ', '.join((_k + '=' + str(_v)) for (_k, _v) in self.algebra_kwparams.items()) + ')'
 
 
 class AlgebraicStructure:

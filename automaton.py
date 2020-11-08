@@ -398,6 +398,9 @@ if __debug__:
 	from itertools import chain, tee
 	
 	def test_automaton(Ring, block_size, memblock_size, length):
+		print("Automaton composition test")
+		print(" algebra:", Ring, ", data block size:", block_size, ", memory block size:", memblock_size, ", stream length:", length)
+		
 		Automaton = automaton_factory(Ring)
 		Vector = Automaton.base_vector
 		ConstVector = Automaton.base_const_vector
@@ -414,7 +417,7 @@ if __debug__:
 				yield ConstVector.random(block_size)
 		
 		for i in range(5):
-			print("tick", i)
+			print(" round", i)
 			automaton1 = Automaton(Vector.random(dimension=block_size, variables=variables, order=i), Vector.random(dimension=memblock_size, variables=variables, order=i))
 			automaton2 = Automaton(Vector.random(dimension=block_size, variables=variables, order=i), Vector.random(dimension=memblock_size, variables=variables, order=i))
 			automaton3 = automaton1 @ automaton2
@@ -428,6 +431,9 @@ if __debug__:
 				assert a == b
 	
 	def test_mixer(Ring, block_size, memblock_size, length):
+		print("FAPKC encryption / decryption test")
+		print(" algebra:", Ring, ", data block size:", block_size, ", memory block size:", memblock_size, ", stream length:", length)
+		
 		Automaton = automaton_factory(Ring)
 		ConstVector = Automaton.base_const_vector
 		
@@ -436,7 +442,7 @@ if __debug__:
 				yield ConstVector.random(block_size)
 		
 		for i in range(5):
-			print("tick", i)
+			print(" round", i)
 			mixer, unmixer = Automaton.linear_nodelay_wifa_pair(block_size=block_size, memory_size=i)
 			
 			input1, input2 = tee(automaton_input())
@@ -444,6 +450,9 @@ if __debug__:
 				assert a == b
 	
 	def test_homomorphism(Ring, block_size, memblock_size, length):
+		print("Gonzalez-Llamas homomorphic encryption test")
+		print(" algebra:", Ring, ", data block size:", block_size, ", memory block size:", memblock_size, ", stream length:", length)
+		
 		Automaton = automaton_factory(Ring)
 		Vector = Automaton.base_vector
 		ConstVector = Automaton.base_const_vector
@@ -460,16 +469,19 @@ if __debug__:
 				yield ConstVector.random(block_size)
 		
 		for i in range(5):
-			print("tick", i)
+			print(" round", i)
+			print("  generating automata...")
 			mixer, unmixer = Automaton.linear_nodelay_wifa_pair(block_size=block_size, memory_size=4)
 			plain_automaton = Automaton(Vector.random(dimension=block_size, variables=variables, order=3), Vector.random(dimension=memblock_size, variables=variables, order=3))
-			homo_automaton = mixer @ plain_automaton @ unmixer
-			
 			mixer.optimize()
 			unmixer.optimize()
 			plain_automaton.optimize()
+
+			print("  composing automata...")
+			homo_automaton = mixer @ plain_automaton @ unmixer			
 			homo_automaton.optimize()
 			
+			print("  encryption/decryption test...")
 			input1, input2 = tee(automaton_input())
 			for a, b in zip(plain_automaton(input1), unmixer(homo_automaton(mixer(input2)))):
 				assert a == b
@@ -563,7 +575,7 @@ if __debug__ and __name__ == '__main__':
 	test_mixer(BooleanRing.get_algebra(), 8, 4, 16)
 	test_mixer(RijndaelField.get_algebra(), 4, 2, 16)
 	
-	test_homomorphism(BooleanRing.get_algebra(), 8, 4, 16)
+	test_homomorphism(BooleanRing.get_algebra(), 8, 4, 256)
 	test_homomorphism(RijndaelField.get_algebra(), 4, 2, 16)
 	
 	#Automaton = automaton_factory(BooleanRing.get_algebra())
