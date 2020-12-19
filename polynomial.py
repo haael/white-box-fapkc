@@ -132,10 +132,14 @@ class Polynomial(Immutable, AlgebraicStructure):
 		if hasattr(value, 'operator') and hasattr(value, 'operands'):
 			raise TypeError("Const value must not be a polynomial.")
 		
-		if value or value.algebra != cls.default_ring:
+		if not hasattr(value, 'algebra'):
+			value = base_ring(value)
+		
+		if (hasattr(value, 'ring_value') and hasattr(value.ring_value, 'jit_value')) or value or value.algebra != cls.default_ring:
 			result = cls(cls.symbol.const, [value], base_ring=base_ring)
 		else:
 			result = cls(cls.symbol.const, [], base_ring=base_ring)
+		
 		result.is_canonical = True
 		result.is_optimized = True
 		return result
@@ -446,15 +450,15 @@ class Polynomial(Immutable, AlgebraicStructure):
 		else:
 			raise RuntimeError
 	
-	def is_identically_zero(term):
+	def is_identically_zero(self):
 		try:
-			return term.is_zero()
+			return self.is_zero()
 		except ValueError:
 			return False
 	
-	def is_identically_one(term):
+	def is_identically_one(self):
 		try:
-			return term.is_one()
+			return self.is_one()
 		except ValueError:
 			return False
 	
@@ -1320,15 +1324,17 @@ class Polynomial(Immutable, AlgebraicStructure):
 		elif self.operator == self.symbol.add:
 			result = self.algebra.base_ring.zero()
 			for operand in parallel_map(evaluate, self.operands):
-				if not operand.is_zero():
+				if operand.is_jit() or not operand.is_zero():
 					result += operand
 			return result
 		elif self.operator == self.symbol.mul:
-			if any((not hasattr(_op, 'operator') or _op.operator == self.symbol.const) and _op.is_zero() for _op in self.operands):
+			if any((not hasattr(_op, 'operator') or _op.operator == self.symbol.const) and (not _op.is_jit() and _op.is_zero()) for _op in self.operands):
 				return self.algebra.base_ring.zero()
 			result = self.algebra.base_ring.one()
 			for operand in parallel_map(evaluate, self.operands):
-				if operand.is_zero():
+				if operand.is_jit():
+					result *= operand
+				elif operand.is_zero():
 					return self.algebra.base_ring.zero()
 				elif not operand.is_one():
 					result *= operand
@@ -1342,6 +1348,9 @@ class Polynomial(Immutable, AlgebraicStructure):
 		else:
 			raise RuntimeError("Unsupported operator: {}.".format(str(self.operator)))
 	
+	def is_jit(self):
+		return (self.operator == self.symbol.const) and len(self.operands) >= 1 and self.operands[0].is_jit()
+	
 	@property
 	def ring_value(self):
 		c = self.evaluate()
@@ -1351,6 +1360,31 @@ class Polynomial(Immutable, AlgebraicStructure):
 	
 	def __int__(self):
 		return int(self.evaluate())
+	
+	def compile(self, name, module):
+		sorted_vars = sorted([str(_var) for _var in self.variables()])
+		try:
+			bl = self.algebra.exponent
+		except AttributeError:
+			bl = (self.algebra.base_ring.size - 1).bit_length()
+		builder = module.build_function(name, (8 * ((bl - 1) // 8 + 1)) if bl > 1 else 8, sorted_vars)
+		ring = self.algebra.base_ring
+		args = dict((_key, ring(_value)) for (_key, _value) in builder.args.items())
+		result = self(**args).evaluate()
+		try:
+			res_val = result.ring_value
+		except AttributeError:
+			res_val = result.binary_field_value
+		builder.ret(res_val)
+	
+	def wrap_compiled(self, name, engine):
+		compiled = getattr(engine, name)
+		sorted_vars = sorted([str(_var) for _var in self.variables()])
+		ring = self.algebra.base_ring
+		def fn(**kwargs):
+			#print(sorted_vars, dict((_k, int(_v)) for (_k, _v) in kwargs.items()))
+			return ring(compiled(*[int(kwargs[_v]) for _v in sorted_vars]))
+		return fn
 
 
 if __debug__:
@@ -1628,7 +1662,33 @@ if __debug__:
 
 if __debug__ and __name__ == '__main__':
 	#polynomial_test_suite(verbose=True)
-	test_optimization(Polynomial.get_algebra(base_ring=BooleanRing.get_algebra()))
+	#test_optimization(Polynomial.get_algebra(base_ring=BooleanRing.get_algebra()))
+	
+	from itertools import product
+	from jit_types import Module
+	
+	module = Module()
+	
+	polynomial = Polynomial.get_algebra(base_ring=ModularRing.get_algebra(size=7))
+	#polynomial = Polynomial.get_algebra(base_ring=BooleanRing.get_algebra())
+	#polynomial = Polynomial.get_algebra(base_ring=RijndaelField.get_algebra())
+	v = list(map(polynomial.var, 'ab'))
+	p1 = polynomial.random(variables=v, order=2)
+	p1.compile('p1', module)
+	print(p1)
+	engine = module.compile()
+	p1c = p1.wrap_compiled('p1', engine)
+	
+	print(p1(a=polynomial.base_ring(3), b=polynomial.base_ring(1)).evaluate())
+	print(p1c(a=polynomial.base_ring(3), b=polynomial.base_ring(1)))
+	
+	for vs in range(100):
+		a = polynomial.base_ring.random()
+		b = polynomial.base_ring.random()
+		assert p1(a=a, b=b).evaluate() == p1c(a=a, b=b)
+
+
+
 
 
 

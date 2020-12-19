@@ -290,6 +290,20 @@ class Vector(AlgebraicStructure):
 	
 	def circuit_size(self):
 		return sum(_value.circuit_size() for _value in self.values())
+	
+	def compile(self, name, module):
+		for n, el in enumerate(self):
+			el.compile(name + '_' + str(n), module)
+	
+	def wrap_compiled(self, name, engine):
+		wrapped = []
+		for n, el in enumerate(self):
+			wrapped.append(el.wrap_compiled(name + '_' + str(n), engine))
+		algebra = self.__class__.get_algebra(base_ring=self.algebra.base_ring.base_ring)
+		
+		def fn(**kwargs):
+			return algebra([_w(**kwargs) for _w in wrapped])
+		return fn
 
 
 class Matrix(AlgebraicStructure):
@@ -1529,7 +1543,26 @@ if __debug__:
 
 
 if __debug__ and __name__ == '__main__':
-	linear_test_suite(verbose=True)
+	#linear_test_suite(verbose=True)
+	
+	from jit_types import Module
+	
+	module = Module()
+	
+	ring = BooleanRing.get_algebra()
+	polynomial = Polynomial.get_algebra(base_ring=ring)
+	vector = Vector.get_algebra(base_ring=polynomial)
+	variables = list(map(polynomial.var, 'abcdefgh'))
+	v1 = vector.random(variables=variables, order=3, dimension=8)
+	
+	v1.compile('v1', module)
+	engine = module.compile()	
+	v1c = v1.wrap_compiled('v1', engine)
+	
+	r = dict((str(_v), ring.random()) for _v in variables)
+	
+	print(v1(**r).evaluate())
+	print(v1c(**r))
 
 
 

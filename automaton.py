@@ -417,6 +417,38 @@ def automaton_factory(base_ring):
 			ns, ni = cls.nonlinear_nodelay_wifa_pair(block_size=block_size, memory_size=memory_size)
 			return ns @ ls, li @ ni
 		
+		def compile(self, name, module):
+			self.state_transition.compile(name + '_st', module)
+			self.output_transition.compile(name + '_ot', module)
+		
+		def wrap_compiled(self, name, engine):
+			st = self.state_transition.wrap_compiled(name + '_st', engine)
+			ot = self.output_transition.wrap_compiled(name + '_ot', engine)
+			
+			def t(x, history):
+				state = {}
+				for t, sh in enumerate(history):
+					for i, si in enumerate(sh):
+						state[str(self.s[t + 1, i])] = si
+				for i, xi in enumerate(x):
+					state[str(self.x[i])] = xi
+				
+				y = ot(**state)
+				s = st(**state)
+				
+				history.insert(0, s)
+				while len(history) > self.memory_length:
+					history.pop()
+				return y
+			
+			def fn(in_stream):
+				history = deque([base_vector.zero(self.memory_width)] * self.memory_length)
+				for x in in_stream:
+					yield t(x, history)
+			
+			return fn	
+	
+	
 	Automaton.base_ring = base_ring
 	Automaton.base_const_vector = base_const_vector
 	Automaton.base_const_matrix = base_const_matrix
@@ -466,6 +498,69 @@ if __debug__:
 			for n, (a, b) in enumerate(zip(automaton3(input1), automaton1(automaton2(input2)))):
 				print(n, a, b)
 				assert a == b
+	
+	def test_automaton_compilation(Ring, block_size, memblock_size, length):
+		print("Automaton compilation test")
+		print(" algebra:", Ring, ", data block size:", block_size, ", memory block size:", memblock_size, ", stream length:", length)
+		
+		Automaton = automaton_factory(Ring)
+		Vector = Automaton.base_vector
+		ConstVector = Automaton.base_const_vector
+		
+		x = Vector([Automaton.x[_i] for _i in range(block_size)])
+		s_1 = Vector([Automaton.s[1, _i] for _i in range(memblock_size)])
+		s_2 = Vector([Automaton.s[2, _i] for _i in range(memblock_size)])
+		s_3 = Vector([Automaton.s[3, _i] for _i in range(memblock_size)])
+		
+		variables = list(x) + list(s_1) + list(s_2) + list(s_3)
+		
+		def automaton_input():
+			for i in range(length):
+				yield ConstVector.random(block_size)
+		
+		for i in range(5):
+			print(" round", i)
+			automaton1 = Automaton(Vector.random(dimension=block_size, variables=variables, order=i), Vector.random(dimension=memblock_size, variables=variables, order=i))
+			automaton2 = Automaton(Vector.random(dimension=block_size, variables=variables, order=i), Vector.random(dimension=memblock_size, variables=variables, order=i))
+			automaton3 = automaton1 @ automaton2
+			
+			print("  optimizing automata...")
+			automaton1.optimize()
+			automaton2.optimize()
+			automaton3.optimize()
+			
+			print("  compiling automata...")
+			from jit_types import Module
+			module = Module()
+			automaton1.compile('a1', module)
+			automaton2.compile('a2', module)
+			automaton3.compile('a3', module)
+			engine = module.compile()
+			automaton1c = automaton1.wrap_compiled('a1', engine)
+			automaton2c = automaton2.wrap_compiled('a2', engine)
+			automaton3c = automaton3.wrap_compiled('a3', engine)
+			
+			print("  encryption test...")
+			input1, input2 = tee(automaton_input())
+			input1a, input1b = tee(input1)
+			input2a, input2b = tee(input2)
+			
+			print("   python code...")
+			out1 = []
+			for n, (a, b) in enumerate(zip(automaton3(input1a), automaton1(automaton2(input2a)))):
+				#print(n, a, b)
+				assert a == b
+				out1.append(a)
+			
+			print("   native code...")
+			out2 = []
+			for n, (a, b) in enumerate(zip(automaton3c(input1b), automaton1c(automaton2c(input2b)))):
+				#print(n, a, b)
+				assert a == b
+				out2.append(a)
+			
+			assert out1 == out2
+
 	
 	def test_state_mixing(Ring, block_size, memblock_size, length):
 		print("State mixing test")
@@ -565,6 +660,19 @@ if __debug__:
 			print(f"   homomorphic: {homo_automaton.output_transition.circuit_size()} {homo_automaton.state_transition.circuit_size()} {homo_automaton.output_transition.dimension} {homo_automaton.state_transition.dimension}")
 			homo_automaton.optimize()
 			print(f"                {homo_automaton.output_transition.circuit_size()} {homo_automaton.state_transition.circuit_size()}")
+
+			print("  compiling automata...")
+			from jit_types import Module
+			module = Module()
+			mixer.compile('m', module)
+			unmixer.compile('u', module)
+			plain_automaton.compile('p', module)
+			homo_automaton.compile('h', module)
+			engine = module.compile()
+			mixer = mixer.wrap_compiled('m', engine)
+			unmixer = unmixer.wrap_compiled('u', engine)
+			plain_automaton = plain_automaton.wrap_compiled('p', engine)
+			homo_automaton = homo_automaton.wrap_compiled('h', engine)
 			
 			print("  encryption/decryption test...")
 			input1, input2 = tee(automaton_input())
@@ -655,16 +763,19 @@ if __debug__:
 
 
 if __debug__ and __name__ == '__main__':
+	#test_automaton_compilation(BooleanRing.get_algebra(), 8, 4, 256)
+	#test_automaton_compilation(RijndaelField.get_algebra(), 4, 2, 64)
+
 	with parallel():
-		test_automaton_composition(BooleanRing.get_algebra(), 8, 4, 256)
-		test_automaton_composition(RijndaelField.get_algebra(), 4, 2, 64)
-	
-		test_state_mixing(BooleanRing.get_algebra(), 8, 4, 256)
-		test_state_mixing(RijndaelField.get_algebra(), 4, 2, 64)
-	
-		test_fapkc_encryption(BooleanRing.get_algebra(), 8, 4, 16)
-		test_fapkc_encryption(RijndaelField.get_algebra(), 4, 2, 16)
-	
+	#	test_automaton_composition(BooleanRing.get_algebra(), 8, 4, 256)
+	#	test_automaton_composition(RijndaelField.get_algebra(), 4, 2, 64)
+	#
+	#	test_state_mixing(BooleanRing.get_algebra(), 8, 4, 256)
+	#	test_state_mixing(RijndaelField.get_algebra(), 4, 2, 64)
+	#
+	#	test_fapkc_encryption(BooleanRing.get_algebra(), 8, 4, 16)
+	#	test_fapkc_encryption(RijndaelField.get_algebra(), 4, 2, 16)
+	#
 		test_homomorphic_encryption(BooleanRing.get_algebra(), 8, 4, 32)
 		test_homomorphic_encryption(RijndaelField.get_algebra(), 4, 2, 8)
 	

@@ -203,6 +203,9 @@ class AbstractRing(Immutable, AlgebraicStructure):
 	
 	def canonical(self):
 		raise NotImplementedError
+	
+	def is_jit(self):
+		raise NotImplementedError
 
 
 class ModularRing(AbstractRing):
@@ -218,7 +221,7 @@ class ModularRing(AbstractRing):
 		try:
 			ring_value = value.ring_value
 		except AttributeError:
-			ring_value = int(value) % size
+			ring_value = value % size
 		
 		if not hasattr(self, 'ring_value'):
 			self.ring_value = ring_value
@@ -228,8 +231,11 @@ class ModularRing(AbstractRing):
 	def __getnewargs_ex__(self):
 		return (self.ring_value,), {'size':self.algebra.size}
 	
+	def is_jit(self):
+		return hasattr(self.ring_value, 'jit_value')
+	
 	def __int__(self):
-		return self.ring_value
+		return int(self.ring_value)
 	
 	def __add__(self, other):
 		try:
@@ -314,6 +320,7 @@ class BooleanRing(ModularRing):
 		except TypeError:
 			pass
 		
+		#print(value)
 		super().__init__(value, *args, size=2, **kwargs)
 	
 	@classmethod
@@ -453,6 +460,10 @@ class GaloisField(AbstractRing):
 		
 		if value != None:
 			if field_value == None:
+				if value == Ellipsis:
+					field_value = value
+			
+			if field_value == None:
 				try:
 					field_value = value.field_value
 				except AttributeError:
@@ -498,7 +509,7 @@ class GaloisField(AbstractRing):
 		if field_value == None:
 			raise TypeError("`value` must be a collection of ints, an integer, or another field object.")
 		
-		if len(field_value) != exponent:
+		if field_value != Ellipsis and len(field_value) != exponent:
 			raise ValueError("Field value vector ({}) must have the same lengt as `exponent = {}`.".format(len(field_value), exponent))
 		
 		if not hasattr(self, 'field_value'):
@@ -532,6 +543,8 @@ class GaloisField(AbstractRing):
 	
 	@property
 	def ring_value(self):
+		if self.is_jit():
+			raise AttributeError
 		value = 0
 		for v in reversed(self.field_value):
 			value *= self.algebra.base
@@ -540,6 +553,9 @@ class GaloisField(AbstractRing):
 	
 	@ring_value.setter
 	def ring_value(self, value):
+		if self.is_jit():
+			assert value == Ellipsis
+			return
 		assert self.ring_value == value
 	
 	def is_zero(self):
@@ -742,6 +758,9 @@ class GaloisField(AbstractRing):
 		except AttributeError:
 			return NotImplemented
 		
+		if self.is_jit() or other.is_jit():
+			return self.long_multiplication(self, other)
+		
 		if __debug__:
 			l = self.long_multiplication(self, other)
 			s = self.slipstick_multiplication(self, other)
@@ -822,6 +841,10 @@ class BinaryField(GaloisField):
 			except TypeError:
 				pass
 		
+		if binary_field_value == None:
+			if hasattr(value, 'jit_value'):
+				binary_field_value = value
+		
 		return binary_field_value, size, exponent, reducing_polynomial, reducing_polynomial_bitfield
 	
 	def __init__(self, value, *args, size=None, exponent=None, reducing_polynomial=None, reducing_polynomial_bitfield=None, **kwargs):
@@ -838,6 +861,8 @@ class BinaryField(GaloisField):
 			except KeyError:
 				pass
 		
+		if self.is_jit():
+			value = Ellipsis
 		super().__init__(value, *args, size=size, base=2, exponent=exponent, reducing_polynomial=reducing_polynomial, reducing_polynomial_bitfield=reducing_polynomial_bitfield, **kwargs)
 	
 	@classmethod
@@ -857,6 +882,9 @@ class BinaryField(GaloisField):
 	
 	@property
 	def field_value(self):
+		if self.is_jit():
+			raise AttributeError
+			return
 		value = []
 		for n in range(self.algebra.exponent):
 			value.append(1 if (self.binary_field_value & (1 << n)) else 0)
@@ -864,6 +892,9 @@ class BinaryField(GaloisField):
 	
 	@field_value.setter
 	def field_value(self, value):
+		if self.is_jit():
+			assert value == Ellipsis
+			return
 		try:
 			assert self.field_value == value
 		except AttributeError:
@@ -875,7 +906,10 @@ class BinaryField(GaloisField):
 		return '0b' + lz + val
 	
 	def __int__(self):
-		return self.binary_field_value
+		return int(self.binary_field_value)
+	
+	def is_jit(self):
+		return hasattr(self.binary_field_value, 'jit_value')
 	
 	def is_zero(self):
 		return self.binary_field_value == 0
@@ -922,10 +956,9 @@ class BinaryField(GaloisField):
 		reducing_polynomial_bitfield = algebra.reducing_polynomial_bitfield
 		
 		for m in reversed(range(exponent)):
-			if (value >> (m + exponent)) & 1:
-				value ^= (reducing_polynomial_bitfield << m)
+			value ^= (reducing_polynomial_bitfield << m) * ((value >> (m + exponent)) & 1)
 		
-		assert 0 <= value < algebra.size
+		assert one.is_jit() or two.is_jit() or 0 <= value < algebra.size
 		
 		return algebra(value)
 
