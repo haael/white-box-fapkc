@@ -8,7 +8,7 @@ from collections import Counter
 from itertools import chain, product
 import operator
 
-from utils import randbelow, random_permutation, random_sample, parallel_map, parallel_starmap, canonical, optimized, evaluate
+from utils import randbelow, random_permutation, random_sample, parallel_map, parallel_starmap, canonical, optimized, evaluate, substitute
 from algebra import AlgebraicStructure
 from rings import BooleanRing
 
@@ -278,13 +278,18 @@ class Vector(AlgebraicStructure):
 		return self.algebra(list(parallel_map(optimized, self)))
 	
 	def evaluate(self):
+		#return self.algebra(list(map(evaluate, self)))
 		return self.algebra(list(parallel_map(evaluate, self)))
 	
 	def zip_vars(self, v):
 		return dict(zip((str(_v) for _v in v), self))
 	
-	def __call__(self, *args, **kwargs):
-		return self.algebra([_el(*args, **kwargs) for _el in self])
+	def __call__(self, **kwargs):
+		return self.algebra([_el(**kwargs) for _el in self])
+		#return self.algebra(list(parallel_starmap(substitute, ((_element, self.algebra.base_ring, kwargs) for _element in self))))
+	
+	def circuit_size(self):
+		return sum(_value.circuit_size() for _value in self.values())
 
 
 class Matrix(AlgebraicStructure):

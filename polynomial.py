@@ -90,9 +90,14 @@ class Polynomial(Immutable, AlgebraicStructure):
 		self.mutable.add('is_optimized')
 		self.mutable.add('optimized_cache')
 		self.mutable.add('variables_cache')
+		self.mutable.add('circuit_size_cache')
 		self.is_canonical = False
 		self.is_optimized = False
 		self.immutable = True
+		self.circuit_size_cache = None
+		
+		# This is a very expensive check.
+		#assert self.is_valid_polynomial(), repr(self)
 	
 	def __getnewargs_ex__(self):
 		return (self.operator, self.operands), {'base_ring':self.algebra.base_ring}
@@ -128,7 +133,7 @@ class Polynomial(Immutable, AlgebraicStructure):
 			raise TypeError("Const value must not be a polynomial.")
 		
 		if value or value.algebra != cls.default_ring:
-			result = cls(cls.symbol.const, [value.canonical()], base_ring=base_ring)
+			result = cls(cls.symbol.const, [value], base_ring=base_ring)
 		else:
 			result = cls(cls.symbol.const, [], base_ring=base_ring)
 		result.is_canonical = True
@@ -227,6 +232,36 @@ class Polynomial(Immutable, AlgebraicStructure):
 			if operand.operator == self.symbol.add and not operand.is_multiplicative_normal_form():
 				return False
 		return True
+	
+	def is_valid_polynomial(self):
+		algebra = self.algebra
+		base_ring = algebra.base_ring
+		if self.operator == self.symbol.var:
+			if len(self.operands) != 2:
+				return False
+			name, ring = self.operands
+			if ring != base_ring:
+				return False
+			return True
+		elif self.operator == self.symbol.const:
+			if len(self.operands) == 0:
+				return base_ring == self.default_ring
+			elif len(self.operands) == 1:
+				return self.operands[0].algebra == base_ring
+			else:
+				return False
+		elif self.operator == self.symbol.add or self.operator == self.symbol.mul:
+			return all(operand.is_valid_polynomial() and operand.algebra == algebra for operand in self.operands)
+		elif self.operator == self.symbol.neg:
+			if len(self.operands) != 1:
+				return False
+			return all(operand.is_valid_polynomial() and operand.algebra == algebra for operand in self.operands)
+		elif self.operator == self.symbol.sub:
+			if len(self.operands) != 2:
+				return False
+			return all(operand.is_valid_polynomial() and operand.algebra == algebra for operand in self.operands)
+		else:
+			return False
 	
 	def canonical(self):
 		"Return algebraic normal form of this polynomial. Two polynomials are equal everywhere if their algebraic normal forms are identical. This function may take exponential time to finish."
@@ -393,14 +428,21 @@ class Polynomial(Immutable, AlgebraicStructure):
 			raise RuntimeError
 	
 	def circuit_size(self):
+		if self.circuit_size_cache != None:
+			return self.circuit_size_cache
+		
 		if self.operator in [self.symbol.const]:
+			self.circuit_size_cache = 0
 			return 0
 		elif self.operator in [self.symbol.var]:
+			self.circuit_size_cache = 1
 			return 1
 		elif self.operator in [self.symbol.add, self.symbol.sub, self.symbol.mul]:
-			return len(self.operands) + sum(_operand.circuit_size() for _operand in self.operands) - 1
+			self.circuit_size_cache = len(self.operands) + sum(_operand.circuit_size() for _operand in self.operands) - 1
+			return self.circuit_size_cache
 		elif self.operator in [self.symbol.neg]:
-			return 1 + self.symbol.operands[0].circuit_size()
+			self.circuit_size_cache = 1 + self.symbol.operands[0].circuit_size()
+			return self.circuit_size_cache
 		else:
 			raise RuntimeError
 	
@@ -416,6 +458,63 @@ class Polynomial(Immutable, AlgebraicStructure):
 		except ValueError:
 			return False
 	
+	def evaluate_constants(self):
+		if self.operator == self.symbol.add:
+			addends = []
+			constants = []
+			for addend in self.operands:
+				addend = addend.evaluate_constants()
+				if addend.operator == self.symbol.const:
+					constants.append(addend)
+				else:
+					addends.append(addend)
+			constant = self.algebra.const(self.algebra.sum(constants).evaluate())
+			if not addends:
+				return constant
+			if not constant.is_zero():
+				addends.append(constant)
+			
+			if len(addends) == 1:
+				return addends[0]
+			else:
+				return self.algebra.sum(addends)
+		elif self.operator == self.symbol.mul:
+			factors = []
+			constants = []
+			for factor in self.operands:
+				factor = factor.evaluate_constants()
+				if factor.operator == self.symbol.const:
+					constants.append(factor)
+				else:
+					factors.append(factor)
+			constant = self.algebra.const(self.algebra.product(constants).evaluate())
+			if not factors:
+				return constant
+			if constant.is_zero():
+				return self.algebra.zero()
+			
+			additive = [_n for (_n, _factor) in enumerate(factors) if _factor.operator == self.symbol.add]
+			if len(additive) == 1:
+				factor = factors[additive[0]]
+				assert factor.operator == self.symbol.add
+				del factors[additive[0]]
+				added = self.algebra.sum([_addend * constant for _addend in factor.operands]).flatten()
+				factors.append(added)
+				return self.algebra.product(factors)
+			
+			if len(factors) == 1:
+				factor = factors[0]
+				if factor.operator == self.symbol.mul:
+					return (factor * constant).flatten()
+				else:
+					return factor * constant
+			
+			if not constant.is_one():
+				factors.append(constant)
+			return self.algebra.product(factors)
+		else:
+			return self
+	
 	def flatten(self):
 		if self.operator == self.symbol.add:
 			operands = []
@@ -426,7 +525,7 @@ class Polynomial(Immutable, AlgebraicStructure):
 				else:
 					operands.append(operand)
 			
-			return self.algebra.sum(sorted([_op for _op in operands if not _op.is_identically_zero()], key=self.__class__.sort_ordering))
+			return self.algebra.sum(sorted([_op for _op in operands if not _op.is_identically_zero()], key=self.__class__.sort_ordering)).evaluate_constants()
 		elif self.operator == self.symbol.mul:
 			operands = []
 			for subterm in self.operands:
@@ -439,7 +538,7 @@ class Polynomial(Immutable, AlgebraicStructure):
 			if any(_op.is_identically_zero() for _op in operands):
 				return self.algebra.zero()
 			else:
-				return self.algebra.product(sorted([_op for _op in operands if not _op.is_identically_one()], key=self.__class__.sort_ordering))
+				return self.algebra.product(sorted([_op for _op in operands if not _op.is_identically_one()], key=self.__class__.sort_ordering)).evaluate_constants()
 		
 		elif self.operator == self.symbol.sub:
 			left, right = self.operands
@@ -450,7 +549,11 @@ class Polynomial(Immutable, AlgebraicStructure):
 			if operand.operator == self.symbol.neg:
 				return operand.flatten()
 			elif operand.operator == self.symbol.add:
-				return self.algebra.sum([-_addend for _addend in operand.flatten().operands]).flatten()
+				flat = operand.flatten()
+				if flat.operator == self.symbol.add:
+					return self.algebra.sum([-_addend for _addend in flat.operands]).flatten()
+				else:
+					return (-flat).flatten()
 			elif operand.operator == self.symbol.const:
 				try:
 					return self.algebra.const((-operand.operands[1]).canonical())
@@ -509,11 +612,10 @@ class Polynomial(Immutable, AlgebraicStructure):
 		elif self.operator == self.symbol.var:
 			return self
 		elif self.operator == self.symbol.neg:
-			return self.algebra.const((-algebra.base_ring.one().operands[0]).canonical()) * self.operands[0]
+			return (self.algebra.const((-algebra.base_ring.one().operands[0]).canonical()) * self.operands[0]).__optimize_additive_form()
 		elif self.operator == self.symbol.sub:
 			assert len(self.operands) == 2
-			return (self.operands[0].canonical() + ((-self.operands[1]).canonical())).canonical()
-		
+			return (self.operands[0].__optimize_additive_form() + ((-self.operands[1]).__optimize_additive_form())).__optimize_additive_form()
 		else:
 			raise RuntimeError
 	
@@ -544,16 +646,17 @@ class Polynomial(Immutable, AlgebraicStructure):
 	
 	def __optimize_traverse_subterms(self):
 		if self.operator == self.symbol.add:
-			candidate = self.algebra.sum([_subterm.__optimize_traverse_subterms() for _subterm in self.operands])
+			candidate = self.algebra.sum([_subterm.__optimize_traverse_subterms() for _subterm in self.operands]).evaluate_constants()
 		elif self.operator == self.symbol.mul:
-			candidate = self.algebra.product([_subterm.__optimize_traverse_subterms() for _subterm in self.operands])
+			candidate = self.algebra.product([_subterm.__optimize_traverse_subterms() for _subterm in self.operands]).evaluate_constants()
 		elif self.operator == self.symbol.sub:
 			left, right = [_subterm.__optimize_traverse_subterms() for _subterm in self.operands]
 			candidate = left - right
 		else:
 			return self
 		
-		return self.__optimize_smallest(candidate.flatten().__optimize_additive_form().__optimize_equivalent_forms())
+		return candidate
+		#return self.__optimize_smallest(candidate.flatten().__optimize_additive_form().__optimize_equivalent_forms())
 	
 	def __optimize_smallest(self, terms):
 		smallest = self
@@ -595,14 +698,15 @@ class Polynomial(Immutable, AlgebraicStructure):
 		
 		return common_factor, self.algebra.sum(monomials).flatten()
 	
-	def __optimize_equivalent_forms(self):
-		if (self.operator != self.symbol.add) or len(self.operands) < 2:
+	def __optimize_equivalent_forms(self, depth=0):
+		#print( "optimize_equivalent_forms", depth)
+		if (self.operator != self.symbol.add) or len(self.operands) < 2 or depth >= 24: # <- optimization parameter
 			yield self
 			return
 		
 		pairs = []
-		for m in range(len(self.operands)):
-			for n in range(m):
+		for m in random_sample(iter(range(len(self.operands))), len(self.operands), min(len(self.operands), 48)): # <- optimization parameter
+			for n in random_sample(iter(range(m)), m, min(m, 8)): # <- optimization parameter
 				s = self.operands[m]
 				t = self.operands[n]
 				
@@ -616,47 +720,127 @@ class Polynomial(Immutable, AlgebraicStructure):
 			return
 		
 		pairs.sort(key=lambda _t: _t[0].circuit_size())
-		if len(pairs) == 1:
-			f, c, m, n = pairs[-1]
-			cs = c.__optimize_smallest(c.__optimize_equivalent_forms())
+		f, c, m, n = pairs[-1]
+		r = self.algebra.sum([self.operands[_i] for _i in range(len(self.operands)) if _i not in (m, n)])
+		equiv = f * c + r
+		if equiv.circuit_size() < self.circuit_size():
+			yield from equiv.flatten().__optimize_equivalent_forms(depth+1)
 		else:
-			f1, c1, m1, n1 = pairs[-1]
-			cs1 = c1.__optimize_smallest(c1.__optimize_equivalent_forms())
-			f2, c2, m2, n2 = pairs[-2]
-			cs2 = c2.__optimize_smallest(c2.__optimize_equivalent_forms())
-			
-			fcs1 = (f1 * cs1).flatten()
-			fcs2 = (f2 * cs2).flatten()
-			
-			if fcs1.circuit_size() <= fcs2.circuit_size():
-				f, cs, m, n = f1, cs1, m1, n1
-			else:
-				f, cs, m, n = f2, cs2, m2, n2
-		
-		rest = list(self.algebra.sum([self.operands[_i] for _i in range(len(self.operands)) if _i not in (m, n)]).flatten().__optimize_equivalent_forms())
-		if not rest:
 			yield self
-			return
-		r = rest[0].__optimize_smallest(rest)
-		
-		candidate = (f * cs + r).flatten()
-		if candidate.circuit_size() < self.circuit_size():
-			yield from candidate.__optimize_equivalent_forms()
-		else:
-			yield self.flatten()
+	
+	def __optimize_common_factors_old(self, depth=0):
+		iteration = 0
+		current = self
+		while True:
+			#print(" optimize_common_factors", depth, "*" * depth, iteration, current.circuit_size())
+			if (self.operator != self.symbol.add) or len(self.operands) < 2:
+				return current
+			
+			operands = list(current.operands)
+			#operands.sort(key=lambda _o: _o.circuit_size())
+			pairs = []
+			for m in range(len(operands)):
+				for n in range(m):
+					s = operands[m]
+					t = operands[n]
+					
+					f, c = (s + t).flatten().__optimize_refactor()
+					if f.is_identically_one(): continue
+					
+					pairs.append((f, c, m, n))
+			
+			if not pairs:
+				return current
+			
+			pairs.sort(key=lambda _t: _t[0].circuit_size())
+			#print(len(pairs))
+			f, c, m, n = pairs[-1]
+			del pairs
+			
+			r = self.algebra.sum([operands[_i] for _i in range(len(operands)) if _i not in (m, n)])
+			
+			#equiv = (f * c + r).flatten()
+			#if equiv.circuit_size() < current.circuit_size():
+			#	current = equiv
+			#	iteration += 1
+			#	continue
+			
+			#f = f.flatten().__optimize_common_factors(depth+1)
+			#c = c.flatten().__optimize_common_factors(depth+1)
+			r = r.flatten().__optimize_common_factors(depth+1)
+			#print(c)
+			#print(r)
+
+			equiv = (f * c + r).flatten()
+			if equiv.circuit_size() < current.circuit_size():
+				current = equiv
+				iteration += 1
+				continue
+			
+			return equiv
+	
+	def __optimize_common_factors(self, depth=0):
+		iteration = 0
+		current = self
+		while True:
+			#print(" optimize_common_factors", depth, "*" * depth, iteration, current.circuit_size())
+			if (self.operator != self.symbol.add) or len(self.operands) < 2:
+				return current
+			
+			operands = list(current.operands)
+			#operands.sort(key=lambda _o: _o.circuit_size())
+			pairs = []
+			for m in range(len(operands)): #random_sample(iter(range(len(operands))), len(operands), min(len(operands), 64)):
+				for n in range(m): #random_sample(iter(range(m)), m, min(m, 64)):
+					s = operands[m]
+					t = operands[n]
+					
+					f, c = (s + t).flatten().__optimize_refactor()
+					if f.is_identically_one(): continue
+					
+					pairs.append((f, c, m, n))
+			
+			if not pairs:
+				return current
+			
+			addends = []
+			taken = set()
+			pairs.sort(key=lambda _t: -_t[0].circuit_size())
+			for f, c, m, n in pairs:
+				if (m not in taken) and (n not in taken):
+					addends.append(f * c)
+					taken.add(m)
+					taken.add(n)
+			del pairs
+			
+			r = self.algebra.sum([operands[_i] for _i in range(len(operands)) if _i not in taken]).flatten().__optimize_common_factors(depth+1)
+			addends.append(r)
+			
+			equiv = self.algebra.sum(addends).flatten()
+			if equiv.circuit_size() < current.circuit_size():
+				current = equiv
+				iteration += 1
+				continue
+			
+			return equiv
 	
 	def optimized(self):
-		if self.is_optimized:
+		if self.is_optimized or self.circuit_size() <= 1:
 			return self
 		elif hasattr(self, 'optimized_cache'):
 			assert self.optimized_cache.is_optimized
 			return self.optimized_cache
 		
-		smallest_circuit = self.__optimize_traverse_subterms()
+		#print("optimize", self.circuit_size(), hex(hash(str(self))))
+		
+		#smallest_circuit = flat.__optimize_smallest(flat.__optimize_additive_form().__optimize_equivalent_forms())
+		smallest_circuit = self.flatten().__optimize_additive_form().__optimize_common_factors()
+		#smallest_circuit = self.flatten().__optimize_additive_form()
 		
 		smallest_circuit.is_optimized = True
 		if self.canonical_caching and hasattr(self, 'canonical_cache'): smallest_circuit.canonical_cache = self.canonical_cache
 		if self.optimized_caching: self.optimized_cache = smallest_circuit
+		#print(" optimized", self.circuit_size(), smallest_circuit.circuit_size(), (self.circuit_size() / smallest_circuit.circuit_size() if smallest_circuit.circuit_size() else "inf"), self.circuit_depth(), smallest_circuit.circuit_depth())
 		return smallest_circuit
 	
 	def sort_ordering(self):
@@ -1217,10 +1401,6 @@ if __debug__:
 		assert z != x
 		assert z != y
 		
-		#print((x + y).canonical())
-		#print(((x + y) * (x + y)).canonical())
-		#print(((x + y) * (x + y) * (x + y)).canonical())
-		
 		assert (x + y) * (x - y) == x**2 - y**2
 		assert (x + y) * (x + y) == x**2 + x * y + x * y + y**2
 		assert (x + y) * (x + y) * (x + y) == x**3 + x**2 * y + x**2 * y + x**2 * y + x * y**2 + x * y**2 + x * y**2 + y**3
@@ -1233,8 +1413,9 @@ if __debug__:
 		assert (x * x) // (y) == no
 		assert (x * x) // (x * x) == yes
 		assert (x * y) // (y * x) == yes
-		#assert (x * x + y) // (x * x) == yes # FIXME: fails
-		#assert (x * x + y) // (y + x * x) == yes # FIXME: fails
+		
+		assert (x * x + y) // (x * x) == x
+		assert (x * x + y) // (y + x * x) == x + y
 		
 		assert (x * y)(x=yes, y=no) == no
 		assert (x * y)(x=yes, y=yes) == yes
@@ -1311,20 +1492,20 @@ if __debug__:
 				assert yes % a
 			
 			# FIXME: fails
-			#try:
-			#	assert (a**-1 == yes // a) or (yes % a)
-			#except ZeroDivisionError:
-			#	assert not a
-			#except ArithmeticError:
-			#	assert yes % a
+			try:
+				assert (a**-1 == yes // a) or (yes % a)
+			except ZeroDivisionError:
+				assert not a
+			except ArithmeticError:
+				assert yes % a
 			
 			# FIXME: fails
-			#try:
-			#	assert (a * a**-1 == yes) or (yes % a)
-			#except ZeroDivisionError:
-			#	assert not a
-			#except ArithmeticError:
-			#	assert yes % a
+			try:
+				assert (a * a**-1 == yes) or (yes % a)
+			except ZeroDivisionError:
+				assert not a
+			except ArithmeticError:
+				assert yes % a
 			
 			if Polynomial.base_ring.size == 2:
 				assert a * a == a, "a = {}".format(a)
@@ -1370,7 +1551,7 @@ if __debug__:
 		for i in range(5):
 			p = algebra.random(variables=v, order=10).flatten()
 			po = p.optimized()
-			print(" ", p.circuit_size(), po.circuit_size())
+			print(" ", p.circuit_size(), po.circuit_size(), p.circuit_depth(), po.circuit_depth(), po)
 			assert p.circuit_size() >= po.circuit_size()
 			with AllowCanonical():
 				assert po == p
@@ -1446,7 +1627,9 @@ if __debug__:
 
 
 if __debug__ and __name__ == '__main__':
-	polynomial_test_suite(verbose=True)
+	#polynomial_test_suite(verbose=True)
+	test_optimization(Polynomial.get_algebra(base_ring=BooleanRing.get_algebra()))
+
 
 
 

@@ -35,10 +35,12 @@ def evaluate(x):
 
 
 def substitute(x, algebra, subst):
+	#print("substitute")
 	if hasattr(x, 'operator'):
 		return x(**subst)
 	else:
 		return algebra.const(x)
+
 
 def valuations(*variable):
 	for valuation in product(*[_v.algebra.base_ring.domain() for _v in variable]):

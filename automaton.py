@@ -5,7 +5,7 @@
 from collections import deque
 from itertools import product
 
-from utils import memoize
+from utils import memoize, parallel
 from rings import *
 from polynomial import *
 from linear import *
@@ -60,8 +60,72 @@ def automaton_factory(base_ring):
 			self.output_transition = output_transition
 			self.state_transition = state_transition
 		
+		def transition(self, x, history):
+			"""
+			Takes the input symbol `x` (vector over a ring)
+			and the automaton state (`history`) collection (preferably queue) of vectors.
+			Inserts the new state vector at position 0 in `history` and deletes the tail
+			if `history` is longer than memory order.
+			Returns the output symbol. The automaton state (`history`) is modified in place.
+			"""
+			
+			state = {}
+			for t, sh in enumerate(history):
+				for i, si in enumerate(sh):
+					state[str(self.s[t + 1, i])] = si
+			for i, xi in enumerate(x):
+				state[str(self.x[i])] = xi
+			
+			y = self.output_transition(**state).evaluate()
+			s = self.state_transition(**state).evaluate()
+			
+			history.insert(0, s)
+			while len(history) > self.memory_length:
+				history.pop()
+			return y
+		
+		def __call__(self, in_stream):
+			"Takes the stream of input symbols, yields the stream of output symbols. Starts from the state composed of zero vectors."
+			history = deque([base_vector.zero(self.memory_width)] * self.memory_length) # initial state
+			for x in in_stream:
+				yield self.transition(x, history)
+		
+		def __matmul__(self, other):
+			"Automaton composition."
+			
+			shift = other.memory_width
+			
+			substitution = {}
+			for i, yi in enumerate(other.output_transition):
+				substitution[str(self.x[i])] = yi
+			for t in range(1, self.memory_length + 1):
+				for i in range(self.memory_width):
+					substitution[str(self.s[t, i])] = self.s[t, i + shift]
+			
+			output_transition = base_vector(_trans(**substitution) for _trans in self.output_transition)
+			state_transition = base_vector(chain(other.state_transition, (_trans(**substitution) for _trans in self.state_transition)))
+			
+			return self.__class__(output_transition, state_transition)
+		
+		@property
+		def input_size(self):
+			v = frozenset().union(*[_c.variables() for _c in self.state_transition.values()]) | frozenset().union(*[_c.variables() for _c in self.output_transition.values()])
+			if not v:
+				return 0
+			m = 0
+			for var in v:
+				for k in self.x.keys():
+					if self.x[k] == var:
+						m = max(m, k)
+			return m
+		
+		@property
+		def output_size(self):
+			return self.output_transition.dimension
+		
+		@property
 		@memoize
-		def memory_size(self):
+		def memory_length(self):
 			v = frozenset().union(*[_c.variables() for _c in self.state_transition.values()]) | frozenset().union(*[_c.variables() for _c in self.output_transition.values()])
 			if not v:
 				return 0
@@ -73,12 +137,47 @@ def automaton_factory(base_ring):
 						m = max(m, a)
 			return m
 		
+		@property
+		@memoize
+		def memory_width(self):
+			return self.state_transition.dimension
+		
+		def optimize(self):
+			self.output_transition = self.output_transition.optimized()
+			self.state_transition = self.state_transition.optimized()
+		
+		def mix_states(self):
+			mix, unmix = base_const_matrix.random_inverse_pair(self.memory_width)
+			mix = base_matrix(mix)
+			unmix = base_matrix(unmix)
+			
+			substitution = {}
+			for t in range(1, self.memory_length + 1):
+				unmixed = unmix @ base_vector(self.s[t, _i] for _i in range(self.memory_width))
+				for i in range(self.memory_width):
+					substitution[str(self.s[t, i])] = unmixed[i]
+			
+			self.state_transition = mix @ base_vector(_trans(**substitution) for _trans in self.state_transition)
+			self.output_transition = base_vector(_trans(**substitution) for _trans in self.output_transition)
+		
+		def __and__(self, other):
+			"2 automata running in parallel (aka tuple). The input size is the sum of input sized of the provided automata. The output size is the sum of the sizes of outputs."
+			raise NotImplementedError
+		
+		def __or__(self, other):
+			"Choice of 1 automaton from 2 running in parallel (aka tagged union). Input sizes of the provided automata must be equal, output likewise. The input sie of the resulting automaton will be 1 position longer. The 1st argument decides which automaton returns the output."
+			raise NotImplementedError
+		
+		def cast(cls, begin, end):
+			"Narrow the output to the range given."
+			raise NotImplementedError
+		
 		@classmethod
-		def countdown_gadget(cls, block_size=8, ticks=32, prefix=True):
+		def countdown(cls, block_size, memory_size, offset, length, period): # TODO
 			x = base_vector(cls.x[_i] for _i in range(block_size))
 			s = base_vector(cls.s[1, _i] for _i in range(block_size))
 			
-			set_point = base_vector(ticks, dimension=block_size)
+			set_point = base_vector(period, dimension=block_size)
 			
 			in_switch = base_ring.zero()
 			for i in range(block_size):
@@ -97,21 +196,25 @@ def automaton_factory(base_ring):
 			out_switch = base_ring.zero()
 			for i in range(block_size):
 				out_switch |= s[i] - set_point[i]
-			out_switch = (base_ring.zero() if prefix else base_ring.one()) - out_switch
 			output_transition = x * out_switch
 			
 			return cls(output_transition=output_transition, state_transition=state_transition)
 		
 		@classmethod
-		def state_initialization_gadget(cls, block_size=8, memory_size=32):
-			raise NotImplementedError
+		def repeater(cls, block_size, delay=0):
+			"A simple automaton that returns back its input with optional delay."
 			
-			(repeater | worker) @ (counter(t) & cast())
+			if delay == 0:
+				state_transition = base_vector.zero(block_size)
+				output_transition = base_vector(cls.x[_i] for _i in range(width))
+			else:
+				state_transition = base_vector(cls.x[_i] for _i in range(width))
+				output_transition = base_vector(cls.s[delay, _i] for _i in range(width))
 			
-			
-			state_transition = base_vector(cls.x[_i] for _i in range(block_size))
-			output_transition = base_vector.zero(block_size)
 			return cls(output_transition=output_transition, state_transition=state_transition)
+		
+		def passthrough(self, offset, length, period):
+			return (self.repeater(self.block_size) | self) @ (self.countdown(self.block_size, self.memory_size, offset, length, period) & self.repeater(self.block_size))
 		
 		@classmethod
 		def linear_nodelay_wifa_pair(cls, block_size=8, memory_size=32):
@@ -314,75 +417,6 @@ def automaton_factory(base_ring):
 			ns, ni = cls.nonlinear_nodelay_wifa_pair(block_size=block_size, memory_size=memory_size)
 			return ns @ ls, li @ ni
 		
-		def transition(self, x, history):
-			"""
-			Takes the input symbol `x` (vector over a ring)
-			and the automaton state (`history`) collection (preferably queue) of vectors.
-			Inserts the new state vector at position 0 in `history` and deletes the tail
-			if `history` is longer than memory order.
-			Returns the output symbol. The automaton state (`history`) is modified in place.
-			"""
-			
-			state = {}
-			for t, sh in enumerate(history):
-				for i, si in enumerate(sh):
-					state[str(self.s[t + 1, i])] = si
-			for i, xi in enumerate(x):
-				state[str(self.x[i])] = xi
-			
-			y = self.output_transition(**state).evaluate()
-			s = self.state_transition(**state).evaluate()
-			
-			history.insert(0, s)
-			while len(history) > self.memory_size():
-				history.pop()
-			return y
-		
-		def __call__(self, in_stream):
-			"Takes the stream of input symbols, yields the stream of output symbols. Starts from the state composed of zero vectors."
-			history = deque([base_vector.zero(len(self.state_transition))] * self.memory_size()) # initial state
-			for x in in_stream:
-				yield self.transition(x, history)
-		
-		def __matmul__(self, other):
-			"Automaton composition."
-			
-			shift = len(other.state_transition)
-			
-			substitution = {}
-			for i, yi in enumerate(other.output_transition):
-				substitution[str(self.x[i])] = yi
-			for t in range(self.memory_size()):
-				for i in range(len(self.state_transition)):
-					substitution[str(self.s[t + 1, i])] = self.s[t + 1, i + shift]
-			
-			output_transition = base_vector(_trans(**substitution) for _trans in self.output_transition)
-			state_transition = base_vector(chain(other.state_transition, (_trans(**substitution) for _trans in self.state_transition)))
-			
-			return self.__class__(output_transition, state_transition)
-		
-		def __and__(self, other):
-			"2 automata running in parallel (aka tuple)."
-			raise NotImplementedError
-		
-		def __or__(self, other):
-			"Choice of 1 automaton from 2 running in parallel (aka tagged union)."
-			raise NotImplementedError
-		
-		@classmethod
-		def cast(cls, begin, end):
-			"Narrow the output to the range given."
-			raise NotImplementedError
-		
-		@classmethod
-		def delay(cls, steps):
-			"Delayed sequence."
-			raise NotImplementedError
-		
-		def optimize(self):
-			self.output_transition = self.output_transition.optimized()
-			self.state_transition = self.state_transition.optimized()
-	
 	Automaton.base_ring = base_ring
 	Automaton.base_const_vector = base_const_vector
 	Automaton.base_const_matrix = base_const_matrix
@@ -397,7 +431,7 @@ if __debug__:
 	import pickle
 	from itertools import chain, tee
 	
-	def test_automaton(Ring, block_size, memblock_size, length):
+	def test_automaton_composition(Ring, block_size, memblock_size, length):
 		print("Automaton composition test")
 		print(" algebra:", Ring, ", data block size:", block_size, ", memory block size:", memblock_size, ", stream length:", length)
 		
@@ -422,15 +456,55 @@ if __debug__:
 			automaton2 = Automaton(Vector.random(dimension=block_size, variables=variables, order=i), Vector.random(dimension=memblock_size, variables=variables, order=i))
 			automaton3 = automaton1 @ automaton2
 			
+			print("  optimizing automata...")
 			automaton1.optimize()
 			automaton2.optimize()
 			automaton3.optimize()
 			
+			print("  encryption test...")
 			input1, input2 = tee(automaton_input())
-			for a, b in zip(automaton3(input1), automaton1(automaton2(input2))):
+			for n, (a, b) in enumerate(zip(automaton3(input1), automaton1(automaton2(input2)))):
+				print(n, a, b)
 				assert a == b
 	
-	def test_mixer(Ring, block_size, memblock_size, length):
+	def test_state_mixing(Ring, block_size, memblock_size, length):
+		print("State mixing test")
+		print(" algebra:", Ring, ", data block size:", block_size, ", memory block size:", memblock_size, ", stream length:", length)
+		
+		Automaton = automaton_factory(Ring)
+		Vector = Automaton.base_vector
+		ConstVector = Automaton.base_const_vector
+		
+		x = Vector([Automaton.x[_i] for _i in range(block_size)])
+		s_1 = Vector([Automaton.s[1, _i] for _i in range(memblock_size)])
+		s_2 = Vector([Automaton.s[2, _i] for _i in range(memblock_size)])
+		s_3 = Vector([Automaton.s[3, _i] for _i in range(memblock_size)])
+		
+		variables = list(x) + list(s_1) + list(s_2) + list(s_3)
+		
+		def automaton_input():
+			for i in range(length):
+				yield ConstVector.random(block_size)
+		
+		for i in range(5):
+			print(" round", i)
+			automaton1 = Automaton(Vector.random(dimension=block_size, variables=variables, order=i), Vector.random(dimension=memblock_size, variables=variables, order=i))
+			automaton2 = Automaton(state_transition=Vector(automaton1.state_transition), output_transition=Vector(automaton1.output_transition))
+			automaton2.mix_states()
+			
+			automaton1.optimize()
+			automaton2.optimize()
+			
+			#print(automaton1.output_transition)
+			#print(automaton1.state_transition)
+			#print(automaton2.output_transition)
+			#print(automaton2.state_transition)
+			
+			input1, input2 = tee(automaton_input())
+			for a, b in zip(automaton1(input1), automaton2(input2)):
+				assert a == b
+	
+	def test_fapkc_encryption(Ring, block_size, memblock_size, length):
 		print("FAPKC encryption / decryption test")
 		print(" algebra:", Ring, ", data block size:", block_size, ", memory block size:", memblock_size, ", stream length:", length)
 		
@@ -449,7 +523,7 @@ if __debug__:
 			for a, b in zip(input1, unmixer(mixer(input2))):
 				assert a == b
 	
-	def test_homomorphism(Ring, block_size, memblock_size, length):
+	def test_homomorphic_encryption(Ring, block_size, memblock_size, length):
 		print("Gonzalez-Llamas homomorphic encryption test")
 		print(" algebra:", Ring, ", data block size:", block_size, ", memory block size:", memblock_size, ", stream length:", length)
 		
@@ -473,17 +547,29 @@ if __debug__:
 			print("  generating automata...")
 			mixer, unmixer = Automaton.linear_nodelay_wifa_pair(block_size=block_size, memory_size=4)
 			plain_automaton = Automaton(Vector.random(dimension=block_size, variables=variables, order=3), Vector.random(dimension=memblock_size, variables=variables, order=3))
-			mixer.optimize()
-			unmixer.optimize()
-			plain_automaton.optimize()
-
+			
 			print("  composing automata...")
-			homo_automaton = mixer @ plain_automaton @ unmixer			
+			homo_automaton = mixer @ plain_automaton @ unmixer
+			homo_automaton.mix_states()
+			
+			print("  optimizing automata...")
+			print(f"   mixer: {mixer.output_transition.circuit_size()} {mixer.state_transition.circuit_size()} {mixer.output_transition.dimension} {mixer.state_transition.dimension}")
+			mixer.optimize()
+			print(f"          {mixer.output_transition.circuit_size()} {mixer.state_transition.circuit_size()}")
+			print(f"   unmixer: {unmixer.output_transition.circuit_size()} {unmixer.state_transition.circuit_size()} {unmixer.output_transition.dimension} {unmixer.state_transition.dimension}")
+			unmixer.optimize()
+			print(f"            {unmixer.output_transition.circuit_size()} {unmixer.state_transition.circuit_size()}")
+			print(f"   plain: {plain_automaton.output_transition.circuit_size()} {plain_automaton.state_transition.circuit_size()} {plain_automaton.output_transition.dimension} {plain_automaton.state_transition.dimension}")
+			plain_automaton.optimize()
+			print(f"          {plain_automaton.output_transition.circuit_size()} {plain_automaton.state_transition.circuit_size()}")
+			print(f"   homomorphic: {homo_automaton.output_transition.circuit_size()} {homo_automaton.state_transition.circuit_size()} {homo_automaton.output_transition.dimension} {homo_automaton.state_transition.dimension}")
 			homo_automaton.optimize()
+			print(f"                {homo_automaton.output_transition.circuit_size()} {homo_automaton.state_transition.circuit_size()}")
 			
 			print("  encryption/decryption test...")
 			input1, input2 = tee(automaton_input())
-			for a, b in zip(plain_automaton(input1), unmixer(homo_automaton(mixer(input2)))):
+			for n, (a, b) in enumerate(zip(plain_automaton(input1), unmixer(homo_automaton(mixer(input2))))):
+				print(n, a, b)
 				assert a == b
 	
 	def automaton_test_suite(verbose=False):
@@ -532,14 +618,14 @@ if __debug__:
 			if verbose: print("test ModularRing(size={})".format(i))
 			ring = ModularRing.get_algebra(size=i)
 			if verbose: print(" automaton test")
-			test_automaton(ring)
+			test_automaton_composition(ring)
 		'''
 		
 		if verbose: print()
 		if verbose: print("test BooleanRing()")
 		ring = BooleanRing.get_algebra()
 		if verbose: print(" automaton test")
-		test_automaton(ring)
+		test_automaton_composition(ring)
 		
 		'''
 		for i in (2, 3, 4, 5, 16, 64, 128, 512, 1024):
@@ -547,7 +633,7 @@ if __debug__:
 			if verbose: print("test GaloisRing(size={})".format(i))
 			field = GaloisField.get_algebra(size=i)
 			if verbose: print(" automaton test")
-			test_automaton(field)
+			test_automaton_composition(field)
 		
 		assert BinaryRing.get_algebra(exponent=1)(1) != RijndaelRing(1)
 		
@@ -556,27 +642,31 @@ if __debug__:
 			if verbose: print("test BinaryRing(exponent={})".format(i))
 			field = BinaryRing.get_algebra(exponent=i)
 			if verbose: print(" automaton test")
-			test_automaton(field)
+			test_automaton_composition(field)
 		'''
 		
 		if verbose: print()
 		if verbose: print("test RijndaelField()")
 		field = RijndaelField
 		if verbose: print(" automaton test")
-		test_automaton(field)
+		test_automaton_composition(field)
 		
-	__all__ = __all__ + ('test_automaton', 'automaton_test_suite',)
+	__all__ = __all__ + ('test_automaton_composition', 'test_fapkc_encryption', 'test_homomorphic_encryption', 'automaton_test_suite',)
 
 
 if __debug__ and __name__ == '__main__':
-	test_automaton(BooleanRing.get_algebra(), 8, 4, 256)
-	test_automaton(RijndaelField.get_algebra(), 4, 2, 64)
+	with parallel():
+		test_automaton_composition(BooleanRing.get_algebra(), 8, 4, 256)
+		test_automaton_composition(RijndaelField.get_algebra(), 4, 2, 64)
 	
-	test_mixer(BooleanRing.get_algebra(), 8, 4, 16)
-	test_mixer(RijndaelField.get_algebra(), 4, 2, 16)
+		test_state_mixing(BooleanRing.get_algebra(), 8, 4, 256)
+		test_state_mixing(RijndaelField.get_algebra(), 4, 2, 64)
 	
-	test_homomorphism(BooleanRing.get_algebra(), 8, 4, 256)
-	test_homomorphism(RijndaelField.get_algebra(), 4, 2, 16)
+		test_fapkc_encryption(BooleanRing.get_algebra(), 8, 4, 16)
+		test_fapkc_encryption(RijndaelField.get_algebra(), 4, 2, 16)
+	
+		test_homomorphic_encryption(BooleanRing.get_algebra(), 8, 4, 32)
+		test_homomorphic_encryption(RijndaelField.get_algebra(), 4, 2, 8)
 	
 	#Automaton = automaton_factory(BooleanRing.get_algebra())
 	#Vector = Automaton.base_vector
