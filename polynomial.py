@@ -838,8 +838,8 @@ class Polynomial(Immutable, AlgebraicStructure):
 		#print("optimize", self.circuit_size(), hex(hash(str(self))))
 		
 		#smallest_circuit = flat.__optimize_smallest(flat.__optimize_additive_form().__optimize_equivalent_forms())
-		smallest_circuit = self.flatten().__optimize_additive_form().__optimize_common_factors()
-		#smallest_circuit = self.flatten().__optimize_additive_form()
+		#smallest_circuit = self.flatten().__optimize_additive_form().__optimize_common_factors()
+		smallest_circuit = self.flatten().__optimize_additive_form()
 		
 		smallest_circuit.is_optimized = True
 		if self.canonical_caching and hasattr(self, 'canonical_cache'): smallest_circuit.canonical_cache = self.canonical_cache
@@ -1113,7 +1113,7 @@ class Polynomial(Immutable, AlgebraicStructure):
 	@staticmethod
 	def __monomial_order(monomial):
 		if not monomial.is_canonical_monomial():
-			print(monomial)
+			#print(monomial)
 			raise ValueError("Argument must be in a canonical form.")
 		
 		if monomial.operator not in [monomial.symbol.mul, monomial.symbol.const, monomial.symbol.var]:
@@ -1361,30 +1361,32 @@ class Polynomial(Immutable, AlgebraicStructure):
 	def __int__(self):
 		return int(self.evaluate())
 	
-	def compile(self, name, module):
+	def compile(self, name, compiler):
 		sorted_vars = sorted([str(_var) for _var in self.variables()])
 		try:
 			bl = self.algebra.exponent
 		except AttributeError:
 			bl = (self.algebra.base_ring.size - 1).bit_length()
-		builder = module.build_function(name, (8 * ((bl - 1) // 8 + 1)) if bl > 1 else 8, sorted_vars)
-		ring = self.algebra.base_ring
-		args = dict((_key, ring(_value)) for (_key, _value) in builder.args.items())
-		result = self(**args).evaluate()
-		try:
-			res_val = result.ring_value
-		except AttributeError:
-			res_val = result.binary_field_value
-		builder.ret(res_val)
+		bits = (8 * ((bl - 1) // 8 + 1)) if bl > 1 else 8
+		
+		#print(bits)
+		
+		@compiler.function(name=name, bits=bits, arg_count=len(sorted_vars))
+		def evaluate_polynomial(*args):
+			result = self(**dict(zip(sorted_vars, [self.algebra.const(_arg) for _arg in args]))).evaluate()
+			try:
+				return result.ring_value
+			except AttributeError:
+				return result.binary_field_value
 	
-	def wrap_compiled(self, name, engine):
-		compiled = getattr(engine, name)
+	def wrap_compiled(self, name, code):
+		compiled = code.symbol[name]
 		sorted_vars = sorted([str(_var) for _var in self.variables()])
 		ring = self.algebra.base_ring
-		def fn(**kwargs):
-			#print(sorted_vars, dict((_k, int(_v)) for (_k, _v) in kwargs.items()))
+		def wrapped(**kwargs):
 			return ring(compiled(*[int(kwargs[_v]) for _v in sorted_vars]))
-		return fn
+		wrapped.__name__ = name
+		return wrapped
 
 
 if __debug__:
@@ -1665,22 +1667,31 @@ if __debug__ and __name__ == '__main__':
 	#test_optimization(Polynomial.get_algebra(base_ring=BooleanRing.get_algebra()))
 	
 	from itertools import product
-	from jit_types import Module
+	from jit_types import Compiler
 	
-	module = Module()
+	compiler = Compiler()
 	
-	polynomial = Polynomial.get_algebra(base_ring=ModularRing.get_algebra(size=7))
+	#polynomial = Polynomial.get_algebra(base_ring=ModularRing.get_algebra(size=301))
 	#polynomial = Polynomial.get_algebra(base_ring=BooleanRing.get_algebra())
-	#polynomial = Polynomial.get_algebra(base_ring=RijndaelField.get_algebra())
+	polynomial = Polynomial.get_algebra(base_ring=RijndaelField.get_algebra())
+	#polynomial = Polynomial.get_algebra(base_ring=BinaryField.get_algebra(exponent=2, reducing_polynomial_bitfield=0b111))
 	v = list(map(polynomial.var, 'ab'))
-	p1 = polynomial.random(variables=v, order=2)
-	p1.compile('p1', module)
-	print(p1)
-	engine = module.compile()
-	p1c = p1.wrap_compiled('p1', engine)
+	#p1 = polynomial.random(variables=v, order=2)
+	a, b = v
+	p1 = a * b
+	p1.compile('p1', compiler)
+	#print(p1)
 	
-	print(p1(a=polynomial.base_ring(3), b=polynomial.base_ring(1)).evaluate())
-	print(p1c(a=polynomial.base_ring(3), b=polynomial.base_ring(1)))
+	print(compiler)
+	
+	code = compiler.compile()
+	
+	p1c = p1.wrap_compiled('p1', code)
+	
+	#va = polynomial.base_ring.random()
+	#vb = polynomial.base_ring.random()
+	#print(p1(a=va, b=vb).evaluate())
+	#print(p1c(a=va, b=vb))
 	
 	for vs in range(100):
 		a = polynomial.base_ring.random()

@@ -4,11 +4,13 @@
 
 from collections import deque
 from itertools import product
+from time import time
 
 from utils import memoize, parallel
 from rings import *
 from polynomial import *
 from linear import *
+from jit_types import Compiler
 
 
 __all__ = 'automaton_factory',
@@ -644,10 +646,13 @@ if __debug__:
 			plain_automaton = Automaton(Vector.random(dimension=block_size, variables=variables, order=3), Vector.random(dimension=memblock_size, variables=variables, order=3))
 			
 			print("  composing automata...")
+			start_time = time()
 			homo_automaton = mixer @ plain_automaton @ unmixer
 			homo_automaton.mix_states()
+			print("   time:", int(time() - start_time))
 			
 			print("  optimizing automata...")
+			start_time = time()
 			print(f"   mixer: {mixer.output_transition.circuit_size()} {mixer.state_transition.circuit_size()} {mixer.output_transition.dimension} {mixer.state_transition.dimension}")
 			mixer.optimize()
 			print(f"          {mixer.output_transition.circuit_size()} {mixer.state_transition.circuit_size()}")
@@ -660,25 +665,31 @@ if __debug__:
 			print(f"   homomorphic: {homo_automaton.output_transition.circuit_size()} {homo_automaton.state_transition.circuit_size()} {homo_automaton.output_transition.dimension} {homo_automaton.state_transition.dimension}")
 			homo_automaton.optimize()
 			print(f"                {homo_automaton.output_transition.circuit_size()} {homo_automaton.state_transition.circuit_size()}")
-
+			print("   time:", int(time() - start_time))
+			
 			print("  compiling automata...")
-			from jit_types import Module
-			module = Module()
-			mixer.compile('m', module)
-			unmixer.compile('u', module)
-			plain_automaton.compile('p', module)
-			homo_automaton.compile('h', module)
-			engine = module.compile()
-			mixer = mixer.wrap_compiled('m', engine)
-			unmixer = unmixer.wrap_compiled('u', engine)
-			plain_automaton = plain_automaton.wrap_compiled('p', engine)
-			homo_automaton = homo_automaton.wrap_compiled('h', engine)
+			start_time = time()
+			compiler = Compiler()
+			with parallel(0):
+				mixer.compile('m', compiler)
+				unmixer.compile('u', compiler)
+				plain_automaton.compile('p', compiler)
+				homo_automaton.compile('h', compiler)
+			code = compiler.compile()
+			mixer = mixer.wrap_compiled('m', code)
+			unmixer = unmixer.wrap_compiled('u', code)
+			plain_automaton = plain_automaton.wrap_compiled('p', code)
+			homo_automaton = homo_automaton.wrap_compiled('h', code)
+			print("   time:", int(time() - start_time))
 			
 			print("  encryption/decryption test...")
+			start_time = time()
 			input1, input2 = tee(automaton_input())
-			for n, (a, b) in enumerate(zip(plain_automaton(input1), unmixer(homo_automaton(mixer(input2))))):
-				print(n, a, b)
-				assert a == b
+			with code:
+				for n, (a, b) in enumerate(zip(plain_automaton(input1), unmixer(homo_automaton(mixer(input2))))):
+					print(n, a, b)
+					assert a == b
+			print("   time:", int(time() - start_time))
 	
 	def automaton_test_suite(verbose=False):
 		if verbose: print("running test suite")
@@ -777,7 +788,7 @@ if __debug__ and __name__ == '__main__':
 	#	test_fapkc_encryption(RijndaelField.get_algebra(), 4, 2, 16)
 	#
 		test_homomorphic_encryption(BooleanRing.get_algebra(), 8, 4, 32)
-		test_homomorphic_encryption(RijndaelField.get_algebra(), 4, 2, 8)
+		test_homomorphic_encryption(RijndaelField.get_algebra(), 1, 1, 16)
 	
 	#Automaton = automaton_factory(BooleanRing.get_algebra())
 	#Vector = Automaton.base_vector

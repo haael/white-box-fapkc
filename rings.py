@@ -454,7 +454,7 @@ class GaloisField(AbstractRing):
 				raise NotImplementedError("Implement calculation of reducing polynomial.") # TODO
 		
 		if len(reducing_polynomial) != exponent + 1:
-			raise ValueError("Reducing polynomial must have the degree `exponent = {}`.".format(exponent))
+			raise ValueError("Reducing polynomial ({}) must have the degree `exponent = {}`.".format(reducing_polynomial, exponent))
 		
 		field_value = None
 		
@@ -802,7 +802,8 @@ class BinaryField(GaloisField):
 				rpb <<= 1
 				rpb |= v
 		else:
-			rbp = reducing_polynomial_bitfield
+			rpb = reducing_polynomial_bitfield
+			reducing_polynomial = tuple((rpb >> _n) & 1 for _n in range(rpb.bit_length()))
 		
 		if reducing_polynomial_bitfield == None:
 			reducing_polynomial_bitfield = rpb
