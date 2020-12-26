@@ -838,8 +838,8 @@ class Polynomial(Immutable, AlgebraicStructure):
 		#print("optimize", self.circuit_size(), hex(hash(str(self))))
 		
 		#smallest_circuit = flat.__optimize_smallest(flat.__optimize_additive_form().__optimize_equivalent_forms())
-		#smallest_circuit = self.flatten().__optimize_additive_form().__optimize_common_factors()
-		smallest_circuit = self.flatten().__optimize_additive_form()
+		smallest_circuit = self.flatten().__optimize_additive_form().__optimize_common_factors()
+		#smallest_circuit = self.flatten().__optimize_additive_form()
 		
 		smallest_circuit.is_optimized = True
 		if self.canonical_caching and hasattr(self, 'canonical_cache'): smallest_circuit.canonical_cache = self.canonical_cache
@@ -1322,16 +1322,22 @@ class Polynomial(Immutable, AlgebraicStructure):
 		elif self.operator == self.symbol.var:
 			raise ValueError("Only ground polynomials (without variables) can be evaluated to a constant. (found var: `{}`)".format(self.operands))
 		elif self.operator == self.symbol.add:
-			result = self.algebra.base_ring.zero()
-			for operand in parallel_map(evaluate, self.operands):
+			try:
+				result = evaluate(self.operands[0])
+			except IndexError:
+				return self.algebra.base_ring.zero()
+			for operand in parallel_map(evaluate, self.operands[1:]):
 				if operand.is_jit() or not operand.is_zero():
 					result += operand
 			return result
 		elif self.operator == self.symbol.mul:
 			if any((not hasattr(_op, 'operator') or _op.operator == self.symbol.const) and (not _op.is_jit() and _op.is_zero()) for _op in self.operands):
 				return self.algebra.base_ring.zero()
-			result = self.algebra.base_ring.one()
-			for operand in parallel_map(evaluate, self.operands):
+			try:
+				result = evaluate(self.operands[0])
+			except IndexError:
+				return self.algebra.base_ring.one()
+			for operand in parallel_map(evaluate, self.operands[1:]):
 				if operand.is_jit():
 					result *= operand
 				elif operand.is_zero():
@@ -1666,37 +1672,56 @@ if __debug__ and __name__ == '__main__':
 	#polynomial_test_suite(verbose=True)
 	#test_optimization(Polynomial.get_algebra(base_ring=BooleanRing.get_algebra()))
 	
+	from pathlib import Path
 	from itertools import product
 	from jit_types import Compiler
 	
 	compiler = Compiler()
 	
+	RijndaelField.compile_tables('RijndaelField', compiler)
+	assert hasattr(RijndaelField, 'jit_log_table')
+	assert hasattr(RijndaelField, 'jit_exp_table')
+	
 	#polynomial = Polynomial.get_algebra(base_ring=ModularRing.get_algebra(size=301))
 	#polynomial = Polynomial.get_algebra(base_ring=BooleanRing.get_algebra())
 	polynomial = Polynomial.get_algebra(base_ring=RijndaelField.get_algebra())
 	#polynomial = Polynomial.get_algebra(base_ring=BinaryField.get_algebra(exponent=2, reducing_polynomial_bitfield=0b111))
-	v = list(map(polynomial.var, 'ab'))
-	#p1 = polynomial.random(variables=v, order=2)
-	a, b = v
-	p1 = a * b
+	var_list = 'abcdefgh'
+	v = list(map(polynomial.var, var_list))
+	p1 = polynomial.random(variables=v, order=7)
+	p1 = p1.optimized()
 	p1.compile('p1', compiler)
 	#print(p1)
 	
-	print(compiler)
+	#print(compiler)
 	
 	code = compiler.compile()
 	
 	p1c = p1.wrap_compiled('p1', code)
+	#Path('polynomial.bc').write_bytes(code.modules[0].as_bitcode())
+	
+	#log_table, exp_table = RijndaelField.log_exp_tables()
+	#print(log_table)
+	#print(exp_table)
+	#for n in range(1, 256):
+	#	assert exp_table[log_table[n]] == n, str(n)
 	
 	#va = polynomial.base_ring.random()
 	#vb = polynomial.base_ring.random()
-	#print(p1(a=va, b=vb).evaluate())
-	#print(p1c(a=va, b=vb))
+	#va = polynomial.base_ring(178)
+	#vb = polynomial.base_ring(1)
+	#try:
+	#	print("py", va.log(), vb.log(), int(polynomial.base_ring.exp((va.log() + vb.log()) % (polynomial.base_ring.size - 1))))
+	#	print("ll", log_table[int(va)], log_table[int(vb)], exp_table[(log_table[int(va)] + log_table[int(vb)]) % (polynomial.base_ring.size - 1)])
+	#except ZeroDivisionError:
+	#	pass
+	#print("py", int(va), "*", int(vb), "=", int(p1(a=va, b=vb).evaluate()))
+	#print("ll", int(va), "*", int(vb), "=", int(p1c(a=va, b=vb)))
 	
-	for vs in range(100):
-		a = polynomial.base_ring.random()
-		b = polynomial.base_ring.random()
-		assert p1(a=a, b=b).evaluate() == p1c(a=a, b=b)
+	with code:
+		for vs in range(100):
+			args = dict((_v, polynomial.base_ring.random()) for _v in var_list)
+			assert p1(**args).evaluate() == p1c(**args)
 
 
 

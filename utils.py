@@ -152,7 +152,7 @@ class Immutable:
 	
 	def __setattr__(self, attr, value):
 		if self.immutable and (attr not in self.mutable):
-			raise TypeError("Immutable object.")
+			raise TypeError(f"Trying to set attribute `{attr}` on an immutable object. Allowed set of mutable attributes: {' '.join(self.mutable)}")
 		else:
 			object.__setattr__(self, attr, value)
 	

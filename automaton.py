@@ -5,6 +5,7 @@
 from collections import deque
 from itertools import product
 from time import time
+from pathlib import Path
 
 from utils import memoize, parallel
 from rings import *
@@ -676,6 +677,9 @@ if __debug__:
 				plain_automaton.compile('p', compiler)
 				homo_automaton.compile('h', compiler)
 			code = compiler.compile()
+			
+			Path('automaton_' + str(i) + '.bc').write_bytes(code.modules[0].as_bitcode())
+			
 			mixer = mixer.wrap_compiled('m', code)
 			unmixer = unmixer.wrap_compiled('u', code)
 			plain_automaton = plain_automaton.wrap_compiled('p', code)
@@ -787,8 +791,8 @@ if __debug__ and __name__ == '__main__':
 	#	test_fapkc_encryption(BooleanRing.get_algebra(), 8, 4, 16)
 	#	test_fapkc_encryption(RijndaelField.get_algebra(), 4, 2, 16)
 	#
-		test_homomorphic_encryption(BooleanRing.get_algebra(), 8, 4, 32)
-		test_homomorphic_encryption(RijndaelField.get_algebra(), 1, 1, 16)
+	#	test_homomorphic_encryption(BooleanRing.get_algebra(), 8, 4, 32)
+		test_homomorphic_encryption(RijndaelField.get_algebra(), 1, 1, 64)
 	
 	#Automaton = automaton_factory(BooleanRing.get_algebra())
 	#Vector = Automaton.base_vector

@@ -558,6 +558,9 @@ class GaloisField(AbstractRing):
 			return
 		assert self.ring_value == value
 	
+	def is_jit(self):
+		return hasattr(self.field_value, 'jit_value')
+	
 	def is_zero(self):
 		return all(_v == 0 for _v in self.field_value)
 	
@@ -720,7 +723,7 @@ class GaloisField(AbstractRing):
 		else:
 			base = cls.one(*args, **kwargs) / cls.smallest_multiplicative_generator(*args, **kwargs)
 		
-		for n in range(abs(ee) % (base.algebra.size - 1)):
+		for n in range(ee):
 			result = cls.long_multiplication(result, base)
 		
 		return result
@@ -746,11 +749,33 @@ class GaloisField(AbstractRing):
 		if one.algebra != two.algebra:
 			raise ValueError
 		
+		if one.is_jit() or two.is_jit():
+			exp_table = one.algebra.jit_exp_table
+			log_table = one.algebra.jit_log_table
+			
+			if one.is_jit():
+				try:
+					first = one.field_value
+				except AttributeError:
+					first = one.binary_field_value
+			else:
+				first = int(one)
+			
+			if two.is_jit():
+				try:
+					second = two.field_value
+				except AttributeError:
+					second = two.binary_field_value
+			else:
+				second = int(two)
+			
+			return one.algebra((first * second != 0) * exp_table[(log_table[first] + log_table[second]) % (one.algebra.size - 1)])
+		
 		if one.is_zero() or two.is_zero():
 			return one.algebra.zero()
 		
-		return one.algebra.exp(one.log() + two.log())
-
+		return one.algebra.exp((one.log() + two.log()) % (one.algebra.size - 1))
+	
 	def __mul__(self, other):
 		try:
 			if self.algebra != other.algebra:
@@ -758,16 +783,43 @@ class GaloisField(AbstractRing):
 		except AttributeError:
 			return NotImplemented
 		
-		if self.is_jit() or other.is_jit():
+		#if __debug__:
+		#	l = self.long_multiplication(self, other)
+		#	s = self.slipstick_multiplication(self, other)
+		#	assert l == s
+		#	return s
+		
+		try:
+			return self.slipstick_multiplication(self, other)
+		except AttributeError:
 			return self.long_multiplication(self, other)
-		
-		if __debug__:
-			l = self.long_multiplication(self, other)
-			s = self.slipstick_multiplication(self, other)
-			assert l == s
-			return s
-		
-		return self.slipstick_multiplication(self, other)
+	
+	@classmethod
+	def log_exp_tables(cls, *args, **kwargs):
+		algebra = cls.get_algebra(*args, **kwargs)
+		log_table = [0] * algebra.size
+		exp_table = [0] * algebra.size
+		for m in algebra.domain():
+			try:
+				l = m.log()
+			except ZeroDivisionError:
+				continue
+			assert 0 <= l <= 255
+			
+			b = int(m)
+			assert 1 <= b <= 256
+			
+			log_table[b] = l
+			exp_table[l] = b
+		return log_table, exp_table
+	
+	@classmethod
+	def compile_tables(cls, name, compiler, *args, **kwargs):
+		algebra = cls.get_algebra(*args, **kwargs)
+		log_table, exp_table = algebra.log_exp_tables()
+		bits = (algebra.size - 1).bit_length()
+		algebra.jit_log_table = compiler.array(name + '.jit_log_table', bits, log_table)
+		algebra.jit_exp_table = compiler.array(name + '.jit_exp_table', bits, exp_table)
 
 
 class BinaryField(GaloisField):

@@ -8,7 +8,7 @@ from llvmlite.ir._utils import DuplicatedNameError
 import ctypes
 
 
-__all__ = 'Compiler', 'Code', 'Function', 'Integer'
+__all__ = 'Compiler', 'Code', 'Function', 'Integer', 'Array'
 
 
 compiler_initialized = False
@@ -54,10 +54,12 @@ class Code:
 		pm = llvmlite.binding.ModulePassManager()
 		pmb.populate(pm)
 		
+		self.modules = []
 		for module in modules:
 			ll_module = llvmlite.binding.parse_assembly(str(module))
 			pm.run(ll_module)
 			self.engine.add_module(ll_module)
+		self.modules.append(ll_module)
 		self.engine.finalize_object()
 		
 		self.symbol = {}
@@ -76,10 +78,28 @@ class Code:
 		self.engine.run_static_destructors()
 
 
+class Array:
+	def __init__(self, array):
+		self.array = array
+	
+	def __getitem__(self, item):
+		builder = get_builder()
+		index = builder.zext(Integer(item).jit_value, llvmlite.ir.IntType(16))
+		return Integer(builder.load(builder.gep(self.array, [Integer(0).jit_value, index]))) # TODO: overflow
+
+
 class Compiler:
 	def __init__(self, name=''):
 		self.module = llvmlite.ir.Module(name=name)
 		self.defined_functions = {}
+	
+	def array(self, name, bits, elements):
+		itype = llvmlite.ir.IntType(bits)
+		value = llvmlite.ir.Constant.literal_array([itype(_el) for _el in elements])
+		variable = llvmlite.ir.GlobalVariable(self.module, value.type, name)
+		variable.initializer = value
+		variable.global_constant = True
+		return Array(variable)
 	
 	def function(self, bits, arg_count=None, name=None):
 		return lambda callback: self.declare_function(name, arg_count, bits, callback)
@@ -488,7 +508,14 @@ class Integer:
 		
 		return self.__class__(builder.sdiv(first, second))
 	
+	def __ne__(self, other):
+		other = self.__class__(other)
+		builder = get_builder()
+		return self.__class__(builder.icmp_unsigned('!=', self.jit_value, other.jit_value))
+	
 	__bool__ = None
+	
+	__hash__ = None
 
 
 if __debug__ and __name__ == '__main__':

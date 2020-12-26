@@ -29,6 +29,8 @@ class Algebra(Immutable):
 			raise TypeError("Provide all keyword arguments for algebra instance. Missing arguments: {}.".format(", ".join(frozenset(init.algebra_kwparams_names) - frozenset(self.algebra_kwparams.keys()))))
 		
 		self.mutable.add('hash_cache')
+		self.mutable.add('jit_log_table')
+		self.mutable.add('jit_exp_table')
 		self.immutable = True
 	
 	def __getattr__(self, key):
