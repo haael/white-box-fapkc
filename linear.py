@@ -40,7 +40,7 @@ class Vector(AlgebraicStructure):
 			self.value = list(base_ring((init // size**_n) % size) for _n in range(dimension))
 		except (TypeError, AttributeError):
 			if base_ring == None:
-				self.value = list(init)
+				self.value = list(init) # TODO: base_ring
 				try:
 					base_ring = self.value[0].algebra
 				except IndexError:
@@ -50,7 +50,7 @@ class Vector(AlgebraicStructure):
 		
 		assert len(self) == dimension if (dimension != None) else True
 		assert all(self[_key] == _value for (_key, _value) in zip(self.keys(), self.values()))		
-		if not all((_value.algebra == base_ring or (base_ring.algebra_name == 'Polynomial' and _value.algebra == base_ring.base_ring)) for _value in self):
+		if not all(_value.algebra == base_ring for _value in self):
 			raise ValueError("All components of the vector {} must be from the same ring {}.".format([str(_v) for _v in self], base_ring))
 		
 		AlgebraicStructure.__init__(self, base_ring=base_ring)
@@ -263,6 +263,9 @@ class Vector(AlgebraicStructure):
 		except AttributeError:
 			return tensor
 	
+	def __or__(self, other):
+		return self.algebra(chain(iter(self), iter(other)))
+	
 	def pivot(self):
 		"Position and value of the first nonzero component. Returns the vector's length and GF 0 if all components are zero."
 		for n, c in enumerate(self):
@@ -279,7 +282,11 @@ class Vector(AlgebraicStructure):
 	
 	def evaluate(self):
 		#return self.algebra(list(map(evaluate, self)))
-		return self.algebra(list(parallel_map(evaluate, self)))
+		try:
+			algebra = self.__class__.get_algebra(base_ring=self.algebra.base_ring.base_ring)
+		except AttributeError:
+			algebra = self.algebra
+		return algebra(list(parallel_map(evaluate, self)))
 	
 	def zip_vars(self, v):
 		return dict(zip((str(_v) for _v in v), self))
@@ -304,6 +311,9 @@ class Vector(AlgebraicStructure):
 		def fn(**kwargs):
 			return algebra([_w(**kwargs) for _w in wrapped])
 		return fn
+	
+	def is_zero(self):
+		return all(_element.is_zero() for _element in self)
 
 
 class Matrix(AlgebraicStructure):
@@ -332,38 +342,59 @@ class Matrix(AlgebraicStructure):
 		
 		self.column_dimension = column_dimension
 		self.row_dimension = row_dimension
-		
+				
 		self.value = None
 		
 		if self.value is None:
 			try:
-				self.value = init.value[:]
+				if base_ring == None or init.algebra.base_ring == base_ring:
+					self.value = init.value[:]
+				else:
+					self.value = [base_ring(_element) for _element in init.value]
 			except AttributeError:
 				pass
+			#print("00 matrix initialized", base_ring)
 		
 		if self.value is None:
 			if init is None:
 				if len(self) and (base_ring == None):
 					base_ring = BooleanRing.get_algebra()
 				self.value = [base_ring.zero()] * len(self)
+			#print("0 matrix initialized", base_ring)
 		
 		if self.value is None:
 			try:
-				self.value = [init[_i, _j] for (_i, _j) in self.keys()]
+				if base_ring is None:
+					try:
+						base_ring = init[0, 0].algebra
+					except IndexError:
+						raise ValueError("For matrix of dimension 0, 0 `base_ring` is mandatory.")
+				
+				self.value = [base_ring(init[_i, _j]) for (_i, _j) in self.keys()]
 			except TypeError:
 				pass
+			#print("1 matrix initialized", base_ring)
 		
 		if self.value is None:
 			try:
-				self.value = [init(_i, _j) for (_i, _j) in self.keys()]
+				if base_ring is None:
+					#print("base_ring is None")
+					try:
+						base_ring = init(0, 0).algebra
+					except IndexError:
+						raise ValueError("For matrix of dimension 0, 0 `base_ring` is mandatory.")
+				
+				self.value = [base_ring(init(_i, _j)) for (_i, _j) in self.keys()]
 			except TypeError:
 				raise
+			#print("2 matrix initialized", base_ring)
 		
 		if self.value is None:
 			try:
-				self.value = list(init)
+				self.value = list(init) # TODO: base_ring
 			except TypeError:
 				pass
+			#print("3 matrix initialized", base_ring)
 		
 		if self.value is None:
 			self.value = [init] * len(self)
@@ -374,12 +405,15 @@ class Matrix(AlgebraicStructure):
 		
 		if base_ring is None:
 			try:
-				base_ring = self.value[0].algebra
+				base_ring = self[0, 0].algebra
 			except IndexError:
 				raise ValueError("For matrix of dimension 0, 0 `base_ring` is mandatory.")
 		
-		if not all((_value.algebra == base_ring or not (_value.algebra == 'Polynomial' and _value.algebra.base_ring == base_ring)) for _value in self):
-			raise ValueError("All components of the matrix must be from the same ring.")
+		if not all(_value.algebra == base_ring for _value in self):
+			raise ValueError(f"All components of the matrix must be from the same ring: {base_ring}")
+		
+		#print(base_ring)
+		#print([_value.algebra for _value in self])
 		
 		assert base_ring != None
 		if vector_algebra == None:
@@ -406,6 +440,23 @@ class Matrix(AlgebraicStructure):
 	
 	def __bool__(self):
 		return any(_x for _x in self.values())
+	
+	def is_zero(self):
+		return all(_element.is_zero() for _element in self.values())
+	
+	def is_one(self):
+		if self.column_dimension != self.row_dimension:
+			return False
+		
+		for i, j in self.keys():
+			if i == j:
+				if not self[i, j].is_one():
+					return False
+			else:
+				if not self[i, j].is_zero():
+					return False
+		
+		return True
 	
 	def __eq__(self, other):
 		if self.column_dimension != other.column_dimension or self.row_dimension != other.row_dimension:
@@ -791,6 +842,7 @@ class Matrix(AlgebraicStructure):
 		
 		inverse = straight.transposed()
 		
+		# FIXME: doesn't work for Rijndael field
 		assert straight @ inverse == inverse @ straight == cls.unit(dimension, base_ring=base_ring, vector_algebra=vector_algebra)
 		return straight, inverse
 	
@@ -895,14 +947,32 @@ class Matrix(AlgebraicStructure):
 			
 			"Matrix product."
 			
-			return self.algebra((lambda _i, _j: sum((self[_i, _k] * other[_k, _j] for _k in range(self.row_dimension)), self.algebra.base_ring.zero())), column_dimension=self.column_dimension, row_dimension=other.row_dimension)
+			algebra1 = self.algebra
+			algebra2 = other.algebra
+			if algebra1.base_ring.algebra_name == 'Polynomial':
+				algebra = algebra1
+			elif algebra2.base_ring.algebra_name == 'Polynomial':
+				algebra = algebra2
+			else:
+				algebra = algebra1
+			
+			return algebra((lambda _i, _j: sum((self[_i, _k] * other[_k, _j] for _k in range(self.row_dimension)), algebra.base_ring.zero())), column_dimension=self.column_dimension, row_dimension=other.row_dimension)
 		except AttributeError:
 			if self.row_dimension != other.dimension:
 				raise ValueError("Trying to multiply a matrix through a vector of incompatible dimension.")
 			
 			"Linear transformation of a vector."
 			
-			return self.algebra.vector_algebra(sum((self[_i, _k] * other[_k] for _k in range(self.row_dimension)), self.algebra.base_ring.zero()) for _i in range(self.column_dimension))
+			algebra1 = self.algebra
+			algebra2 = other.algebra
+			if algebra1.base_ring.algebra_name == 'Polynomial':
+				algebra = algebra1
+			elif algebra2.base_ring.algebra_name == 'Polynomial':
+				algebra = algebra2
+			else:
+				algebra = algebra1
+			
+			return algebra.vector_algebra(sum((self[_i, _k] * other[_k] for _k in range(self.row_dimension)), algebra.base_ring.zero()) for _i in range(self.column_dimension))
 		
 		# TODO: multiplication by scalar
 	
@@ -1090,6 +1160,7 @@ if __debug__:
 		Ring = Vector.base_ring
 		
 		p1 = Vector.random(8)
+		assert len(p1) == 8
 		assert p1[...] == p1
 		
 		p2 = pickle.loads(pickle.dumps(p1))
@@ -1284,7 +1355,7 @@ if __debug__:
 		
 		assert match == redc
 	
-	def test_matrix_random_operations(Matrix):
+	def test_matrix_random_operations(Matrix, PolyMatrix):
 		import time
 		
 		start = time.process_time()
@@ -1293,7 +1364,7 @@ if __debug__:
 		print("  1 ", end="")
 		Vector = Matrix.vector_algebra
 		Ring = Matrix.base_ring
-		Polynomial = globals()['Polynomial'].get_algebra(base_ring=Matrix.base_ring)
+		Polynomial = PolyMatrix.base_ring
 		current = time.process_time()
 		print(current - start, current - prev)
 		prev = current
@@ -1331,17 +1402,17 @@ if __debug__:
 		prev = current
 		
 		print("  5 ", end="")
-		cs0, ci0 = Matrix.random_variable_cycle_pair(8, x0 + x4, cycle_length=5)
-		cs1, ci1 = Matrix.random_variable_cycle_pair(8, x1 + x5, cycle_length=5)
-		cs2, ci2 = Matrix.random_variable_cycle_pair(8, x2 + x6, cycle_length=5)
-		cs3, ci3 = Matrix.random_variable_cycle_pair(8, x3 + x7, cycle_length=5)
+		cs0, ci0 = PolyMatrix.random_variable_cycle_pair(8, x0 + x4, cycle_length=5)
+		cs1, ci1 = PolyMatrix.random_variable_cycle_pair(8, x1 + x5, cycle_length=5)
+		#cs2, ci2 = PolyMatrix.random_variable_cycle_pair(8, x2 + x6, cycle_length=5)
+		#cs3, ci3 = PolyMatrix.random_variable_cycle_pair(8, x3 + x7, cycle_length=5)
 		current = time.process_time()
 		print(current - start, current - prev)
 		prev = current
 		
 		print("  6 ", end="")
-		cs = cs0 @ cs1 @ cs2 @ cs3
-		ci = ci3 @ ci2 @ ci1 @ ci0
+		cs = cs0 @ cs1 #cs0 @ cs1 @ cs2 @ cs3
+		ci = ci1 @ ci0 #ci3 @ ci2 @ ci1 @ ci0
 		current = time.process_time()
 		print(current - start, current - prev)
 		prev = current
@@ -1359,12 +1430,12 @@ if __debug__:
 		current = time.process_time()
 		print(current - start, current - prev)
 		prev = current
-
+		
 		print("  9.0 ", end="")
 		current = time.process_time()
 		print(current - start, current - prev)
 		prev = current
-		print(cs.circuit_size(), ci.circuit_size())
+		print("  ", cs.circuit_size(), ci.circuit_size())
 		
 		#print("  9.1 ", end="")
 		#with parallel():
@@ -1382,12 +1453,7 @@ if __debug__:
 		current = time.process_time()
 		print(current - start, current - prev)
 		prev = current
-		print(cs.circuit_size(), ci.circuit_size())
-		
-		#print(str(cs))
-		#print()
-		#print(str(ci))
-		#print()
+		print("  ", cs.circuit_size(), ci.circuit_size())
 		
 		print("  10 ", end="")
 		with parallel():
@@ -1403,10 +1469,6 @@ if __debug__:
 		print(current - start, current - prev)
 		prev = current
 		
-		#csA.print_bool()
-		#ciA.print_bool()
-		#print()
-		
 		print("  12 ", end="")
 		assert csA @ ciA == ciA @ csA == Matrix.unit(8)
 		current = time.process_time()
@@ -1420,16 +1482,12 @@ if __debug__:
 		print(current - start, current - prev)
 		prev = current
 		
-		#csB.print_bool()
-		#ciB.print_bool()
-		#print()
-		
 		print("  14 ", end="")
 		assert csB @ ciB == ciB @ csB == Matrix.unit(8)
 		current = time.process_time()
 		print(current - start, current - prev)
 		prev = current
-
+		
 		print("  15 ", end="")
 		current = time.process_time()
 		print(current - start, current - prev)
@@ -1447,10 +1505,6 @@ if __debug__:
 			if verbose: print(" matrix test")
 			test_matrix(Matrix.get_algebra(base_ring=ring))
 			
-			if i == 2:
-				if verbose: print(" matrix random operations test")
-				test_matrix_random_operations(Matrix.get_algebra(base_ring=ring))
-			
 			if i <= 256:
 				if verbose: print()
 				if verbose: print("test Polynomial(base_ring=ModularRing(size={}))".format(i))
@@ -1459,6 +1513,10 @@ if __debug__:
 				test_vector(Vector.get_algebra(base_ring=ring_polynomial))
 				if verbose: print(" matrix test")
 				test_matrix(Matrix.get_algebra(base_ring=ring_polynomial))
+				
+				if i == 2:
+					if verbose: print(" matrix random operations test")
+					test_matrix_random_operations(Matrix.get_algebra(base_ring=ring), Matrix.get_algebra(base_ring=ring_polynomial))
 		
 		if verbose: print()
 		if verbose: print("test BooleanRing()")
@@ -1467,8 +1525,6 @@ if __debug__:
 		test_vector(Vector.get_algebra(base_ring=ring))
 		if verbose: print(" matrix test")
 		test_matrix(Matrix.get_algebra(base_ring=ring))
-		if verbose: print(" matrix random operations test")
-		test_matrix_random_operations(Matrix.get_algebra(base_ring=ring))
 		
 		if verbose: print()
 		if verbose: print("test Polynomial(base_ring=BooleanRing())")
@@ -1478,6 +1534,8 @@ if __debug__:
 		test_vector(Vector.get_algebra(base_ring=ring_polynomial))
 		if verbose: print(" matrix test")
 		test_matrix(Matrix.get_algebra(base_ring=ring_polynomial))
+		if verbose: print(" matrix random operations test")
+		test_matrix_random_operations(Matrix.get_algebra(base_ring=ring), Matrix.get_algebra(base_ring=ring_polynomial))
 		
 		for i in (2,): #(3, 4, 5, 7, 8, 9, 11, 13, 16, 17, 18, 19, 23, 25, 32, 49, 64, 81, 121, 128, 256, 52, 1024):
 			if verbose: print()
@@ -1487,9 +1545,6 @@ if __debug__:
 			test_vector(Vector.get_algebra(base_ring=field))
 			if verbose: print(" matrix test")
 			test_matrix(Matrix.get_algebra(base_ring=field))
-			if i == 2 or i == 8 or i == 256:
-				if verbose: print(" matrix random operations test")
-				test_matrix_random_operations(Matrix.get_algebra(base_ring=field))
 			
 			if verbose: print()
 			if verbose: print("test Polynomial(base_ring=GaloisField(size={}))".format(i))
@@ -1498,6 +1553,10 @@ if __debug__:
 			test_vector(Vector.get_algebra(base_ring=field_polynomial))
 			if verbose: print(" matrix test")
 			test_matrix(Matrix.get_algebra(base_ring=field_polynomial))
+			
+			if i == 2 or i == 8 or i == 256:
+				if verbose: print(" matrix random operations test")
+				test_matrix_random_operations(Matrix.get_algebra(base_ring=field), Matrix.get_algebra(base_ring=field_polynomial))
 		
 		assert BinaryField.get_algebra(exponent=1)(1) != RijndaelField(1)
 		
@@ -1509,9 +1568,6 @@ if __debug__:
 			test_vector(Vector.get_algebra(base_ring=field))
 			if verbose: print(" matrix test")
 			test_matrix(Matrix.get_algebra(base_ring=field))
-			if i == 1 or i == 3 or i == 8:
-				if verbose: print(" matrix random operations test")
-				test_matrix_random_operations(Matrix.get_algebra(base_ring=field))
 			
 			if verbose: print()
 			if verbose: print("test Polynomial(base_ring=BinaryField(exponent={}))".format(i))
@@ -1520,6 +1576,9 @@ if __debug__:
 			test_vector(Vector.get_algebra(base_ring=field_polynomial))
 			if verbose: print(" matrix test")
 			test_matrix(Matrix.get_algebra(base_ring=field_polynomial))
+			if i == 1 or i == 3 or i == 8:
+				if verbose: print(" matrix random operations test")
+				test_matrix_random_operations(Matrix.get_algebra(base_ring=field), Matrix.get_algebra(base_ring=field_polynomial))
 		
 		if verbose: print()
 		if verbose: print("test RijndaelField()")
@@ -1528,8 +1587,6 @@ if __debug__:
 		test_vector(Vector.get_algebra(base_ring=field))
 		if verbose: print(" matrix test")
 		test_matrix(Matrix.get_algebra(base_ring=field))
-		#if verbose: print(" matrix random operations test")
-		#test_matrix_random_operations(Matrix.get_algebra(base_ring=field))
 		
 		if verbose: print()
 		if verbose: print("test Polynomial(base_ring=RijndaelField())")
@@ -1538,31 +1595,33 @@ if __debug__:
 		test_vector(Vector.get_algebra(base_ring=field_polynomial))
 		if verbose: print(" matrix test")
 		test_matrix(Matrix.get_algebra(base_ring=field_polynomial))
+		#if verbose: print(" matrix random operations test")
+		#test_matrix_random_operations(Matrix.get_algebra(base_ring=field), Matrix.get_algebra(base_ring=field_polynomial))
 	
 	__all__ = __all__ + ('test_vector', 'test_matrix', 'test_matrix_random_operations', 'linear_test_suite',)
 
 
 if __debug__ and __name__ == '__main__':
-	#linear_test_suite(verbose=True)
+	linear_test_suite(verbose=True)
 	
-	from jit_types import Module
-	
-	module = Module()
-	
-	ring = BooleanRing.get_algebra()
-	polynomial = Polynomial.get_algebra(base_ring=ring)
-	vector = Vector.get_algebra(base_ring=polynomial)
-	variables = list(map(polynomial.var, 'abcdefgh'))
-	v1 = vector.random(variables=variables, order=3, dimension=8)
-	
-	v1.compile('v1', module)
-	engine = module.compile()	
-	v1c = v1.wrap_compiled('v1', engine)
-	
-	r = dict((str(_v), ring.random()) for _v in variables)
-	
-	print(v1(**r).evaluate())
-	print(v1c(**r))
+	#from jit_types import Compiler
+	#
+	#compiler = Compiler()
+	#
+	#ring = BooleanRing.get_algebra()
+	#polynomial = Polynomial.get_algebra(base_ring=ring)
+	#vector = Vector.get_algebra(base_ring=polynomial)
+	#variables = list(map(polynomial.var, 'abcdefgh'))
+	#v1 = vector.random(variables=variables, order=3, dimension=8)
+	#
+	#v1.compile('v1', compiler)
+	#engine = compiler.compile()	
+	#v1c = v1.wrap_compiled('v1', engine)
+	#
+	#r = dict((str(_v), ring.random()) for _v in variables)
+	#
+	#print(v1(**r).evaluate())
+	#print(v1c(**r))
 
 
 

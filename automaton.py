@@ -79,17 +79,26 @@ def automaton_factory(base_ring):
 			for i, xi in enumerate(x):
 				state[str(self.x[i])] = xi
 			
-			y = self.output_transition(**state).evaluate()
-			s = self.state_transition(**state).evaluate()
+			y = self.output_transition(**state).canonical()
+			s = self.state_transition(**state).canonical()
 			
 			history.insert(0, s)
 			while len(history) > self.memory_length:
 				history.pop()
 			return y
 		
-		def __call__(self, in_stream):
+		def __call__(self, in_stream, initial_state=None):
 			"Takes the stream of input symbols, yields the stream of output symbols. Starts from the state composed of zero vectors."
-			history = deque([base_vector.zero(self.memory_width)] * self.memory_length) # initial state
+			
+			if initial_state == None:
+				history = deque([base_const_vector.zero(self.memory_width)] * self.memory_length) # initial state
+			else:
+				history = deque(initial_state)
+				if len(history) != self.memory_length:
+					raise ValueError("Invalid initial state length")
+				if any(_element.dimension != self.memory_width for _element in history):
+					raise ValueError("Invalid vector width in initial state")
+			
 			for x in in_stream:
 				yield self.transition(x, history)
 		
@@ -245,7 +254,7 @@ def automaton_factory(base_ring):
 		
 		@classmethod
 		def linear_delay_wifa_pair(cls, block_size=8, memory_size=32):
-			"Generate a linear FA with the delay specified by `memory_size`."
+			"Generate a linear FA with the delay specified by `memory_size`. Algorithm described briefly in 'Break Finite Automata Public Key Cryptosystem' by Feng Bao and Yoshihide Igarashi."
 			
 			class BadLuck(BaseException):
 				"Exception that is thrown when the random objects do not have desired properties and need to be generated again."
@@ -255,7 +264,7 @@ def automaton_factory(base_ring):
 				try:
 					coefficients_A = []
 					for n in range(memory_size + 1):
-						coefficients_A.append(base_matrix.random_rank(block_size, block_size - 1))
+						coefficients_A.append(base_const_matrix.random_rank(block_size, block_size - 1))
 					
 					x = [base_vector(cls.x[_i] for _i in range(block_size))]
 					for n in range(1, memory_size + 1):
@@ -263,40 +272,55 @@ def automaton_factory(base_ring):
 					
 					y = base_vector.zero(block_size)
 					for n in range(memory_size + 1):
-						y += coefficients_A[n] @ x[n]
+						#print("here", base_matrix)
+						y += base_matrix(coefficients_A[n]) @ x[n]
 					
 					automaton_A = cls(output_transition=y.optimized(), state_transition=x[0])
 					
 					del x, y
 					
-					# `P` matrix calculation
-					zero_v = base_vector.zero(block_size)
-					unit_m = base_matrix.unit(block_size)
-					zero_m = base_matrix.zero(block_size, block_size)
+					zero_v = base_const_vector.zero(block_size)
+					unit_m = base_const_matrix.unit(block_size)
+					zero_m = base_const_matrix.zero(block_size, block_size)
 					
 					matrix_A = dict()
 					for i in range(memory_size + 1):
-						for j in range(i + 1):
-							matrix_A[i, j] = coefficients_A[i - j][...]
+						for j in range(memory_size + 1):
+							if i - j >= 0:
+								matrix_A[i, j] = coefficients_A[i - j]
+							else:
+								matrix_A[i, j] = zero_m
+					
+					matrix_B = dict()
+					for i in range(memory_size + 1):
+						for j in range(memory_size):
+							if i + j + 1 < memory_size + 1:
+								matrix_B[i, j] = coefficients_A[i + j + 1]
+							else:
+								matrix_B[i, j] = zero_m
+							#print("B:", i, j, matrix_B[i, j])
 					
 					if __debug__:
-						original_A = dict((_k, _v[...]) for (_k, _v) in matrix_A.items())
-						
 						def compare_coefficients():
+							assert zero_m.is_zero()
+							assert unit_m.is_one()
+							assert zero_v.is_zero()
+							
 							for p in range(memory_size + 1):
 								for q in range(memory_size + 1):
 									c_A = zero_m[...]
 									for k in range(memory_size + 1):
 										try:
-											c_A += matrix_P[p, k] @ original_A[k, q]
+											c_A += matrix_P[p, k] @ matrix_A[k, q]
 										except KeyError:
 											pass
 									
 									try:
-										assert c_A == matrix_A[p, q]
+										assert c_A == matrix_PA[p, q]
 									except KeyError:
 										assert c_A == zero_m
 					
+					# `P` matrix calculation
 					matrix_P = dict()
 					for i in range(memory_size + 1):
 						for j in range(memory_size + 1):
@@ -309,16 +333,23 @@ def automaton_factory(base_ring):
 					#	i = -1
 					#	compare_coefficients()
 					
+					matrix_PA = dict()
+					for i, j in matrix_A.keys():
+						matrix_PA[i, j] = matrix_A[i, j][...]
+					
 					for i in reversed(range(memory_size + 1)):
+						#print("i", i)
+						
 						mm = []
 						for p in range(i + 1):
 							for q in range(p + 1):
-								mm.append(matrix_A[p, q])
+								mm.append(matrix_PA[p, q])
 						
 						pu = unit_m[...]
 						mm.append(pu)
 						
-						matrix_A[i, i].echelon(*mm)
+						#print(matrix_PA[i, i])
+						matrix_PA[i, i].echelon(*mm)
 						
 						del mm
 						
@@ -330,28 +361,28 @@ def automaton_factory(base_ring):
 						#	compare_coefficients()
 						
 						for j in range(block_size):
-							if matrix_A[0, 0][j, :] == zero_v:
+							if matrix_PA[0, 0][j, :].is_zero():
 								ll = j
 								break
 						else:
 							ll = block_size
 							#continue
 						
-						psI_m = base_matrix.diagonal([base_ring.one() if _j <  ll else base_ring.zero() for _j in range(block_size)])
-						psO_m = base_matrix.diagonal([base_ring.one() if _j >= ll else base_ring.zero() for _j in range(block_size)])
+						psI_m = base_const_matrix.diagonal([base_ring.one() if _j <  ll else base_ring.zero() for _j in range(block_size)])
+						psO_m = base_const_matrix.diagonal([base_ring.one() if _j >= ll else base_ring.zero() for _j in range(block_size)])
 						
 						matrix_Ps = dict()
 						
 						for p in range(i):
 							for q in range(p + 1):
 								for j in range(ll, block_size):
-									matrix_A[p, q][j, :] = matrix_A[p + 1, q][j, :]
+									matrix_PA[p, q][j, :] = matrix_PA[p + 1, q][j, :]
 							for q in range(memory_size + 1):
 								matrix_Ps[p, q] = psI_m @ matrix_P[p, q] + psO_m @ matrix_P[p + 1, q]
 						
 						for q in range(i + 1):
 							for j in range(ll, block_size):
-								matrix_A[i, q][j, :] = zero_v
+								matrix_PA[i, q][j, :] = zero_v
 						for q in range(memory_size + 1):
 							matrix_Ps[i, q] = psI_m @ matrix_P[i, q] + psO_m @ matrix_P[0, q]
 						
@@ -367,41 +398,71 @@ def automaton_factory(base_ring):
 						i = -1
 						compare_coefficients()
 					
-					A00 = matrix_A[0, 0]
+					A00 = matrix_PA[0, 0]
 					
 					for j in range(block_size):
-						if A00[j, :] == zero_v:
+						if A00[j, :].is_zero():
 							raise BadLuck("Leading matrix not invertible, try again.")
 					
 					A00_inv = A00.inverse()
 					
-					del A00, matrix_A
+					del A00, matrix_PA
 					
-					coefficients_P = [(A00_inv @ matrix_P[0, _j]).optimized() for _j in range(memory_size + 1)]
+					coefficients_P = [A00_inv @ matrix_P[0, _j] for _j in range(memory_size + 1)]
 					
 					coefficients_Q = [zero_m]
-					for q in range(1, memory_size + 1):
+					for q in range(memory_size):
 						r = zero_m[...]
 						for k in range(memory_size + 1):
-							r += matrix_P[0, k] @ (coefficients_A[k + q][...] if (k + q < memory_size) else zero_m[...]) # FIXME: correct?
-						coefficients_Q.append((A00_inv @ r).optimized())
+							r += matrix_P[0, k] @ matrix_B[k, q]
+						coefficients_Q.append(base_matrix(A00_inv @ r).optimized())
 					
-					x = [base_vector.zero(block_size)]
-					y = [base_vector(cls.x[_i] for _i in range(block_size))]
+					if __debug__: # final check if the second function is really an inverse of the first function
+						# input arguments
+						arg_x = dict()
+						for m in range(-memory_size, memory_size + 1):
+							arg_x[m] = base_vector([base_vector.base_ring.var('n_' + str(_i)) for _i in range(block_size)])
+						
+						# first function
+						test_y = dict()
+						for m in range(memory_size + 1):
+							test_y[m] = base_vector.zero(block_size)
+							for n in range(memory_size + 1):
+								test_y[m] += base_matrix(coefficients_A[n]) @ arg_x[n + i] # substitute arguments
+							test_y[m] = test_y[m].optimized()
+						
+						# second function
+						test_x = base_vector.zero(block_size)
+						for n in range(memory_size + 1):
+							test_x -= base_matrix(coefficients_Q[n]) @ arg_x[-n] # substitute arguments
+							test_x += base_matrix(coefficients_P[n]) @ test_y[n] # substitute the result of the first function
+						test_x = test_x.optimized()
+						
+						assert test_x == arg_x[0] # identity?
 					
-					for n in range(1, memory_size + 1):
-						x.append(base_vector(cls.s[n, _i] for _i in range(block_size)))
-						y.append(base_vector(cls.s[n, _i + block_size] for _i in range(block_size)))
-					
-					x0 = zero_v[:]
+					x = dict()
 					for n in range(memory_size + 1):
-						x0 += coefficients_Q[n] @ x[n]
-						x0 += coefficients_P[n] @ y[-n]
-					x[0] = x0.optimized()
+						if n == 0:
+							x[-n] = zero_v
+						else:
+							x[-n] = base_vector(cls.s[n, _i] for _i in range(block_size))
 					
-					automaton_B = cls(output_transition=x[0], state_transition=base_vector(list(x[0]) + list(y[0])))
+					y = dict()
+					for n in range(memory_size + 1):
+						if n == memory_size:
+							y[n] = base_vector(cls.x[_i] for _i in range(block_size))
+						else:
+							y[n] = base_vector(cls.s[memory_size - n, _i + block_size] for _i in range(block_size))
 					
-					raise NotImplementedError
+					x0 = base_vector.zero(block_size)
+					for n in range(memory_size + 1):
+						x0 -= base_matrix(coefficients_Q[n]) @ x[-n]
+						x0 += base_matrix(coefficients_P[n]) @ y[n]
+					x0 = x0.optimized()
+					
+					s = x0 | y[memory_size]
+					
+					automaton_B = cls(output_transition=x0, state_transition=s)
 					
 					return automaton_A, automaton_B
 				except BadLuck:
@@ -671,6 +732,12 @@ if __debug__:
 			print("  compiling automata...")
 			start_time = time()
 			compiler = Compiler()
+			
+			#try:
+			#	Ring.compile_tables('RijndaelField', compiler)
+			#except AttributeError:
+			#	pass
+			
 			with parallel(0):
 				mixer.compile('m', compiler)
 				unmixer.compile('u', compiler)
@@ -678,7 +745,7 @@ if __debug__:
 				homo_automaton.compile('h', compiler)
 			code = compiler.compile()
 			
-			Path('automaton_' + str(i) + '.bc').write_bytes(code.modules[0].as_bitcode())
+			#Path('automaton_' + str(i) + '.bc').write_bytes(code.modules[0].as_bitcode())
 			
 			mixer = mixer.wrap_compiled('m', code)
 			unmixer = unmixer.wrap_compiled('u', code)
@@ -699,37 +766,26 @@ if __debug__:
 		if verbose: print("running test suite")
 		
 		Automaton = automaton_factory(BooleanRing.get_algebra())
-		Vector = Automaton.base_vector
+		Vector = Automaton.base_const_vector
+		zero_v = Vector.zero(8)
 		
-		ls, li = Automaton.linear_delay_wifa_pair(block_size=8, memory_size=3)
-		
-		zero_pad = [Vector.zero(8) for _i in range(3)]
-		i_seq = [Vector.random(8) for _i in range(20)]
-		i_pad = [Vector.random(8) for _i in range(3)]
-		o_seq = list(ls(i_seq + i_pad))
-		d_seq = list(li(o_seq + zero_pad))
-		
-		print([hex(int(_x))[2:] for _x in i_seq + i_pad])
-		print([hex(int(_x))[2:] for _x in o_seq + zero_pad])
-		print([hex(int(_x))[2:] for _x in d_seq])
-		
-		print()
-		history = [Vector.zero(8) for _i in range(3)]
-		vi = Vector.random(8)
-		vo = ls.transition(vi, history)
-		print(hex(int(vi))[2:])
-		print(hex(int(vo))[2:])
-		print([hex(int(_v))[2:] for _v in history])
-		vi = Vector.random(8)
-		vo = ls.transition(vi, history)
-		print(hex(int(vi))[2:])
-		print(hex(int(vo))[2:])
-		print([hex(int(_v))[2:] for _v in history])
-		vi = Vector.random(8)
-		vo = ls.transition(vi, history)
-		print(hex(int(vi))[2:])
-		print(hex(int(vo))[2:])
-		print([hex(int(_v))[2:] for _v in history])
+		for memory_size in range(1, 8):
+			print()
+			print("test for memory size", memory_size)
+			print(" generating automata...")
+			ls, li = Automaton.linear_delay_wifa_pair(block_size=8, memory_size=memory_size)
+			
+			xi = [Vector.random(8) for _i in range(32)]
+			print(" xi =", ''.join(['{:02x}'.format(int(_x)) for _x in xi]))
+			
+			y = list(ls(xi + [Vector.random(8) for _i in range(memory_size)]))
+			print(" y  =", ''.join(['{:02x}'.format(int(_x)) for _x in y]))
+			
+			xo = list(li(y))[memory_size:]		
+			print(" xo =", ''.join(['{:02x}'.format(int(_x)) for _x in xo]))
+			
+			assert xi == xo
+			print(" ok", memory_size)
 		
 		quit()
 		
@@ -778,6 +834,8 @@ if __debug__:
 
 
 if __debug__ and __name__ == '__main__':
+	automaton_test_suite(verbose=True)
+	
 	#test_automaton_compilation(BooleanRing.get_algebra(), 8, 4, 256)
 	#test_automaton_compilation(RijndaelField.get_algebra(), 4, 2, 64)
 

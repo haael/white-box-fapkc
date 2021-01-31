@@ -26,7 +26,8 @@ def initialize_compiler():
 
 
 def finish_compiler():
-	pass
+	global compiler_initialized
+	compiler_initialized = False
 
 
 def typeconv(lltype):

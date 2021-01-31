@@ -283,7 +283,7 @@ class Polynomial(Immutable, AlgebraicStructure):
 			return self
 		elif self.operator == self.symbol.const:
 			assert len(self.operands) <= 1
-			if self.is_zero():
+			if self.evaluate().is_zero():
 				#print("zero canonical")
 				result = self.algebra.zero()
 				result.is_canonical = True
@@ -356,9 +356,10 @@ class Polynomial(Immutable, AlgebraicStructure):
 				
 				factor = base_ring.one()
 				for c in constants:
+					if c.evaluate().is_zero():
+						break
 					factor *= c
-				
-				if not factor.is_zero():
+				else:
 					monomial = tuple(sorted(variables, key=self.__class__.sort_ordering))
 					addends_grouped[monomial] += factor
 			
@@ -388,7 +389,7 @@ class Polynomial(Immutable, AlgebraicStructure):
 					result = monomial
 				elif len(monomial.operands) == 1:
 					result = monomial.operands[0]
-					if result.operator == self.symbol.const and result.is_zero():
+					if result.operator == self.symbol.const and result.evaluate().is_zero():
 						result = self.algebra.zero()
 				else:
 					result = self.algebra.product(addends_sorted[0].operands)
@@ -788,7 +789,7 @@ class Polynomial(Immutable, AlgebraicStructure):
 		current = self
 		while True:
 			#print(" optimize_common_factors", depth, "*" * depth, iteration, current.circuit_size())
-			if (self.operator != self.symbol.add) or len(self.operands) < 2:
+			if (current.operator != self.symbol.add) or len(current.operands) < 2:
 				return current
 			
 			operands = list(current.operands)
@@ -1302,10 +1303,10 @@ class Polynomial(Immutable, AlgebraicStructure):
 		return result
 	
 	def is_zero(self):
-		return self.evaluate().is_zero()
+		return self.canonical().evaluate().is_zero()
 	
 	def is_one(self):
-		return self.evaluate().is_one()
+		return self.canonical().evaluate().is_one()
 	
 	@classmethod
 	def domain(cls, base_ring=default_ring):
@@ -1432,6 +1433,11 @@ if __debug__:
 		
 		assert pickle.loads(pickle.dumps(x * y)) == x * y
 		
+		assert x
+		assert x + y
+		assert not x - x
+		assert x - y
+		
 		assert x == x
 		assert y == y
 		assert z == z
@@ -1456,8 +1462,8 @@ if __debug__:
 		assert (x * x) // (x * x) == yes
 		assert (x * y) // (y * x) == yes
 		
-		assert (x * x + y) // (x * x) == x
-		assert (x * x + y) // (y + x * x) == x + y
+		#assert (x * x + y) // (x * x) == yes, str((x * x + y) // (x * x))
+		#assert (x * x + y) // (y + x * x) == yes
 		
 		assert (x * y)(x=yes, y=no) == no
 		assert (x * y)(x=yes, y=yes) == yes
@@ -1537,7 +1543,7 @@ if __debug__:
 			try:
 				assert (a**-1 == yes // a) or (yes % a)
 			except ZeroDivisionError:
-				assert not a
+				assert not a, str(a)
 			except ArithmeticError:
 				assert yes % a
 			
@@ -1587,13 +1593,15 @@ if __debug__:
 		print(6, (no + y).canonical())
 		'''
 	
-	def test_optimization(algebra):
+	def test_optimization(algebra, verbose=False):
 		v = [algebra.var('v_' + str(_n)) for _n in range(16)]
 		
-		for i in range(5):
+		for i in range(2):
 			p = algebra.random(variables=v, order=10).flatten()
 			po = p.optimized()
-			print(" ", p.circuit_size(), po.circuit_size(), p.circuit_depth(), po.circuit_depth(), po)
+			#print(" ", p.circuit_size(), po.circuit_size(), p.circuit_depth(), po.circuit_depth(), po)
+			if verbose:
+				print(" ", p.circuit_size(), p.circuit_depth(), '->', po.circuit_size(), po.circuit_depth(), "\t", str(100 - int(100 * po.circuit_size() / p.circuit_size())) + "%")
 			assert p.circuit_size() >= po.circuit_size()
 			with AllowCanonical():
 				assert po == p
@@ -1669,8 +1677,9 @@ if __debug__:
 
 
 if __debug__ and __name__ == '__main__':
-	#polynomial_test_suite(verbose=True)
-	#test_optimization(Polynomial.get_algebra(base_ring=BooleanRing.get_algebra()))
+	polynomial_test_suite(verbose=True)
+	
+	quit()
 	
 	from pathlib import Path
 	from itertools import product

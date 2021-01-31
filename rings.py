@@ -206,6 +206,9 @@ class AbstractRing(Immutable, AlgebraicStructure):
 	
 	def is_jit(self):
 		raise NotImplementedError
+	
+	def optimized(self):
+		return self
 
 
 class ModularRing(AbstractRing):
