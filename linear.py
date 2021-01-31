@@ -264,7 +264,12 @@ class Vector(AlgebraicStructure):
 			return tensor
 	
 	def __or__(self, other):
+		"Concatenation of vectors."
 		return self.algebra(chain(iter(self), iter(other)))
+	
+	def __and__(self, other):
+		"Component-wise multiplication of vectors."
+		return self.algebra((_a * _b) for (_a, _b) in zip(iter(self), iter(other)))
 	
 	def pivot(self):
 		"Position and value of the first nonzero component. Returns the vector's length and GF 0 if all components are zero."

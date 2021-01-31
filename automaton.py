@@ -272,7 +272,6 @@ def automaton_factory(base_ring):
 					
 					y = base_vector.zero(block_size)
 					for n in range(memory_size + 1):
-						#print("here", base_matrix)
 						y += base_matrix(coefficients_A[n]) @ x[n]
 					
 					automaton_A = cls(output_transition=y.optimized(), state_transition=x[0])
@@ -291,14 +290,14 @@ def automaton_factory(base_ring):
 							else:
 								matrix_A[i, j] = zero_m
 					
-					matrix_B = dict()
+					matrix_Ar = dict()
 					for i in range(memory_size + 1):
 						for j in range(memory_size):
 							if i + j + 1 < memory_size + 1:
-								matrix_B[i, j] = coefficients_A[i + j + 1]
+								matrix_Ar[i, j] = coefficients_A[i + j + 1]
 							else:
-								matrix_B[i, j] = zero_m
-							#print("B:", i, j, matrix_B[i, j])
+								matrix_Ar[i, j] = zero_m
+							#print("B:", i, j, matrix_Ar[i, j])
 					
 					if __debug__:
 						def compare_coefficients():
@@ -399,14 +398,14 @@ def automaton_factory(base_ring):
 						compare_coefficients()
 					
 					A00 = matrix_PA[0, 0]
+					del matrix_PA
 					
 					for j in range(block_size):
 						if A00[j, :].is_zero():
 							raise BadLuck("Leading matrix not invertible, try again.")
 					
 					A00_inv = A00.inverse()
-					
-					del A00, matrix_PA
+					del A00
 					
 					coefficients_P = [A00_inv @ matrix_P[0, _j] for _j in range(memory_size + 1)]
 					
@@ -414,8 +413,10 @@ def automaton_factory(base_ring):
 					for q in range(memory_size):
 						r = zero_m[...]
 						for k in range(memory_size + 1):
-							r += matrix_P[0, k] @ matrix_B[k, q]
+							r += matrix_P[0, k] @ matrix_Ar[k, q]
 						coefficients_Q.append(base_matrix(A00_inv @ r).optimized())
+					
+					del matrix_P, matrix_Ar
 					
 					if __debug__: # final check if the second function is really an inverse of the first function
 						# input arguments
@@ -471,7 +472,41 @@ def automaton_factory(base_ring):
 		
 		@classmethod
 		def nonlinear_nodelay_wifa_pair(cls, block_size=8, memory_size=32):
-			raise NotImplementedError
+			base_const_matrix = cls.base_const_matrix
+			base_matrix = cls.base_matrix
+			base_vector = cls.base_vector
+			
+			As, Ai = base_const_matrix.random_inverse_pair(block_size)
+			coefficients_A = [None]
+			coefficients_B = [None]
+			for n in range(1, memory_size + 1):
+				coefficients_A.append(base_const_matrix.random_rank(block_size, block_size - 1))
+				coefficients_B.append(base_const_matrix.random_rank(block_size, block_size - 1))
+			
+			arg = base_vector(cls.x[_i] for _i in range(block_size))
+			x = [None]
+			for n in range(1, memory_size + 1):
+				x.append(base_vector(cls.s[n, _i] for _i in range(block_size)))
+			
+			yr = base_matrix(As) @ arg
+			for n in range(1, memory_size + 1):
+				yr += base_matrix(coefficients_A[n]) @ x[n]
+				if n < memory_size:
+					yr += base_matrix(coefficients_B[n]) @ (x[n] & x[n + 1])
+			yr = yr.optimized()
+			
+			automaton_A = cls(output_transition=yr, state_transition=arg)
+			
+			xr = base_matrix(Ai) @ arg
+			for n in range(1, memory_size + 1):
+				xr -= base_matrix(Ai @ coefficients_A[n]) @ x[n]
+				if n < memory_size:
+					xr -= base_matrix(Ai @ coefficients_B[n]) @ (x[n] & x[n + 1])
+			xr = xr.optimized()
+			
+			automaton_B = cls(output_transition=xr, state_transition=xr)
+			
+			return automaton_A, automaton_B
 		
 		@classmethod
 		def fapkc0(cls, block_size=8, memory_size=32):
@@ -479,7 +514,14 @@ def automaton_factory(base_ring):
 			
 			ls, li = cls.linear_delay_wifa_pair(block_size=block_size, memory_size=memory_size)
 			ns, ni = cls.nonlinear_nodelay_wifa_pair(block_size=block_size, memory_size=memory_size)
-			return ns @ ls, li @ ni
+			
+			straight = ns @ ls
+			inverse = li @ ni
+			
+			straight.optimize()
+			inverse.optimize()
+			
+			return straight, inverse
 		
 		def compile(self, name, module):
 			self.state_transition.compile(name + '_st', module)
@@ -769,19 +811,90 @@ if __debug__:
 		Vector = Automaton.base_const_vector
 		zero_v = Vector.zero(8)
 		
-		for memory_size in range(1, 8):
+		'''
+		print()
+		print("Testing nonlinear automata")
+		for memory_size in range(1, 5):
+			print()
+			print("test for memory size", memory_size)
+			print(" generating automata...")
+			ls, li = Automaton.nonlinear_nodelay_wifa_pair(block_size=8, memory_size=memory_size)
+			
+			print(" compiling automata...")
+			compiler = Compiler()
+			with parallel(0):
+				ls.compile('ls', compiler)
+				li.compile('li', compiler)
+			code = compiler.compile()
+			ls = ls.wrap_compiled('ls', code)
+			li = li.wrap_compiled('li', code)
+			
+			xi = [Vector.random(8) for _i in range(1024)]
+			print(" xi =", ''.join(['{:02x}'.format(int(_x)) for _x in xi]))
+			
+			y = list(ls(xi))
+			print(" y  =", ''.join(['{:02x}'.format(int(_x)) for _x in y]))
+			
+			xo = list(li(y))
+			print(" xo =", ''.join(['{:02x}'.format(int(_x)) for _x in xo]))
+			
+			assert xi == xo
+			print(" ok", memory_size)
+		
+		print()
+		print("Testing linear automata")
+		for memory_size in range(1, 5):
 			print()
 			print("test for memory size", memory_size)
 			print(" generating automata...")
 			ls, li = Automaton.linear_delay_wifa_pair(block_size=8, memory_size=memory_size)
 			
-			xi = [Vector.random(8) for _i in range(32)]
+			print(" compiling automata...")
+			compiler = Compiler()
+			with parallel(0):
+				ls.compile('ls', compiler)
+				li.compile('li', compiler)
+			code = compiler.compile()
+			ls = ls.wrap_compiled('ls', code)
+			li = li.wrap_compiled('li', code)
+			
+			xi = [Vector.random(8) for _i in range(1024)]
 			print(" xi =", ''.join(['{:02x}'.format(int(_x)) for _x in xi]))
 			
 			y = list(ls(xi + [Vector.random(8) for _i in range(memory_size)]))
 			print(" y  =", ''.join(['{:02x}'.format(int(_x)) for _x in y]))
 			
-			xo = list(li(y))[memory_size:]		
+			xo = list(li(y))[memory_size:]
+			print(" xo =", ''.join(['{:02x}'.format(int(_x)) for _x in xo]))
+			
+			assert xi == xo
+			print(" ok", memory_size)
+		'''
+		
+		print()
+		print("Testing FAPKC0")
+		for memory_size in range(1, 5):
+			print()
+			print("test for memory size", memory_size)
+			print(" generating automata...")
+			ls, li = Automaton.fapkc0(block_size=8, memory_size=memory_size)
+			
+			print(" compiling automata...")
+			compiler = Compiler()
+			with parallel(0):
+				ls.compile('ls', compiler)
+				li.compile('li', compiler)
+			code = compiler.compile()
+			ls = ls.wrap_compiled('ls', code)
+			li = li.wrap_compiled('li', code)
+			
+			xi = [Vector.random(8) for _i in range(1024)]
+			print(" xi =", ''.join(['{:02x}'.format(int(_x)) for _x in xi]))
+			
+			y = list(ls(xi + [Vector.random(8) for _i in range(memory_size)]))
+			print(" y  =", ''.join(['{:02x}'.format(int(_x)) for _x in y]))
+			
+			xo = list(li(y))[memory_size:]
 			print(" xo =", ''.join(['{:02x}'.format(int(_x)) for _x in xo]))
 			
 			assert xi == xo
