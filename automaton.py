@@ -79,8 +79,17 @@ def automaton_factory(base_ring):
 			for i, xi in enumerate(x):
 				state[str(self.x[i])] = xi
 			
-			y = self.output_transition(**state).canonical()
-			s = self.state_transition(**state).canonical()
+			y = self.output_transition(**state)			
+			try:
+				y = y.evaluate()
+			except ValueError:
+				pass
+			
+			s = self.state_transition(**state)
+			try:
+				s = s.evaluate()
+			except ValueError:
+				pass
 			
 			history.insert(0, s)
 			while len(history) > self.memory_length:
@@ -138,20 +147,24 @@ def automaton_factory(base_ring):
 		@property
 		@memoize
 		def memory_length(self):
-			v = frozenset().union(*[_c.variables() for _c in self.state_transition.values()]) | frozenset().union(*[_c.variables() for _c in self.output_transition.values()])
+			v = frozenset(str(_v) for _v in frozenset().union(*[_c.variables() for _c in self.state_transition.values()]) | frozenset().union(*[_c.variables() for _c in self.output_transition.values()]))
 			if not v:
 				return 0
+			
 			m = 0
-			for var in v:
-				for k in self.s.keys():
-					if self.s[k] == var:
-						a, b = k
-						m = max(m, a)
+			for i in range(1, 64): # FIXME: remove hard limits
+				for j in range(256):
+					if str(self.s[i, j]) in v:
+						m = i
+			
+			#print(self.s[3, 1] in v)
+			#print("memory_length", m, v)
 			return m
 		
 		@property
 		@memoize
 		def memory_width(self):
+			#print("memory_width", self.state_transition.dimension)
 			return self.state_transition.dimension
 		
 		def optimize(self):
@@ -254,7 +267,7 @@ def automaton_factory(base_ring):
 		
 		@classmethod
 		def linear_delay_wifa_pair(cls, block_size=8, memory_size=32):
-			"Generate a linear FA with the delay specified by `memory_size`. Algorithm described briefly in 'Break Finite Automata Public Key Cryptosystem' by Feng Bao and Yoshihide Igarashi."
+			"Generate a pair or linear FAs with the delay specified by `memory_size`. Algorithm described briefly in 'Break Finite Automata Public Key Cryptosystem' by Feng Bao and Yoshihide Igarashi."
 			
 			class BadLuck(BaseException):
 				"Exception that is thrown when the random objects do not have desired properties and need to be generated again."
@@ -262,25 +275,35 @@ def automaton_factory(base_ring):
 			
 			while True: # repeat until successful
 				try:
+					zero_v = base_const_vector.zero(block_size)
+					unit_m = base_const_matrix.unit(block_size)
+					zero_m = base_const_matrix.zero(block_size, block_size)
+					
 					coefficients_A = []
 					for n in range(memory_size + 1):
 						coefficients_A.append(base_const_matrix.random_rank(block_size, block_size - 1))
+					
+					#coefficients_B = [zero_m]
+					#for n in range(1, memory_size + 1):
+					#	coefficients_B.append(base_const_matrix.random(block_size, block_size))
 					
 					x = [base_vector(cls.x[_i] for _i in range(block_size))]
 					for n in range(1, memory_size + 1):
 						x.append(base_vector(cls.s[n, _i] for _i in range(block_size)))
 					
-					y = base_vector.zero(block_size)
+					y = [zero_v]
+					for n in range(1, memory_size + 1):
+						y.append(base_vector(cls.s[n, _i + block_size] for _i in range(block_size)))
+					
+					y0 = base_vector.zero(block_size)
 					for n in range(memory_size + 1):
-						y += base_matrix(coefficients_A[n]) @ x[n]
+						y0 += base_matrix(coefficients_A[n]) @ x[n]
+						#y0 += base_matrix(coefficients_B[n]) @ y[n]
+					y0 = y0.optimized()
 					
-					automaton_A = cls(output_transition=y.optimized(), state_transition=x[0])
+					automaton_A = cls(output_transition=y0, state_transition=x[0] | y0)
 					
-					del x, y
-					
-					zero_v = base_const_vector.zero(block_size)
-					unit_m = base_const_matrix.unit(block_size)
-					zero_m = base_const_matrix.zero(block_size, block_size)
+					del x, y, y0
 					
 					matrix_A = dict()
 					for i in range(memory_size + 1):
@@ -328,17 +351,11 @@ def automaton_factory(base_ring):
 							elif i == j:
 								matrix_P[i, j] = unit_m[...]
 					
-					#if __debug__:
-					#	i = -1
-					#	compare_coefficients()
-					
 					matrix_PA = dict()
 					for i, j in matrix_A.keys():
 						matrix_PA[i, j] = matrix_A[i, j][...]
 					
 					for i in reversed(range(memory_size + 1)):
-						#print("i", i)
-						
 						mm = []
 						for p in range(i + 1):
 							for q in range(p + 1):
@@ -347,7 +364,6 @@ def automaton_factory(base_ring):
 						pu = unit_m[...]
 						mm.append(pu)
 						
-						#print(matrix_PA[i, i])
 						matrix_PA[i, i].echelon(*mm)
 						
 						del mm
@@ -356,16 +372,12 @@ def automaton_factory(base_ring):
 							for q in range(memory_size + 1):
 								matrix_P[p, q] = pu @ matrix_P[p, q]
 						
-						#if __debug__:
-						#	compare_coefficients()
-						
 						for j in range(block_size):
 							if matrix_PA[0, 0][j, :].is_zero():
 								ll = j
 								break
 						else:
 							ll = block_size
-							#continue
 						
 						psI_m = base_const_matrix.diagonal([base_ring.one() if _j <  ll else base_ring.zero() for _j in range(block_size)])
 						psO_m = base_const_matrix.diagonal([base_ring.one() if _j >= ll else base_ring.zero() for _j in range(block_size)])
@@ -390,9 +402,6 @@ def automaton_factory(base_ring):
 						
 						del matrix_Ps
 						
-						#if __debug__:
-						#	compare_coefficients()
-					
 					if __debug__:
 						i = -1
 						compare_coefficients()
@@ -418,28 +427,28 @@ def automaton_factory(base_ring):
 					
 					del matrix_P, matrix_Ar
 					
-					if __debug__: # final check if the second function is really an inverse of the first function
+					if __debug__: # final check if the second function is really the inverse of the first function
 						# input arguments
 						arg_x = dict()
-						for m in range(-memory_size, memory_size + 1):
-							arg_x[m] = base_vector([base_vector.base_ring.var('n_' + str(_i)) for _i in range(block_size)])
+						for m in range(-memory_size, memory_size + 2):
+							arg_x[m] = base_vector([base_vector.base_ring.var(('m' if m >= 0 else 'n') + '_' + str(abs(m)) + '_' + str(_i)) for _i in range(block_size)])
 						
 						# first function
 						test_y = dict()
-						for m in range(memory_size + 1):
+						for m in range(memory_size + 2):
 							test_y[m] = base_vector.zero(block_size)
 							for n in range(memory_size + 1):
-								test_y[m] += base_matrix(coefficients_A[n]) @ arg_x[n + i] # substitute arguments
+								test_y[m] += base_matrix(coefficients_A[n]) @ arg_x[m - n] # substitute arguments
 							test_y[m] = test_y[m].optimized()
 						
 						# second function
-						test_x = base_vector.zero(block_size)
+						test_x0 = base_vector.zero(block_size)
 						for n in range(memory_size + 1):
-							test_x -= base_matrix(coefficients_Q[n]) @ arg_x[-n] # substitute arguments
-							test_x += base_matrix(coefficients_P[n]) @ test_y[n] # substitute the result of the first function
-						test_x = test_x.optimized()
+							test_x0 -= base_matrix(coefficients_Q[n]) @ arg_x[-n] # substitute arguments
+							test_x0 += base_matrix(coefficients_P[n]) @ test_y[n] # substitute the result of the first function into the second function
+						test_x0 = test_x0.optimized()
 						
-						assert test_x == arg_x[0] # identity?
+						assert test_x0 == arg_x[0] # identity ?
 					
 					x = dict()
 					for n in range(memory_size + 1):
@@ -459,6 +468,7 @@ def automaton_factory(base_ring):
 					for n in range(memory_size + 1):
 						x0 -= base_matrix(coefficients_Q[n]) @ x[-n]
 						x0 += base_matrix(coefficients_P[n]) @ y[n]
+						#x0 -= base_matrix(A00_inv @ coefficients_B[n]) @ y[-n]
 					x0 = x0.optimized()
 					
 					s = x0 | y[memory_size]
@@ -472,6 +482,8 @@ def automaton_factory(base_ring):
 		
 		@classmethod
 		def nonlinear_nodelay_wifa_pair(cls, block_size=8, memory_size=32):
+			"Generate 2 nonlinear automata with 0 delay, respectively inverted. This algorithm has severe weakness, described in 'Break Finite Automata Public Key Cryptosystem' by Feng Bao and Yoshihide Igarashi."
+			
 			base_const_matrix = cls.base_const_matrix
 			base_matrix = cls.base_matrix
 			base_vector = cls.base_vector
@@ -479,32 +491,41 @@ def automaton_factory(base_ring):
 			As, Ai = base_const_matrix.random_inverse_pair(block_size)
 			coefficients_A = [None]
 			coefficients_B = [None]
+			coefficients_C = [None]
 			for n in range(1, memory_size + 1):
-				coefficients_A.append(base_const_matrix.random_rank(block_size, block_size - 1))
-				coefficients_B.append(base_const_matrix.random_rank(block_size, block_size - 1))
+				coefficients_A.append(base_const_matrix.random(block_size, block_size))
+				coefficients_B.append(base_const_matrix.random(block_size, block_size))
+				coefficients_C.append(base_const_matrix.random(block_size, block_size))
 			
 			arg = base_vector(cls.x[_i] for _i in range(block_size))
+			
 			x = [None]
-			for n in range(1, memory_size + 1):
+			for n in range(1, memory_size + 2):
 				x.append(base_vector(cls.s[n, _i] for _i in range(block_size)))
+				if n == memory_size + 1:
+					x.append(base_matrix(base_const_matrix.random(block_size, block_size)) @ base_vector(cls.s[n - 1, _i] for _i in range(block_size)))
+			
+			y = [None]
+			for n in range(1, memory_size + 1):
+				y.append(base_vector(cls.s[n, _i + block_size] for _i in range(block_size)))
 			
 			yr = base_matrix(As) @ arg
 			for n in range(1, memory_size + 1):
 				yr += base_matrix(coefficients_A[n]) @ x[n]
-				if n < memory_size:
-					yr += base_matrix(coefficients_B[n]) @ (x[n] & x[n + 1])
+				yr += base_matrix(coefficients_B[n]) @ (x[n] & x[n + 1])
+				yr += base_matrix(coefficients_C[n]) @ y[n]
 			yr = yr.optimized()
 			
-			automaton_A = cls(output_transition=yr, state_transition=arg)
+			automaton_A = cls(output_transition=yr, state_transition=arg | yr)
 			
 			xr = base_matrix(Ai) @ arg
 			for n in range(1, memory_size + 1):
 				xr -= base_matrix(Ai @ coefficients_A[n]) @ x[n]
-				if n < memory_size:
-					xr -= base_matrix(Ai @ coefficients_B[n]) @ (x[n] & x[n + 1])
+				xr -= base_matrix(Ai @ coefficients_B[n]) @ (x[n] & x[n + 1])
+				xr -= base_matrix(Ai @ coefficients_C[n]) @ y[n]
 			xr = xr.optimized()
 			
-			automaton_B = cls(output_transition=xr, state_transition=xr)
+			automaton_B = cls(output_transition=xr, state_transition=xr | arg)
 			
 			return automaton_A, automaton_B
 		
@@ -561,6 +582,10 @@ def automaton_factory(base_ring):
 	Automaton.base_polynomial = base_polynomial
 	Automaton.base_vector = base_vector
 	Automaton.base_matrix = base_matrix
+	
+	fqdn = '_Automaton_' + str(base_ring).replace('(', '_').replace(')', '_').replace('=', '_')
+	Automaton.__qualname__ = fqdn
+	globals()[fqdn] = Automaton
 	
 	return Automaton
 
@@ -746,7 +771,8 @@ if __debug__:
 		for i in range(5):
 			print(" round", i)
 			print("  generating automata...")
-			mixer, unmixer = Automaton.linear_nodelay_wifa_pair(block_size=block_size, memory_size=4)
+			memory_size = 4
+			mixer, unmixer = Automaton.linear_nodelay_wifa_pair(block_size=block_size, memory_size=memory_size)
 			plain_automaton = Automaton(Vector.random(dimension=block_size, variables=variables, order=3), Vector.random(dimension=memblock_size, variables=variables, order=3))
 			
 			print("  composing automata...")
@@ -879,14 +905,22 @@ if __debug__:
 			print(" generating automata...")
 			ls, li = Automaton.fapkc0(block_size=8, memory_size=memory_size)
 			
+			print(" composing identity automaton...")
+			ll = ls @ li
+			ll.optimize()
+			print(ll.output_transition)
+			print(ll.state_transition)
+			
 			print(" compiling automata...")
 			compiler = Compiler()
 			with parallel(0):
 				ls.compile('ls', compiler)
 				li.compile('li', compiler)
+				ll.compile('ll', compiler)
 			code = compiler.compile()
 			ls = ls.wrap_compiled('ls', code)
 			li = li.wrap_compiled('li', code)
+			ll = ll.wrap_compiled('ll', code)
 			
 			xi = [Vector.random(8) for _i in range(1024)]
 			print(" xi =", ''.join(['{:02x}'.format(int(_x)) for _x in xi]))
@@ -897,8 +931,14 @@ if __debug__:
 			xo = list(li(y))[memory_size:]
 			print(" xo =", ''.join(['{:02x}'.format(int(_x)) for _x in xo]))
 			
-			assert xi == xo
-			print(" ok", memory_size)
+			assert xi == xo, "Encryption / decryption test failed."
+			
+			print(" testing identity automaton...")
+			xr = list(ll(xi + [Vector.random(8) for _i in range(memory_size)]))[memory_size:]
+			assert xi == xr, "Identity automaton test failed."
+			
+			print(" ok")
+			
 		
 		quit()
 		
@@ -947,6 +987,101 @@ if __debug__:
 
 
 if __debug__ and __name__ == '__main__':
+	from pathlib import Path
+	import pickle
+
+	Automaton = automaton_factory(BooleanRing.get_algebra())
+	vec = Automaton.base_vector
+	poly = Automaton.base_polynomial
+	one = poly.one()
+	
+	print()
+	print("Testing FAPKC0 encryption / decryption")
+	try:
+		with Path('encrypt.pickle').open('rb') as f:
+			encrypt = pickle.load(f)
+		with Path('decrypt.pickle').open('rb') as f:
+			decrypt = pickle.load(f)
+	except FileNotFoundError:
+		print("generating FAPKC0 automaton pair...")
+		encrypt, decrypt = Automaton.fapkc0(block_size=8, memory_size=2)
+		with Path('encrypt.pickle').open('wb') as f:
+			pickle.dump(encrypt, f)
+		with Path('decrypt.pickle').open('wb') as f:
+			pickle.dump(decrypt, f)
+
+	print("encryption automaton size:", encrypt.output_transition.circuit_size(), encrypt.state_transition.circuit_size())
+	print("decryption automaton size:", decrypt.output_transition.circuit_size(), decrypt.state_transition.circuit_size())
+	
+	compiler = Compiler()
+	encrypt.compile('encrypt', compiler)
+	decrypt.compile('decrypt', compiler)
+	code1 = compiler.compile()
+	
+	encrypt_c = encrypt.wrap_compiled('encrypt', code1)
+	decrypt_c = decrypt.wrap_compiled('decrypt', code1)
+	
+	cleartext = "caller: Request direct Denver for Northwest Three Twenty-eight."
+	print("text:\t\t", cleartext)
+	
+	cipher = [_r for _r in encrypt_c(vec(ord(_ch), 8) for _ch in "%$" + cleartext + "!^")]
+	
+	#print("".join([chr(int(_r)) if 32 <= int(_r) <= 127 else '?' for _r in cipher]))
+	
+	print("cipher:\t\t", ' '.join(['{:02x}'.format(int(_c)) for _c in cipher]))
+	text = "".join([chr(int(_r)) for _r in decrypt_c(cipher)][4:])
+	print("decrypted:\t", text)
+
+	print()
+	print("Testing lowercase automaton")
+	
+	def lowercase(v):
+		x0, x1, x2, x3, x4, x5, x6, x7 = reversed(list(iter(v)))
+		a_o = (x3 + one) * (x4 | x5 | x6 | x7)
+		p_w = x3 * (x4 + one)
+		x_z = x3 * x4 * (x5 + one) * ((x6 + one) | (x7 + one))
+		big_letter = (x0 + one) * x1 * (x2 + one) * (a_o | p_w | x_z)
+		return vec(reversed([x0, x1, (x2 + big_letter), x3, x4, x5, x6, x7]))
+	
+	#lowercase_automaton = Automaton(output_transition=lowercase(Automaton.x[:8]))
+	lowercase_automaton = Automaton(output_transition=lowercase(vec(Automaton.x[_i] for _i in range(8))))
+	lowercase_automaton.optimize()
+	print("lowercase automaton size:", lowercase_automaton.output_transition.circuit_size(), lowercase_automaton.state_transition.circuit_size())
+	
+	print("text:\t\t", cleartext)
+	print("lowercase:\t", "".join([chr(int(_r)) for _r in lowercase_automaton(vec(ord(_ch), 8) for _ch in cleartext)]))
+	
+	print()
+	print("Testing Gonzalez-Llamas homomorphic operations")
+	
+	print("composing homomorphic automaton...")
+	lowercase_homomorphic = encrypt @ lowercase_automaton @ decrypt
+	print("homomorphic automaton size:", lowercase_homomorphic.output_transition.circuit_size(), lowercase_homomorphic.state_transition.circuit_size())
+	#lowercase_homomorphic.mix_states()
+	#print(lowercase_homomorphic.output_transition.circuit_size(), lowercase_homomorphic.state_transition.circuit_size())
+	#lowercase_homomorphic.optimize()
+	#print(lowercase_homomorphic.output_transition.circuit_size(), lowercase_homomorphic.state_transition.circuit_size())
+	compiler = Compiler()
+	lowercase_homomorphic.compile('lh', compiler)
+	code2 = compiler.compile()
+	lowercase_homomorphic = lowercase_homomorphic.wrap_compiled('lh', code2)
+	
+	print("text:\t\t\t", cleartext)
+	with code1:
+		cipher = [_r for _r in encrypt_c(vec(ord(_ch), 8) for _ch in "A%$#" + cleartext + "!@^&")]
+	print("cipher pre lowercase:\t", ' '.join(['{:02x}'.format(int(_c)) for _c in cipher]))
+	with code2:
+		lowercase_cipher = [_r for _r in lowercase_homomorphic(cipher)]
+	print("cipher post lowercase:\t", ' '.join(['{:02x}'.format(int(_c)) for _c in lowercase_cipher]))
+	#print("".join([chr(int(_r)) if 32 <= int(_r) <= 127 else '?' for _r in cipher]))
+	
+	with code1:
+		text = "".join([chr(int(_r)) for _r in decrypt_c(lowercase_cipher)][8:])
+	print("decrypted:\t\t", text)
+	print()
+	
+	quit()
+	
 	automaton_test_suite(verbose=True)
 	
 	#test_automaton_compilation(BooleanRing.get_algebra(), 8, 4, 256)
