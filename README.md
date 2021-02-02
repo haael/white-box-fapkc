@@ -49,7 +49,7 @@ This is an alpha version.
 
 Algebraic modules are implemented, tested and working.
 
-The first implementation of FAPKC0 is underway.
+The first implementation of FAPKC0 **working**.
 
 Production ready implementation of FAPKC3 is planned soon.
 
