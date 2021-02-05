@@ -1157,9 +1157,15 @@ if __debug__ and __name__ == '__main__':
 	counting_homomorphic = encrypt @ counting_automaton @ decrypt
 	print(counting_homomorphic.output_transition.circuit_size(), counting_homomorphic.state_transition.circuit_size())
 	
-	print("optimization pass")
-	with parallel():
-		counting_homomorphic.optimize()
+	try:
+		with Path('counting_automaton.optimized.pickle').open('rb') as f:
+			counting_automaton = pickle.load(f)
+	except FileNotFoundError:
+		print("optimization pass")
+		with parallel():
+			counting_homomorphic.optimize()
+		with Path('counting_automaton.optimized.pickle').open('wb') as f:
+			pickle.dump(counting_automaton, f)
 	
 	print(counting_homomorphic.output_transition.circuit_size(), counting_homomorphic.state_transition.circuit_size())
 	
@@ -1169,8 +1175,8 @@ if __debug__ and __name__ == '__main__':
 	decrypt.compile('decrypt', compiler)
 	counting_automaton.compile('counting_homomorphic', compiler)
 	code2 = compiler.compile()
-	encrypt_c = counting_automaton.wrap_compiled('encrypt', code2)
-	decrypt_c = counting_automaton.wrap_compiled('decrypt', code2)
+	encrypt_c = encrypt.wrap_compiled('encrypt', code2)
+	decrypt_c = decrypt.wrap_compiled('decrypt', code2)
 	counting_homomorphic_c = counting_automaton.wrap_compiled('counting_homomorphic', code2)
 	
 	with code2:
