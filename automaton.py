@@ -989,12 +989,207 @@ if __debug__:
 if __debug__ and __name__ == '__main__':
 	from pathlib import Path
 	import pickle
-
+	
 	Automaton = automaton_factory(BooleanRing.get_algebra())
 	vec = Automaton.base_vector
-	poly = Automaton.base_polynomial
-	one = poly.one()
+	const_vec = Automaton.base_const_vector
+	#poly = Automaton.base_polynomial
+	ring = Automaton.base_ring
+	zero = ring.zero()
+	one = ring.one()
 	
+	memory_size = 2
+	
+	try:
+		with Path('encrypt.pickle').open('rb') as f:
+			encrypt = pickle.load(f)
+		with Path('decrypt.pickle').open('rb') as f:
+			decrypt = pickle.load(f)
+	except FileNotFoundError:
+		print("generating FAPKC0 automaton pair...")
+		encrypt, decrypt = Automaton.fapkc0(block_size=8, memory_size=2)
+		with Path('encrypt.pickle').open('wb') as f:
+			pickle.dump(encrypt, f)
+		with Path('decrypt.pickle').open('wb') as f:
+			pickle.dump(decrypt, f)
+
+
+
+
+
+	def add(accumulator, addend):
+		c = zero
+		for n, (a, b) in enumerate(zip(iter(accumulator), iter(addend))):
+			a = a.optimized()
+			b = b.optimized()
+			accumulator[n] = (a + b + c).optimized()
+			c = (a * b | b * c | a * c).optimized()
+	
+	def compare_eq(vec_a, vec_b):
+		r = zero
+		for c in iter(vec_a + vec_b):
+			r |= c.optimized()
+			r = r.optimized()
+		return r + one
+	
+	def compare_lt(vec_a, vec_b):
+		#print(vec_a, vec_b)
+		a_wins = zero
+		b_wins = zero
+		#eq = zero
+		for a, b in reversed(list(zip(iter(vec_a), iter(vec_b)))):
+			a = a.optimized()
+			b = b.optimized()
+			a_wins |= (b_wins.optimized() + one) * a * (b + one)
+			b_wins |= (a_wins.optimized() + one) * b * (a + one)
+			#eq |= a + b
+			#print(a, b, a_wins, b_wins)
+		return b_wins.optimized() #| (eq + one)
+	
+	max_pwd_len = 16
+	def count_chars(input_stream, state, vec):
+		uppercase_letters, lowercase_letters, numeric_characters, special_characters, invalid_characters, countdown = state
+		vec_1 = vec(1, 8)
+		vec_ms = vec(memory_size * 2, 8)
+		vec_pe = vec(max_pwd_len + memory_size * 2, 8)
+		
+		for character in input_stream:
+			#print(character)
+			print("a")
+			begin_pos = compare_lt(countdown, vec_ms).optimized()
+			print("b")
+			middle_pos = (compare_lt(countdown, vec_pe) * (begin_pos + one)).optimized()
+			print("c")
+			#print(begin_pos, middle_pos)
+			
+			x0, x1, x2, x3, x4, x5, x6, x7 = reversed(list(iter(character)))
+			print("d")
+			a_o = ((x3 + one) * (x4 | x5 | x6 | x7)).optimized()
+			print("e")
+			p_w = (x3 * (x4 + one)).optimized()
+			print("f")
+			x_z = (x3 * x4 * (x5 + one) * ((x6 + one) | (x7 + one))).optimized()
+			print("g")
+			uppercase_letter = ((x0 + one) * x1 * (x2 + one) * (a_o | p_w | x_z)).optimized()
+			print("h")
+			lowercase_letter = ((x0 + one) * x1 * x2 * (a_o | p_w | x_z)).optimized()
+			print("i")
+			numeric_character = zero
+			special_character = zero
+			invalid_character = zero
+			
+			print("j")
+			add(uppercase_letters, middle_pos * uppercase_letter * vec_1)
+			print("k")
+			add(lowercase_letters, middle_pos * lowercase_letter * vec_1)
+			print("l")
+			add(numeric_characters, middle_pos * numeric_character * vec_1)
+			print("m")
+			add(special_characters, middle_pos * special_character * vec_1)
+			print("n")
+			add(invalid_characters, middle_pos * invalid_character * vec_1)
+			print("o")
+			add(countdown, vec_1)
+			
+			result = vec(0, 8)
+			print("p")
+			add(result, begin_pos * countdown)
+			print("q")
+			add(result, begin_pos * character)
+			print("r")
+			add(result, begin_pos * vec(137, 8))
+			print("s")
+			countdown_opt = countdown.optimized()
+			print("t")
+			result += compare_eq(countdown_opt, vec(0 + max_pwd_len + memory_size * 2, 8)).optimized() * uppercase_letters.optimized()
+			print("u")
+			result += compare_eq(countdown_opt, vec(1 + max_pwd_len + memory_size * 2, 8)).optimized() * lowercase_letters.optimized()
+			print("v")
+			result += compare_eq(countdown_opt, vec(2 + max_pwd_len + memory_size * 2, 8)).optimized() * numeric_characters.optimized()
+			print("w")
+			result += compare_eq(countdown_opt, vec(3 + max_pwd_len + memory_size * 2, 8)).optimized() * special_characters.optimized()
+			print("x")
+			result += compare_eq(countdown_opt, vec(4 + max_pwd_len + memory_size * 2, 8)).optimized() * invalid_characters.optimized()
+			print("y")
+			
+			yield result.optimized()
+	
+	state = [const_vec.zero(8) for _i in range(6)]
+	r = list(count_chars([const_vec(ord(_ch), 8) for _ch in "1234" + "ABCDabcdEFGHefgh" + "1234"], state, const_vec))
+	print([int(_r) for _r in r])
+	
+	try:
+		with Path('counting_automaton.pickle').open('rb') as f:
+			counting_automaton = pickle.load(f)	
+	except FileNotFoundError:
+		state = [vec([Automaton.s[1, 8 * _i + _j] for _j in range(8)]) for _i in range(6)]
+		r = list(count_chars([vec([Automaton.x[_i] for _i in range(8)])], state, vec))
+		print("z")
+		for _r in r:
+			print(_r.circuit_size())
+			#print(str(_r.optimized()))
+			output_transition = _r.optimized()
+		
+		state_transition = []
+		for _s in state:
+			print(_s.circuit_size())
+			state_transition.extend(list(_s.optimized()))
+		state_transition = vec(state_transition)
+		
+		counting_automaton = Automaton(output_transition, state_transition)
+		with Path('counting_automaton.pickle').open('wb') as f:
+			pickle.dump(counting_automaton, f)
+	
+	print("compiling plain automaton")
+	compiler = Compiler()
+	counting_automaton.compile('counting_automaton', compiler)
+	code1 = compiler.compile()
+	counting_automaton_c = counting_automaton.wrap_compiled('counting_automaton', code1)
+	
+	with code1:
+		r = list(counting_automaton_c([const_vec(ord(_ch), 8) for _ch in "1234" + "ABCDabcdEFGHefgh" + "1234"]))
+	print([int(_r) for _r in r])
+	
+	#encrypt.optimize()
+	#decrypt.optimize()
+	
+	print("composing homomorphic automaton")
+	counting_homomorphic = encrypt @ counting_automaton @ decrypt
+	print(counting_homomorphic.output_transition.circuit_size(), counting_homomorphic.state_transition.circuit_size())
+	
+	print("optimization pass")
+	with parallel():
+		counting_homomorphic.optimize()
+	
+	print(counting_homomorphic.output_transition.circuit_size(), counting_homomorphic.state_transition.circuit_size())
+	
+	print("compiling obfuscated automata")
+	compiler = Compiler()
+	encrypt.compile('encrypt', compiler)
+	decrypt.compile('decrypt', compiler)
+	counting_automaton.compile('counting_homomorphic', compiler)
+	code2 = compiler.compile()
+	encrypt_c = counting_automaton.wrap_compiled('encrypt', code2)
+	decrypt_c = counting_automaton.wrap_compiled('decrypt', code2)
+	counting_homomorphic_c = counting_automaton.wrap_compiled('counting_homomorphic', code2)
+	
+	with code2:
+		e = list(encrypt_c([const_vec(ord(_ch), 8) for _ch in "1234" + "ABCDabcdEFGHefgh" + "1234"]))
+		r = list(counting_homomorphic_c(e))
+		d = list(decrypt_c(r))
+	print([int(_r) for _r in d])
+
+
+
+
+
+
+
+
+	quit()
+
+
+
 	print()
 	print("Testing FAPKC0 encryption / decryption")
 	try:
@@ -1009,7 +1204,7 @@ if __debug__ and __name__ == '__main__':
 			pickle.dump(encrypt, f)
 		with Path('decrypt.pickle').open('wb') as f:
 			pickle.dump(decrypt, f)
-
+	
 	print("encryption automaton size:", encrypt.output_transition.circuit_size(), encrypt.state_transition.circuit_size())
 	print("decryption automaton size:", decrypt.output_transition.circuit_size(), decrypt.state_transition.circuit_size())
 	
@@ -1036,6 +1231,7 @@ if __debug__ and __name__ == '__main__':
 	print("Testing lowercase automaton")
 	
 	def lowercase(v):
+		# convert ASCII-encoded character to lowercase
 		x0, x1, x2, x3, x4, x5, x6, x7 = reversed(list(iter(v)))
 		a_o = (x3 + one) * (x4 | x5 | x6 | x7)
 		p_w = x3 * (x4 + one)
@@ -1109,6 +1305,5 @@ if __debug__ and __name__ == '__main__':
 	#input_stream = [Vector(_n, dimension=8) for _n in range(20)]
 	#print(list(int(_x) for _x in cd10a(input_stream)))
 	#print(list(int(_x) for _x in cd10b(input_stream)))
-
-
+	
 
