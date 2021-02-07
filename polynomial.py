@@ -45,6 +45,9 @@ class Identical:
 		self.str_cache = None
 	
 	def __eq__(self, other):
+		if self.term is other.term:
+			return True
+		
 		if self.term.operator != other.term.operator:
 			return False
 		
@@ -53,8 +56,11 @@ class Identical:
 		
 		if self.term.operator in (self.term.symbol.const, self.term.symbol.var):
 			return self.term.operands == other.term.operands
-		else:
-			return all((self.__class__(_a) == self.__class__(_b)) for (_a, _b) in zip(self.term.operands, other.term.operands))
+		
+		if hash(self) != hash(other):
+			return False
+		
+		return all((self.__class__(_a) == self.__class__(_b)) for (_a, _b) in zip(self.term.operands, other.term.operands))
 	
 	def __hash__(self):
 		if self.hash_cache != None:
@@ -507,26 +513,29 @@ class Polynomial(Immutable, AlgebraicStructure):
 			pass
 		
 		if self.operator == self.symbol.add:
-			addends = []
+			one = self.algebra.base_ring.one()
+			addends = defaultdict(lambda: self.algebra.base_ring.zero())
 			constants = []
 			for addend in self.operands:
 				addend = addend.evaluate_constants()
 				if addend.operator == self.symbol.const:
 					constants.append(addend)
 				else:
-					addends.append(addend)
+					addends[Identical(addend)] += one
 			constant = self.algebra.const(self.algebra.sum(constants).evaluate())
 			if not addends:
 				self.evaluate_constants_cache[key] = constant
 				return constant
 			if not constant.is_zero():
-				addends.append(constant)
+				addends[Identical(constant)] += one
 			
 			if len(addends) == 1:
-				self.evaluate_constants_cache[key] = addends[0]
-				return addends[0]
+				addend, c = addends.popitem()
+				result = (addend.term * self.algebra.const(c)).evaluate_constants()
+				self.evaluate_constants_cache[key] = result
+				return result
 			else:
-				s = self.algebra.sum(addends)
+				s = self.algebra.sum([(_addend.term * self.algebra.const(_const)).evaluate_constants() for (_addend, _const) in addends.items()])
 				self.evaluate_constants_cache[key] = s
 				return s
 		elif self.operator == self.symbol.mul:
@@ -551,7 +560,10 @@ class Polynomial(Immutable, AlgebraicStructure):
 				factor = factors[additive[0]]
 				assert factor.operator == self.symbol.add
 				del factors[additive[0]]
-				added = self.algebra.sum([_addend * constant for _addend in factor.operands]) #.flatten()
+				if not constant.is_one():
+					added = self.algebra.sum([_addend * constant for _addend in factor.operands]).flatten()
+				else:
+					added = self.algebra.sum([_addend for _addend in factor.operands]).flatten()
 				factors.append(added)
 				p = self.algebra.product(factors)
 				self.evaluate_constants_cache[key] = p
@@ -559,7 +571,10 @@ class Polynomial(Immutable, AlgebraicStructure):
 			
 			if len(factors) == 1:
 				factor = factors[0]
-				if factor.operator == self.symbol.mul:
+				if constant.is_one():
+					self.evaluate_constants_cache[key] = factor
+					return factor
+				elif factor.operator == self.symbol.mul:
 					r = (factor * constant).flatten()
 					self.evaluate_constants_cache[key] = r
 					return r
@@ -852,7 +867,108 @@ class Polynomial(Immutable, AlgebraicStructure):
 			
 			return equiv
 	
-	def optimized(self):
+	def optimized_2(self, depth=0, avoid_variables=frozenset()):
+		if depth >= 8:
+			return self
+		
+		key = Identical(self)
+		try:
+			return self.optimized_cache[key]
+		except KeyError:
+			pass
+		
+		#print("optimize", self.circuit_size(), depth, ' '.join([str(_v) for _v in avoid_variables]))
+		current = self.evaluate_constants()
+		
+		vs = list(current.variables() - avoid_variables)
+		if not vs:
+			result = self.algebra.const(current.evaluate())
+			self.optimized_cache[key] = result
+			return result
+		vs.sort(key=lambda v: current.variable_occurrences(v))
+		v = vs[-1]
+		if current.variable_occurrences(v) <= 1:
+			self.optimized_cache[key] = self
+			return self
+		
+		#term_freq = Counter()
+		#def count_terms(term):
+		#	term_freq[Identical(term)] += 1
+		#	return term
+		#self.__traverse_subterms(count_terms)
+		#
+		#for n, (t, c) in enumerate(term_freq.most_common()):
+		#	if n > 10: break
+		#	if c > 1 and t.term.circuit_size() > 1:
+		#		print("subterms:", t.term.circuit_size(), c)
+		
+		zero = self.algebra.zero()
+		one = self.algebra.one()
+		
+		self_0 = current(**{str(v):zero}).evaluate_constants().__optimize_additive_form()
+		self_1 = current(**{str(v):one}).evaluate_constants().__optimize_additive_form()
+		
+		a = set()
+		if self_0.operator == self.symbol.add:
+			for p in self_0.operands:
+				a.add(Identical(p))
+		else:
+			a.add(Identical(self_0))
+		
+		b = set()
+		if self_1.operator == self.symbol.add:
+			for p in self_1.operands:
+				b.add(Identical(p))
+		else:
+			b.add(Identical(self_1))
+		
+		c = a & b
+		a -= c
+		b -= c
+		
+		ta = self.algebra.sum([_op.term for _op in a]).optimized_2(depth+1) if a else zero
+		tb = self.algebra.sum([_op.term for _op in b]).optimized_2(depth+1) if b else zero
+		tc = self.algebra.sum([_op.term for _op in c]).optimized_2(depth+1) if c else zero
+		
+		#print( "optimized_2 vars:", len(tal.variables()), len(tar.variables()), len(tbl.variables()), len(tbr.variables()), len(tcl.variables()), len(tcr.variables()))
+		#print( "optimized_2 sizes:", ta.circuit_size(), tb.circuit_size(), tc.circuit_size())
+		
+		if a and b and c:
+			result1 = ((v + one) * ta + v * tb + tc).flatten()
+			result2 = (v * (ta + tb).flatten().evaluate_constants() + (tb + tc).flatten().evaluate_constants()).flatten()
+			if result1.circuit_size() <= result2.circuit_size():
+				result = result1
+			else:
+				result = result2
+		elif a and b:
+			result1 = ((v + one) * ta + v * tb).flatten()
+			result2 = (v * (ta + tb).flatten().evaluate_constants() + tb).flatten()
+			if result1.circuit_size() <= result2.circuit_size():
+				result = result1
+			else:
+				result = result2
+		elif a and c:
+			result1 = ((v + one) * ta + tc).flatten()
+			result2 = (v * ta + (ta + tc).flatten().evaluate_constants()).flatten()
+			if result1.circuit_size() <= result2.circuit_size():
+				result = result1
+			else:
+				result = result2
+		elif b and c:
+			result = (v * tb + tc).flatten()
+		elif a:
+			result = ((v + one) * ta).flatten()
+		elif b:
+			result = (v * tb).flatten()
+		elif c:
+			result = tc.flatten()
+		else:
+			result = zero
+		
+		self.optimized_cache[key] = result
+		return result
+	
+	def optimized_1(self):
 		if self.is_optimized or self.circuit_size() <= 3:
 			return self
 		
@@ -862,7 +978,7 @@ class Polynomial(Immutable, AlgebraicStructure):
 		except KeyError:
 			pass
 		
-		print("optimize", self.circuit_size())
+		#print("optimize", self.circuit_size())
 		
 		def transform(term):
 			if term.is_optimized:
@@ -896,8 +1012,10 @@ class Polynomial(Immutable, AlgebraicStructure):
 		smallest_circuit.is_optimized = True
 		self.optimized_cache[key] = smallest_circuit
 		
-		print("optimized:", self.circuit_size(), smallest_circuit.circuit_size())
+		#print("optimized:", self.circuit_size(), smallest_circuit.circuit_size())
 		return smallest_circuit
+	
+	optimized = optimized_1
 	
 	def sort_ordering(self):
 		"String returned here affects the ordering of terms in `canonical`."
@@ -986,6 +1104,17 @@ class Polynomial(Immutable, AlgebraicStructure):
 				result = frozenset().union(*[_op.variables() for _op in self.operands])
 			self.variables_cache = result
 			return result
+	
+	def variable_occurrences(self, v):
+		if self.operator == self.symbol.const:
+			return 0
+		elif self.operator == self.symbol.var:
+			if self == v:
+				return 1
+			else:
+				return 0
+		else:
+			return(sum(_op.variable_occurrences(v) for _op in self.operands))
 	
 	def __eq__(self, other):
 		if self is other:
@@ -1348,7 +1477,9 @@ class Polynomial(Immutable, AlgebraicStructure):
 		
 		return result
 	
-	def is_zero(self):
+	search_variables_limit = 8
+	
+	def is_zero(self, likely_zero=False):
 		key = Identical(self)
 		try:
 			return self.is_zero_cache[key]
@@ -1359,16 +1490,17 @@ class Polynomial(Immutable, AlgebraicStructure):
 			except KeyError:
 				pass
 		
-		#print("is_zero", self.circuit_size())
+		#print("is_zero", self.circuit_size(), ' '.join([str(_v) for _v in self.variables()]))
+		#print(" is_zero", len(self.variables()))
 		
 		try:
-			result = self.evaluate().is_zero()
+			result = self.evaluate().is_zero() # ground term?
 			self.is_zero_cache[key] = result
 			return result
 		except ValueError:
 			pass
 		
-		if self.circuit_size() >= 128:
+		if (not likely_zero and self.circuit_size() >= 128) or len(self.variables()) <= self.search_variables_limit:
 			from jit_types import Compiler
 			compiler = Compiler()
 			self.compile('c', compiler)
@@ -1378,14 +1510,26 @@ class Polynomial(Immutable, AlgebraicStructure):
 			c = self
 			code = DummyContext()
 		
-		with code:
-			for n in range(self.circuit_size()):
-				s = {str(_v):self.algebra.random() for _v in self.variables()}
-				if not c(**s).evaluate().is_zero():
-					self.is_zero_cache[key] = False
-					return False
+		if len(self.variables()) <= self.search_variables_limit: # exhaustive search
+			with code:
+				vs = [str(_v) for _v in self.variables()]
+				for valuation in product(*[self.algebra.domain() for _n in range(len(self.variables()))]):
+					s = dict(zip(vs, valuation))
+					if not c(**s).evaluate().is_zero():
+						self.is_zero_cache[key] = False
+						return False
+				else:
+					self.is_zero_cache[key] = True
+					return True
+		elif not likely_zero: # random search
+			with code:
+				for n in range(self.circuit_size() // 16):
+					s = {str(_v):self.algebra.random() for _v in self.variables()}
+					if not c(**s).evaluate().is_zero():
+						self.is_zero_cache[key] = False
+						return False
 		
-		if self.circuit_size() <= 32:
+		if self.circuit_size() <= 32: # small circuit, try algebraic proof
 			try:
 				result = self.canonical().evaluate().is_zero()
 				self.is_zero_cache[key] = result
@@ -1393,21 +1537,61 @@ class Polynomial(Immutable, AlgebraicStructure):
 			except ValueError as error:
 				self.is_zero_cache[key] = False
 				return False
+		
+		addf = self.__optimize_additive_form()
+		if addf.operator == self.symbol.add:
+			if all(len(_op.variables()) < len(addf.variables()) for _op in addf.operands):
+				ops = sorted(addf.operands, key=lambda _k: len(_k.variables()))
+				opa = [ops[-1]]
+				opb = ops[:-1]
+				while opb:
+					for op in opb[:]:
+						if any(op.variables() & _opa.variables() for _opa in opa):
+							opb.remove(op)
+							opa.append(op)
+							break
+					else:
+						break
+				if opb:
+					a = self.algebra.sum(opa)
+					b = self.algebra.sum(opb)
+					#print(sorted([str(_v) for _v in a.variables()]))
+					#print(sorted([str(_v) for _v in b.variables()]))
+					
+					assert not (a.variables() & b.variables())
+					#print("  split:", len(a.variables()), "+", len(b.variables()), "=", len(self.variables()))
+					# FIXME: works only for boolean rings
+					# start from `b` since it's smaller
+					result = (b.is_zero() and a.is_zero(likely_zero=True)) or (b.is_one() and a.is_one(likely_one=True))
+					self.is_zero_cache[key] = result
+					return result
+		elif addf.operator == self.symbol.mul:
+			for f in addf.operands: # at least one factor must be 0
+				if f.is_zero(likely_zero):
+					self.is_zero_cache[key] = True
+					return True
+			self.is_zero_cache[key] = False
+			return False
 		else:
-			result = self.prove_zero()
+			result = addf.is_zero(likely_zero)
 			self.is_zero_cache[key] = result
 			return result
 		
-		raise RuntimeError
-	
-	def prove_zero(self):
-		v = choice(list(self.variables()))
+		#if len(self.variables()) > 16:
+		#	raise RuntimeError("give up: " + str(self))
+
+		#print("  last chance", len(self.variables()))
+		
+		v = sorted(self.variables(), key=lambda _k: self.variable_occurrences(_k))[-1]
+		#v = choice(list(self.variables()))
 		for r in self.algebra.domain():
-			if not self(**{str(v):r}).evaluate_constants().is_zero():
+			if not self(**{str(v):r}).evaluate_constants().is_zero(likely_zero=True):
+				self.is_zero_cache[key] = False
 				return False
+		self.is_zero_cache[key] = True
 		return True
 	
-	def is_one(self):
+	def is_one(self, likely_one=False):
 		key = Identical(self)
 		try:
 			return self.is_one_cache[key]
@@ -1418,16 +1602,17 @@ class Polynomial(Immutable, AlgebraicStructure):
 			except KeyError:
 				pass
 		
-		#print("is_one", self.circuit_size())
+		#print(" is_one", self.circuit_size(), ' '.join([str(_v) for _v in self.variables()]))
+		#print(" is_one", self.circuit_size(), len(self.variables()))
 		
 		try:
-			result = self.evaluate().is_one()
+			result = self.evaluate().is_one() # ground term?
 			self.is_one_cache[key] = result
 			return result
 		except ValueError:
 			pass
 		
-		if self.circuit_size() >= 128:
+		if (not likely_one and self.circuit_size() >= 128) or len(self.variables()) <= self.search_variables_limit:
 			from jit_types import Compiler
 			compiler = Compiler()
 			self.compile('c', compiler)
@@ -1437,14 +1622,26 @@ class Polynomial(Immutable, AlgebraicStructure):
 			c = self
 			code = DummyContext()
 		
-		with code:
-			for n in range(self.circuit_size()):
-				s = {str(_v):self.algebra.random() for _v in self.variables()}
-				if not c(**s).evaluate().is_one():
-					self.is_one_cache[key] = False
-					return False
+		if len(self.variables()) <= self.search_variables_limit: # exhaustive search
+			with code:
+				vs = [str(_v) for _v in self.variables()]
+				for valuation in product(*[self.algebra.domain() for _n in range(len(self.variables()))]):
+					s = dict(zip(vs, valuation))
+					if not c(**s).evaluate().is_one():
+						self.is_one_cache[key] = False
+						return False
+				else:
+					self.is_one_cache[key] = True
+					return True
+		elif not likely_one: # random search
+			with code:
+				for n in range(self.circuit_size() // 16):
+					s = {str(_v):self.algebra.random() for _v in self.variables()}
+					if not c(**s).evaluate().is_one():
+						self.is_one_cache[key] = False
+						return False
 		
-		if self.circuit_size() <= 32:
+		if self.circuit_size() <= 32: # small circuit, try algebraic proof
 			try:
 				result = self.canonical().evaluate().is_one()
 				self.is_one_cache[key] = result
@@ -1452,16 +1649,56 @@ class Polynomial(Immutable, AlgebraicStructure):
 			except ValueError as error:
 				self.is_one_cache[key] = False
 				return False
+		
+		addf = self.__optimize_additive_form()
+		if addf.operator == self.symbol.add:
+			if all(len(_op.variables()) < len(addf.variables()) for _op in addf.operands):
+				ops = sorted(addf.operands, key=lambda _k: len(_k.variables()))
+				opa = [ops[-1]]
+				opb = ops[:-1]
+				while opb:
+					for op in opb[:]:
+						if any(op.variables() & _opa.variables() for _opa in opa):
+							opb.remove(op)
+							opa.append(op)
+							break
+					else:
+						break
+				if opb:
+					a = self.algebra.sum(opa)
+					b = self.algebra.sum(opb)
+					#print([str(_v) for _v in a.variables()], [str(_v) for _v in b.variables()])
+					
+					assert not (a.variables() & b.variables())
+					#print("  split:", len(a.variables()), "+", len(b.variables()), "=", len(self.variables()))
+					
+					# FIXME: works only for boolean rings
+					# start from `b` since it's smaller
+					result = (b.is_one() and a.is_zero(likely_zero=True)) or (b.is_zero() and a.is_one(likely_one=True))
+					self.is_one_cache[key] = result
+					return result
+		elif addf.operator == self.symbol.mul:
+			for f in addf.operands: # all factors must be non0
+				if f.is_zero(likely_zero=False):
+					self.is_one_cache[key] = False
+					return False
+			# nonzero, but no proof that self == 1
 		else:
-			result = self.prove_one()
+			result = addf.is_one(likely_zero)
 			self.is_one_cache[key] = result
 			return result
-	
-	def prove_one(self):
-		v = choice(list(self.variables()))
+		
+		#if len(self.variables()) > 16:
+		#	raise RuntimeError("give up: " + str(self))
+		
+		#print("  last chance", len(self.variables()))
+		
+		v = sorted(self.variables(), key=lambda _k: self.variable_occurrences(_k))[-1]
 		for r in self.algebra.domain():
-			if not self(**{str(v):r}).evaluate_constants().is_one():
+			if not self(**{str(v):r}).evaluate_constants().is_one(likely_one=True):
+				self.is_one_cache[key] = False
 				return False
+		self.is_one_cache[key] = True
 		return True
 	
 	@classmethod
@@ -1746,15 +1983,15 @@ if __debug__:
 	def test_optimization(algebra, verbose=False):
 		v = [algebra.var('v_' + str(_n)) for _n in range(16)]
 		
-		for i in range(2):
+		for i in range(10):
 			p = algebra.random(variables=v, order=10).flatten()
 			po = p.optimized()
 			#print(" ", p.circuit_size(), po.circuit_size(), p.circuit_depth(), po.circuit_depth(), po)
 			if verbose:
 				print(" ", p.circuit_size(), p.circuit_depth(), '->', po.circuit_size(), po.circuit_depth(), "\t", str(100 - int(100 * po.circuit_size() / p.circuit_size())) + "%")
-			assert p.circuit_size() >= po.circuit_size()
 			with AllowCanonical():
 				assert po == p
+			assert p.circuit_size() >= po.circuit_size()
 	
 	def polynomial_test_suite(verbose=False):
 		if verbose: print("running test suite")
@@ -1827,6 +2064,8 @@ if __debug__:
 
 
 if __debug__ and __name__ == '__main__':
+	test_optimization(Polynomial.get_algebra(base_ring=BooleanRing.get_algebra()), verbose=True)
+	
 	polynomial_test_suite(verbose=True)
 	
 	quit()
