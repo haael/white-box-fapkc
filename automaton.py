@@ -172,17 +172,21 @@ def automaton_factory(base_ring):
 			self.state_transition = self.state_transition.optimized()
 		
 		def mix_states(self):
+			print("generating random matrix")
 			mix, unmix = base_const_matrix.random_inverse_pair(self.memory_width)
 			mix = base_matrix(mix)
 			unmix = base_matrix(unmix)
 			
+			print("calculating unmix substitution")
 			substitution = {}
 			for t in range(1, self.memory_length + 1):
 				unmixed = unmix @ base_vector(self.s[t, _i] for _i in range(self.memory_width))
 				for i in range(self.memory_width):
 					substitution[str(self.s[t, i])] = unmixed[i]
 			
-			self.state_transition = mix @ base_vector(_trans(**substitution) for _trans in self.state_transition)
+			print("applying state transition")
+			self.state_transition = mix @ base_vector(_trans(**substitution) for _trans in self.state_transition).optimized()
+			print("applying output transition")
 			self.output_transition = base_vector(_trans(**substitution) for _trans in self.output_transition)
 		
 		def __and__(self, other):
@@ -984,8 +988,49 @@ if __debug__:
 
 
 
-if __debug__ and __name__ == '__main__':	
-	automaton_test_suite(verbose=True)
+if __debug__ and __name__ == '__main__':
+	Automaton = automaton_factory(BooleanRing.get_algebra())
+	
+	memory_size = 2
+	block_size = 2
+	encrypt, decrypt = Automaton.fapkc0(block_size=block_size, memory_size=memory_size)
+	print("encrypt automaton size", encrypt.output_transition.circuit_size(), encrypt.state_transition.circuit_size())
+	print("encryption automaton component sizes:", [_c.circuit_size() for _c in encrypt.output_transition], [_c.circuit_size() for _c in encrypt.state_transition])
+	print("decrypt automaton size", decrypt.output_transition.circuit_size(), decrypt.state_transition.circuit_size())
+	print("decryption automaton component sizes:", [_c.circuit_size() for _c in decrypt.output_transition], [_c.circuit_size() for _c in decrypt.state_transition])
+	
+	print("optimization pass...")
+	encrypt.optimize()
+	decrypt.optimize()
+	print("encrypt automaton size", encrypt.output_transition.circuit_size(), encrypt.state_transition.circuit_size())
+	print("encryption automaton component sizes:", [_c.circuit_size() for _c in encrypt.output_transition], [_c.circuit_size() for _c in encrypt.state_transition])
+	print("decrypt automaton size", decrypt.output_transition.circuit_size(), decrypt.state_transition.circuit_size())
+	print("decryption automaton component sizes:", [_c.circuit_size() for _c in decrypt.output_transition], [_c.circuit_size() for _c in decrypt.state_transition])
+	print(encrypt.output_transition)
+	print(decrypt.output_transition)
+	
+	print("obfuscating states...")
+	encrypt.mix_states()
+	decrypt.mix_states()
+	print("encrypt automaton size", encrypt.output_transition.circuit_size(), encrypt.state_transition.circuit_size())
+	print("encryption automaton component sizes:", [_c.circuit_size() for _c in encrypt.output_transition], [_c.circuit_size() for _c in encrypt.state_transition])
+	print("decrypt automaton size", decrypt.output_transition.circuit_size(), decrypt.state_transition.circuit_size())
+	print("decryption automaton component sizes:", [_c.circuit_size() for _c in decrypt.output_transition], [_c.circuit_size() for _c in decrypt.state_transition])
+	
+	print("optimization pass...")
+	encrypt.optimize()
+	decrypt.optimize()
+	print("encrypt automaton size", encrypt.output_transition.circuit_size(), encrypt.state_transition.circuit_size())
+	print("encryption automaton component sizes:", [_c.circuit_size() for _c in encrypt.output_transition], [_c.circuit_size() for _c in encrypt.state_transition])
+	print("decrypt automaton size", decrypt.output_transition.circuit_size(), decrypt.state_transition.circuit_size())
+	print("decryption automaton component sizes:", [_c.circuit_size() for _c in decrypt.output_transition], [_c.circuit_size() for _c in decrypt.state_transition])
+	print(encrypt.output_transition)
+	print(decrypt.output_transition)
+	
+	quit()
+	
+	
+	#automaton_test_suite(verbose=True)
 	
 	#test_automaton_compilation(BooleanRing.get_algebra(), 8, 4, 256)
 	#test_automaton_compilation(RijndaelField.get_algebra(), 4, 2, 64)

@@ -120,13 +120,33 @@ def generate_keys():
 		print("generating FAPKC0 automaton pair...")
 		encrypt, decrypt = Automaton.fapkc0(block_size=8, memory_size=memory_size)
 		print("encrypt automaton size", encrypt.output_transition.circuit_size(), encrypt.state_transition.circuit_size())
+		print("encryption automaton component sizes:", [_c.circuit_size() for _c in encrypt.output_transition], [_c.circuit_size() for _c in encrypt.state_transition])
 		print("decrypt automaton size", decrypt.output_transition.circuit_size(), decrypt.state_transition.circuit_size())
+		print("decryption automaton component sizes:", [_c.circuit_size() for _c in decrypt.output_transition], [_c.circuit_size() for _c in decrypt.state_transition])
 		
-		print(" optimization pass...")
+		print("optimization pass...")
 		encrypt.optimize()
 		decrypt.optimize()
 		print("encrypt automaton size", encrypt.output_transition.circuit_size(), encrypt.state_transition.circuit_size())
+		print("encryption automaton component sizes:", [_c.circuit_size() for _c in encrypt.output_transition], [_c.circuit_size() for _c in encrypt.state_transition])
 		print("decrypt automaton size", decrypt.output_transition.circuit_size(), decrypt.state_transition.circuit_size())
+		print("decryption automaton component sizes:", [_c.circuit_size() for _c in decrypt.output_transition], [_c.circuit_size() for _c in decrypt.state_transition])
+		
+		print("obfuscating states...")
+		encrypt.mix_states()
+		decrypt.mix_states()
+		print("encrypt automaton size", encrypt.output_transition.circuit_size(), encrypt.state_transition.circuit_size())
+		print("encryption automaton component sizes:", [_c.circuit_size() for _c in encrypt.output_transition], [_c.circuit_size() for _c in encrypt.state_transition])
+		print("decrypt automaton size", decrypt.output_transition.circuit_size(), decrypt.state_transition.circuit_size())
+		print("decryption automaton component sizes:", [_c.circuit_size() for _c in decrypt.output_transition], [_c.circuit_size() for _c in decrypt.state_transition])
+		
+		print("optimization pass...")
+		encrypt.optimize()
+		decrypt.optimize()
+		print("encrypt automaton size", encrypt.output_transition.circuit_size(), encrypt.state_transition.circuit_size())
+		print("encryption automaton component sizes:", [_c.circuit_size() for _c in encrypt.output_transition], [_c.circuit_size() for _c in encrypt.state_transition])
+		print("decrypt automaton size", decrypt.output_transition.circuit_size(), decrypt.state_transition.circuit_size())
+		print("decryption automaton component sizes:", [_c.circuit_size() for _c in decrypt.output_transition], [_c.circuit_size() for _c in decrypt.state_transition])
 		
 		with Path('encrypt.pickle').open('wb') as f:
 			pickle.dump(encrypt, f)
@@ -163,7 +183,7 @@ def test_functional_encryption():
 		state_transition = []
 		for _s in state:
 			state_transition.extend(list(_s))
-		state_transition = vec(state_transition)
+		state_transition = Vector(state_transition)
 		
 		counting_automaton = Automaton(output_transition, state_transition)
 		print("counting automaton size", counting_automaton.output_transition.circuit_size(), counting_automaton.state_transition.circuit_size())
@@ -185,7 +205,7 @@ def test_functional_encryption():
 		counting_homomorphic = encrypt @ counting_automaton @ decrypt
 		print("homomorphic automaton size", counting_homomorphic.output_transition.circuit_size(), counting_homomorphic.state_transition.circuit_size())
 		
-		print(" optimization pass...")
+		print("optimization pass...")
 		counting_homomorphic.optimize()
 		print("homomorphic automaton size", counting_homomorphic.output_transition.circuit_size(), counting_homomorphic.state_transition.circuit_size())
 		
@@ -248,7 +268,6 @@ def test_homomorphic_encryption():
 	print()
 	print(" ***")
 	print("Testing homomorphic encryption")
-	print()
 	
 	encrypt, decrypt = generate_keys()
 	
