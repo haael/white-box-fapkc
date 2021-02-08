@@ -157,8 +157,6 @@ def automaton_factory(base_ring):
 					if str(self.s[i, j]) in v:
 						m = i
 			
-			#print(self.s[3, 1] in v)
-			#print("memory_length", m, v)
 			return m
 		
 		@property
@@ -172,34 +170,44 @@ def automaton_factory(base_ring):
 			self.state_transition = self.state_transition.optimized()
 		
 		def mix_states(self):
-			print("generating random matrix")
+			"""
+			To factorize a compound automaton it is necessary and sufficient to split its state vector into the part related to the first automaton and the part related to the second automaton.
+			The naive composition algorithm produces an automaton where the parts are simply concatenated, which leaves them open to factorization by the attacker. To prevent that, the state
+			representation must be obfuscated.
+			This function applies a linear transform to the state vector. In order to factorize the automaton into components, the attacker must guess the transformation matrix. In order to
+			learn one bit of one of the original states, he must guess one row of the matrix. The transformation is a square matrix of the size equal to the number of bits of the compound state
+			squared.
+			This function is slow. While debugging, this step might be omitted.
+			"""
+			
+			#print("generating random matrix")
 			mix, unmix = base_const_matrix.random_inverse_pair(self.memory_width)
 			mix = base_matrix(mix)
 			unmix = base_matrix(unmix)
 			
-			print("calculating unmix substitution")
+			#print("calculating unmix substitution")
 			substitution = {}
 			for t in range(1, self.memory_length + 1):
 				unmixed = unmix @ base_vector(self.s[t, _i] for _i in range(self.memory_width))
 				for i in range(self.memory_width):
 					substitution[str(self.s[t, i])] = unmixed[i]
 			
-			print("applying state transition")
+			#print("applying state transition")
 			self.state_transition = mix @ base_vector(_trans(**substitution) for _trans in self.state_transition).optimized()
-			print("applying output transition")
+			#print("applying output transition")
 			self.output_transition = base_vector(_trans(**substitution) for _trans in self.output_transition)
 		
-		def __and__(self, other):
-			"2 automata running in parallel (aka tuple). The input size is the sum of input sized of the provided automata. The output size is the sum of the sizes of outputs."
-			raise NotImplementedError
-		
-		def __or__(self, other):
-			"Choice of 1 automaton from 2 running in parallel (aka tagged union). Input sizes of the provided automata must be equal, output likewise. The input sie of the resulting automaton will be 1 position longer. The 1st argument decides which automaton returns the output."
-			raise NotImplementedError
-		
-		def cast(cls, begin, end):
-			"Narrow the output to the range given."
-			raise NotImplementedError
+		#def __and__(self, other):
+		#	"2 automata running in parallel (aka tuple). The input size is the sum of input sized of the provided automata. The output size is the sum of the sizes of outputs."
+		#	raise NotImplementedError
+		#
+		#def __or__(self, other):
+		#	"Choice of 1 automaton from 2 running in parallel (aka tagged union). Input sizes of the provided automata must be equal, output likewise. The input sie of the resulting automaton will be 1 position longer. The 1st argument decides which automaton returns the output."
+		#	raise NotImplementedError
+		#
+		#def cast(cls, begin, end):
+		#	"Narrow the output to the range given."
+		#	raise NotImplementedError
 		
 		@classmethod
 		def countdown(cls, block_size, memory_size, offset, length, period): # TODO
@@ -285,11 +293,7 @@ def automaton_factory(base_ring):
 					
 					coefficients_A = []
 					for n in range(memory_size + 1):
-						coefficients_A.append(base_const_matrix.random_rank(block_size, block_size - 1))
-					
-					#coefficients_B = [zero_m]
-					#for n in range(1, memory_size + 1):
-					#	coefficients_B.append(base_const_matrix.random(block_size, block_size))
+						coefficients_A.append(base_const_matrix.random_rank(block_size, block_size - 1)) # FIXME: the paper suggests generating matrices of increasing rank
 					
 					x = [base_vector(cls.x[_i] for _i in range(block_size))]
 					for n in range(1, memory_size + 1):
@@ -302,7 +306,6 @@ def automaton_factory(base_ring):
 					y0 = base_vector.zero(block_size)
 					for n in range(memory_size + 1):
 						y0 += base_matrix(coefficients_A[n]) @ x[n]
-						#y0 += base_matrix(coefficients_B[n]) @ y[n]
 					y0 = y0.optimized()
 					
 					automaton_A = cls(output_transition=y0, state_transition=x[0] | y0)
@@ -472,7 +475,6 @@ def automaton_factory(base_ring):
 					for n in range(memory_size + 1):
 						x0 -= base_matrix(coefficients_Q[n]) @ x[-n]
 						x0 += base_matrix(coefficients_P[n]) @ y[n]
-						#x0 -= base_matrix(A00_inv @ coefficients_B[n]) @ y[-n]
 					x0 = x0.optimized()
 					
 					s = x0 | y[memory_size]

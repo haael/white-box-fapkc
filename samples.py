@@ -74,9 +74,9 @@ def count_chars(input_stream, state, Vector):
 		x_z = (x3 * x4 * (x5 + one) * ((x6 + one) | (x7 + one))).optimized()
 		uppercase_letter = ((x0 + one) * x1 * (x2 + one) * (a_o | p_w | x_z)).optimized()
 		lowercase_letter = ((x0 + one) * x1 * x2 * (a_o | p_w | x_z)).optimized()
-		numeric_character = zero
-		special_character = zero
-		invalid_character = zero
+		numeric_character = zero # TODO
+		special_character = zero # TODO
+		invalid_character = zero # TODO
 		
 		add(uppercase_letters, middle_pos * uppercase_letter * vec_1)
 		add(lowercase_letters, middle_pos * lowercase_letter * vec_1)
@@ -132,6 +132,7 @@ def generate_keys():
 		print("decrypt automaton size", decrypt.output_transition.circuit_size(), decrypt.state_transition.circuit_size())
 		print("decryption automaton component sizes:", [_c.circuit_size() for _c in decrypt.output_transition], [_c.circuit_size() for _c in decrypt.state_transition])
 		
+		'''
 		print("obfuscating states...")
 		encrypt.mix_states()
 		decrypt.mix_states()
@@ -147,6 +148,7 @@ def generate_keys():
 		print("encryption automaton component sizes:", [_c.circuit_size() for _c in encrypt.output_transition], [_c.circuit_size() for _c in encrypt.state_transition])
 		print("decrypt automaton size", decrypt.output_transition.circuit_size(), decrypt.state_transition.circuit_size())
 		print("decryption automaton component sizes:", [_c.circuit_size() for _c in decrypt.output_transition], [_c.circuit_size() for _c in decrypt.state_transition])
+		'''
 		
 		with Path('encrypt.pickle').open('wb') as f:
 			pickle.dump(encrypt, f)
@@ -157,6 +159,12 @@ def generate_keys():
 
 
 def test_functional_encryption():
+	"""
+	Generate functional keys performing the function `count_chars`. The encryption key is known to the holder of the secret, the operation key is known to the verifier,
+	the decryption key has to be forgotten. The holder of the secret will encrypt the secret information and send it to the verifier. The verifier can learn the result
+	of the operation without learning the secret.
+	"""
+	
 	print()
 	print(" ***")
 	print("Testing functional encryption")
@@ -202,7 +210,7 @@ def test_functional_encryption():
 	except (FileNotFoundError, EOFError):
 		print()
 		print("composing homomorphic automaton")
-		counting_homomorphic = encrypt @ counting_automaton @ decrypt
+		counting_homomorphic = encrypt @ counting_automaton @ decrypt # TODO: attach decryption automaton to the output
 		print("homomorphic automaton size", counting_homomorphic.output_transition.circuit_size(), counting_homomorphic.state_transition.circuit_size())
 		
 		print("optimization pass...")
@@ -236,7 +244,7 @@ def test_functional_encryption():
 	with code:
 		print()
 		print("testing plain automaton")
-		text = "12345678" + "ABCDabcdEFGHefgh" + "ABCD"
+		text = "12345678" + "ABCDabcdEFGHefgh" + "ABCD" # IV(4 * memory_size) + text + suffix(2 * memory_size)
 		print("text:\t\t", text)
 		t = [const_Vector(ord(_ch), 8) for _ch in text]
 		h = list(counting_automaton_c(t))
@@ -252,7 +260,7 @@ def test_functional_encryption():
 		
 		print()
 		print("testing functional encryption")
-		text = "123456" + "ABCDabcdEFGHefgh" + "ABCD7890"
+		text = "123456" + "ABCDabcdEFGHefgh" + "ABCD7890" # IV(2 * memory_size) + prefix(memory_size) + text + suffix_1(2 * memory_size) + suffix_2(2 * memory_size)
 		print("text:\t\t", text)
 		t = [const_Vector(ord(_ch), 8) for _ch in text]
 		e = list(encrypt_c(t))
@@ -265,6 +273,11 @@ def test_functional_encryption():
 
 
 def test_homomorphic_encryption():
+	"""
+	Generate keys performing Gonzalez-Llamas homomorphic encryption. The decryption and encryption key are known to the user, the operation key is sent to the cloud provider.
+	The user can encrypt a secret, send it to the cloud, perform the operation, receive encrypted result, and decrypt.
+	"""
+	
 	print()
 	print(" ***")
 	print("Testing homomorphic encryption")
@@ -350,7 +363,7 @@ def test_homomorphic_encryption():
 	
 	print("text:\t\t\t", cleartext)
 	with code1:
-		cipher = [_r for _r in encrypt_c(const_Vector(ord(_ch), 8) for _ch in "A%$#" + cleartext + "!@^&")]
+		cipher = [_r for _r in encrypt_c(const_Vector(ord(_ch), 8) for _ch in "A%$#" + cleartext + "!@^&")] # IV + text + suffix
 	print("cipher pre lowercase:\t", ' '.join(['{:02x}'.format(int(_c)) for _c in cipher]))
 	with code2:
 		lowercase_cipher = [_r for _r in lowercase_homomorphic_c(cipher)]
