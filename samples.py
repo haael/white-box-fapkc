@@ -274,7 +274,7 @@ def test_functional_encryption():
 
 def test_homomorphic_encryption():
 	"""
-	Generate keys performing Gonzalez-Llamas homomorphic encryption. The decryption and encryption key are known to the user, the operation key is sent to the cloud provider.
+	Generate keys performing Gonzalez-Llamas homomorphic encryption. The decryption and encryption keys are known to the user, the operation key is sent to the cloud provider.
 	The user can encrypt a secret, send it to the cloud, perform the operation, receive encrypted result, and decrypt.
 	"""
 	

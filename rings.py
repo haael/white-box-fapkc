@@ -818,6 +818,10 @@ class GaloisField(AbstractRing):
 	
 	@classmethod
 	def compile_tables(cls, name, compiler, *args, **kwargs):
+		"""
+		Compile exponent and logarithm tables. If this method is called, compiled circuits will use slipstick multiplication.
+		If not, they will default to long multiplication. It varies between system which algorithm is faster.
+		"""
 		algebra = cls.get_algebra(*args, **kwargs)
 		log_table, exp_table = algebra.log_exp_tables()
 		bits = (algebra.size - 1).bit_length()
