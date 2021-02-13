@@ -2,189 +2,225 @@
 
 ** Algebra
 
-The underlying algebra of FAPKC algorithm is a Boolean ring with 2 operations: addition (equivalent to "exclusive or") and multiplication (equivalent to "and").
-FAPKC may be based on other rings too.
+The underlying algebra of FAPKC algorithm is a Boolean ring with 2 operations: addition (equivalent to "exclusive
+or") and multiplication (equivalent to "and").  FAPKC may be based on other rings too.
 
-Let's define multivariate polynomials over the Boolean ring. The polynomials support addition, multiplication and also substitution, when other polynomial is
-substituted in place of one or more variables. If we substitute every variable with a constant, we call that evaluation.
+Let's define multivariate polynomials over the Boolean ring. The polynomials support addition, multiplication and
+also substitution, when other polynomial is substituted in place of one or more variables. If we substitute every
+variable with a constant, we call that evaluation.
 
-If a polynomial is constituted only of multiplication, we call it a monomial. If a polynomial is constituted only of addition, we call it a linear polynomial.
+If a polynomial is constituted only of multiplication, we call it a monomial. If a polynomial is constituted only
+of addition, we call it a linear polynomial.
 
-In the context of circuits and computation theory, we often call a single operation a "gate". Since addition and multiplication are commutative and associative,
-gates can have multiple inputs.
+In the context of circuits and computation theory, we often call a single operation a "gate". Since addition and
+multiplication are commutative and associative, gates can have multiple inputs.
 
-If 2 polynomials are exactly the same, including the order of variables, we call them identical. If they are not necessarily the same, but evaluate the same
-function, we call them equal. The problem of polynomial equality belongs to the class NP. If one polynomial was obtained from another equal one by some
-polynomial-time algorithm, or 2 polynomials were proven equal by some polynomial-time algorithm, we call them equivalent. Equivalence is context-dependent, as
-it depends on the algorithm in question, but is often more useful in practice than equality.
+If 2 polynomials are exactly the same, including the order of variables, we call them identical. If they are
+not necessarily the same, but evaluate the same function, we call them equal. The problem of polynomial equality
+belongs to the class NP. If one polynomial was obtained from another equal one by some polynomial-time algorithm,
+or 2 polynomials were proven equal by some polynomial-time algorithm, we call them equivalent. Equivalence is
+context-dependent, as it depends on the algorithm in question, but is often more useful in practice than equality.
 
-Any polynomial may be written down as sum of monomials. We call that canonical form. If 2 polynomials are equal, their canonical forms are identical. The problem
-of finding the canonical form belongs to the class NP.
+Any polynomial may be written down as sum of monomials. We call that canonical form. If 2 polynomials are equal,
+their canonical forms are identical. The problem of finding the canonical form belongs to the class NP.
 
 Polynomials are characterized by the following parameters:
-- degree, or the number of variables in the longest monomial of the canonical form; degree is the same for 2 equal polynomials
-- size, or the number of gates; also we assume that constants have size of 0 and single variables have the size of 1
+- degree, or the number of variables in the longest monomial of the canonical form; degree is the same for 2 equal
+polynomials
+- size, or the number of gates; also we assume that constants have size of 0 and single variables have the size
+of 1
 - depth, if we draw the polynomial as a tree of operations, it's the extent of the longest branch.
 
-An optimal polynomial is a polynomial of the smallest possible size, evaluating some function. There might be more than 1 optimal polynomial per function, but they
-all have the same size. The problem of finding the optimal polynomial for the given one belongs to the class NP. An optimized polynomial is a result of running
-some polynomial-time size reduction algorithm on a given polynomial. An optimized polynomial doesn't need to be optimal, but is an approximation of one.
+An optimal polynomial is a polynomial of the smallest possible size, evaluating some function. There might
+be more than 1 optimal polynomial per function, but they all have the same size. The problem of finding the
+optimal polynomial for the given one belongs to the class NP. An optimized polynomial is a result of running some
+polynomial-time size reduction algorithm on a given polynomial. An optimized polynomial doesn't need to be optimal,
+but is an approximation of one.
 
-Elements of the Boolean ring, or polynomials over the Boolean ring may be packed into a vector. Every circuit may be represented as a vector of polynomials over
-Boolean ring. If we impose and order on the variables, they themselves form a vector, that we call the input vector of the circuit. The vector of the polynomials
-itself will be called the output vector. The dimension of the input and output vector does not need to be the same. If we substitute the input vector with some
-constant vector, the circuit will evaluate to some constant vector, which we call the result.
+Elements of the Boolean ring, or polynomials over the Boolean ring may be packed into a vector. Every circuit may be
+represented as a vector of polynomials over Boolean ring. If we impose and order on the variables, they themselves
+form a vector, that we call the input vector of the circuit. The vector of the polynomials itself will be called
+the output vector. The dimension of the input and output vector does not need to be the same. If we substitute the
+input vector with some constant vector, the circuit will evaluate to some constant vector, which we call the result.
 
-Circuits may be composed, where one circuit's output vector is fed as input vector of another circuit. The resulting circuit will calculate the composition of the
-functions evaluated by the original circuits.
+Circuits may be composed, where one circuit's output vector is fed as input vector of another circuit. The resulting
+circuit will calculate the composition of the functions evaluated by the original circuits.
 
-If a circuit is made only of linear polynomials, we call it a linear circuit. Such circuit may be formally written down as a constant matrix over Boolean ring
-acting on the input vector. Composition of 2 linear circuits reduces to matrix multiplication.
+If a circuit is made only of linear polynomials, we call it a linear circuit. Such circuit may be formally written
+down as a constant matrix over Boolean ring acting on the input vector. Composition of 2 linear circuits reduces
+to matrix multiplication.
 
 
 ** Complexity theory
 
 *** Circuits
 
-A circuit is a machine that does not have memory. Formally, it may be assigned a function from a finite set or input symbols into a finite set of output symbols.
-Such function itself will be finite. A circuit may be generalized to operate on a possibly infinite stream of input symbols, but for the same input symbol it always
-returns the same output symbol. In the context of electronics, circuits are called combinational logic, or time-independent logic.
+A circuit is a machine that does not have memory. Formally, it may be assigned a function from a finite set or input
+symbols into a finite set of output symbols.  Such function itself will be finite. A circuit may be generalized
+to operate on a possibly infinite stream of input symbols, but for the same input symbol it always returns the
+same output symbol. In the context of electronics, circuits are called combinational logic, or time-independent logic.
 
-Every circuit may be represented as a vector of polynomials over Boolean ring. (In general, over any nontrivial ring.) The input vector encodes the bits of input
-symbols and the output vector encodes the output symbols. A ring operation is called a gate. The size of the circuit is the sum of the sizes of all polynomials
-that constitute it. The depth of the circuit is the maximum depth of its polynomials. A circuit may be optimized, which means optimization of all of its
-polynomials.
+Every circuit may be represented as a vector of polynomials over Boolean ring. (In general, over any nontrivial
+ring.) The input vector encodes the bits of input symbols and the output vector encodes the output symbols. A ring
+operation is called a gate. The size of the circuit is the sum of the sizes of all polynomials that constitute
+it. The depth of the circuit is the maximum depth of its polynomials. A circuit may be optimized, which means
+optimization of all of its polynomials.
 
 The problem whether 2 circuits calculate the same function belongs to the class NP.
 
 *** Finite automata
 
-A finite automaton (or short: automaton) is a machine that uses constant memory. In the context of electronics they are called finite-state logic. Finite automata
-take a possibly infinite stream of input symbols and move to another state on receiving each symbol. There are nondeterministic finite automata that can take many
-paths at once and deterministic, that take only one. A deterministic automata may be a discriminator when it only returns 1 bit, depending on the final state it
-found itself in, or Moore machines when they return an output symbol each time they receive input symbol, based on their state only, or Mealy machines, when they
-return an output symbol each time they receive input symbol, and the output symbol depends both on the state and input symbol. Moore and Mealy machines are
-equivalent and may be transformed one into each other.
+A finite automaton (or short: automaton) is a machine that uses constant memory. In the context of electronics
+they are called finite-state logic. Finite automata take a possibly infinite stream of input symbols and move to
+another state on receiving each symbol. There are nondeterministic finite automata that can take many paths at
+once and deterministic, that take only one. A deterministic automata may be a discriminator when it only returns
+1 bit, depending on the final state it found itself in, or Moore machines when they return an output symbol each
+time they receive input symbol, based on their state only, or Mealy machines, when they return an output symbol
+each time they receive input symbol, and the output symbol depends both on the state and input symbol. Moore and
+Mealy machines are equivalent and may be transformed one into each other.
 
-Later on, we are interested only in deterministic Mealy machines. When we say "finite automaton" we think of a Mealy machine.
+Later on, we are interested only in deterministic Mealy machines. When we say "finite automaton" we think of a
+Mealy machine.
 
-Any finite automaton may be represented by a pair of circuits. The input, output and the state of the automaton may be seen as vectors over Boolean ring. The first
-circuit takes the input vector and the current state vector and returns the output vector. The second circuit takes the input vector and the current state vector
-and returns the next state vector.
+Any finite automaton may be represented by a pair of circuits. The input, output and the state of the automaton
+may be seen as vectors over Boolean ring. The first circuit takes the input vector and the current state vector
+and returns the output vector. The second circuit takes the input vector and the current state vector and returns
+the next state vector.
 
-2 finite automata may be composed, when the output of one of the automata is fed as the input of the other automaton. The resulting automaton will have the state
-being the Cartesian product of the states of the original automata (or actually a subset of such), or in vecor representation, a concatenation of their state
-vectors. The circuits constituting the composed automaton will be certain compositions of the circuit of the original automata.
+2 finite automata may be composed, when the output of one of the automata is fed as the input of the other
+automaton. The resulting automaton will have the state being the Cartesian product of the states of the original
+automata (or actually a subset of such), or in vecor representation, a concatenation of their state vectors. The
+circuits constituting the composed automaton will be certain compositions of the circuit of the original automata.
 
-An automaton has size, which is the sum of the sizes of its constitutient circuits. It also has state length, which is the length of the state vector in bits, or
-(different metric) the number of states, which is exponent of the state length. An automaton may be minimized, when it is transformed into an equivalent automaton
-performing the same function, but of smaller state length. It can also be optimized when its constitutient circuits are optimized.
+An automaton has size, which is the sum of the sizes of its constitutient circuits. It also has state length,
+which is the length of the state vector in bits, or (different metric) the number of states, which is exponent of
+the state length. An automaton may be minimized, when it is transformed into an equivalent automaton performing
+the same function, but of smaller state length. It can also be optimized when its constitutient circuits are optimized.
 
 The problem whether 2 automata evaluate the same function belongs to the class PSPACE.
 
-A finite automaton can have an inverse automaton, that takes the output of the original automaton and produces the respective input. Only automata that evaluate
-invertible functions may have an inverse. There is an associated metric of the "delay" of an automaton. Some automata have only an inverse with a delay, where the
-calculated input stream is shifted relative to the original input stream. In such situations the inverse automaton must accumulate enough output symbols before it
-is able to produce the first input symbol.
+A finite automaton can have an inverse automaton, that takes the output of the original automaton and produces
+the respective input. Only automata that evaluate invertible functions may have an inverse. There is an associated
+metric of the "delay" of an automaton. Some automata have only an inverse with a delay, where the calculated input
+stream is shifted relative to the original input stream. In such situations the inverse automaton must accumulate
+enough output symbols before it is able to produce the first input symbol.
 
-The computational class of finding the inverse of an automaton is unknown, but the best algorithm in general case is exponential with respect to the delay. It can
-be shown that for delay = 0 the problem reduces to finding the inverse of a circuit.
+The computational class of finding the inverse of an automaton is unknown, but the best algorithm in general case
+is exponential with respect to the delay. It can be shown that for delay = 0 the problem reduces to finding the
+inverse of a circuit.
 
 ** Obfuscation
 
 *** Definitions
 
-Obfuscation is a transformation of a circuit, preserving its functionality, but impeding the ability to reason about it.
+Obfuscation is a transformation of a circuit, preserving its functionality, but impeding the ability to reason
+about it.
 
 There are 3 notions of obfuscation found in literature:
 - indistinguishability obfuscation
 - inversion obfuscation
 - white-box cryptography.
 
-Indistinguishability obfuscation ensures, that for 2 circuits of the same size performing the same function, if the attacker has an obfuscated representation of one
-of those circuits, he can not track back which circuit was the original source for the obfuscated representation. In layman terms, indistinguishability obfuscation
-removes all metadata. Indistinguishability obfuscation implies functional encryption. There is no proof, but the majority opinion is that indistinguishability
-obfuscation is possible for every circuit.
+Indistinguishability obfuscation ensures, that for 2 circuits of the same size performing the same function, if
+the attacker has an obfuscated representation of one of those circuits, he can not track back which circuit was
+the original source for the obfuscated representation. In layman terms, indistinguishability obfuscation removes
+all metadata. Indistinguishability obfuscation implies functional encryption. There is no proof, but the majority
+opinion is that indistinguishability obfuscation is possible for every circuit.
 
-Inversion obfuscation gives a guarantee that an attacker presented with an obfuscated circuit can not calculate its inverse. There are circuits that can not be
-secured that way. If inversion obfuscation is possible, any symmetric cipher may be upgraded to a public cipher. Inversion obfuscation implies indistinguishability
-obfuscation.
+Inversion obfuscation gives a guarantee that an attacker presented with an obfuscated circuit can not calculate its
+inverse. There are circuits that can not be secured that way. If inversion obfuscation is possible, any symmetric
+cipher may be upgraded to a public cipher. Inversion obfuscation implies indistinguishability obfuscation.
 
-White-box cryptography defines 3 kinds of attackers: polynomial black-box attacker, exponential black-box attacker and white-box attacker. The polynomial black-box
-attacker is able to make polynomially many requests to a function, look at the inputs and outputs, and infer some predicate about the function, possibly with some
-probability of error. The exponential black-box attacker is similar, but is able to perform exponentially many requests to the function. The exponential attacker
-is stronger than the polynomial one. Finally, the white-box attacker is not restricted to look at inputs and outputs only, but can look at the source code.
-White-box cryptography gives a guarantee that the white-box attacker is only as strong as the polynomial black-box attacker. In layman terms, looking at the obfuscated
-representation is no better than executing the circuit on a remote machine and looking at inputs and outputs.
-If white-box obfuscator exists, any symmetric cipher may be upgraded to a homomorphic cipher. White-box cryptography implies inversion obfuscation. There are circuits
-that can not be secured with white-box cryptography.
+White-box cryptography defines 3 kinds of attackers: polynomial black-box attacker, exponential black-box attacker
+and white-box attacker. The polynomial black-box attacker is able to make polynomially many requests to a function,
+look at the inputs and outputs, and infer some predicate about the function, possibly with some probability of
+error. The exponential black-box attacker is similar, but is able to perform exponentially many requests to the
+function. The exponential attacker is stronger than the polynomial one. Finally, the white-box attacker is not
+restricted to look at inputs and outputs only, but can look at the source code.  White-box cryptography gives a
+guarantee that the white-box attacker is only as strong as the polynomial black-box attacker. In layman terms,
+looking at the obfuscated representation is no better than executing the circuit on a remote machine and looking
+at inputs and outputs.  If white-box obfuscator exists, any symmetric cipher may be upgraded to a homomorphic
+cipher. White-box cryptography implies inversion obfuscation. There are circuits that can not be secured with
+white-box cryptography.
 
 *** Indistinguishability obfuscation
 
-A "perfect" indistinguishability obfuscation produces the same circuit for 2 circuits performimg the same function. Since such algorithm would allow to solve the
-problem of equality of circuits, it is itself in the class NP. Part of the definition of indistinguishability obfuscation is that it must work in polynomial time.
+A "perfect" indistinguishability obfuscation produces the same circuit for 2 circuits performimg the same
+function. Since such algorithm would allow to solve the problem of equality of circuits, it is itself in the class
+NP. Part of the definition of indistinguishability obfuscation is that it must work in polynomial time.
 
-A "partial" indistinguishability obfuscator is a one that reduces the probability of successfully attributing the source code, but not to 50% as a regular
-indistinguishability obfuscator would do. Any function on circuits that preserves the functionality and is an injection is a "partial" obfuscator. If the 2 original
-circuits are mapped to the same one, the attacker can not distinguish them. Any function that maps circuits of bigger size into circuits of smaller size is an injection.
-Circuit optimizers are functions will all of the above properties, thus optimizers are "partial" indistinguishability obfuscators.
+A "partial" indistinguishability obfuscator is a one that reduces the probability of successfully attributing
+the source code, but not to 50% as a regular indistinguishability obfuscator would do. Any function on circuits
+that preserves the functionality and is an injection is a "partial" obfuscator. If the 2 original circuits are
+mapped to the same one, the attacker can not distinguish them. Any function that maps circuits of bigger size
+into circuits of smaller size is an injection.  Circuit optimizers are functions will all of the above properties,
+thus optimizers are "partial" indistinguishability obfuscators.
 
 
 ** Cryptography
 
 *** FAPKC
 
-The problem of finding the inverse of a finite automaton is a cryptographically hard problem that FAPKC is based on. There is a related (equivalent) problem of
-factorizing finite automata.
+The problem of finding the inverse of a finite automaton is a cryptographically hard problem that FAPKC is based
+on. There is a related (equivalent) problem of factorizing finite automata.
 
-The (right-handed) problem of automata factorization demands that for a given automaton `A` and automaton `AB` one must find such an automaton `B` so that
-`A * B = AB`. The factorization problem is equivalent to finding the inverse. If one has an oracle calculating the inverse, they can solve the factorization
-problem. Respectively, if one has an oracle calculating the factorization, they can solve the inversion problem. The difficulty of factorization lies in the
-automaton delay, just like the difficulty of finding the inverse.
+The (right-handed) problem of automata factorization demands that for a given automaton `A` and automaton `AB`
+one must find such an automaton `B` so that `A * B = AB`. The factorization problem is equivalent to finding the
+inverse. If one has an oracle calculating the inverse, they can solve the factorization problem. Respectively,
+if one has an oracle calculating the factorization, they can solve the inversion problem. The difficulty of
+factorization lies in the automaton delay, just like the difficulty of finding the inverse.
 
-Despite the inversion problem is hard in general case, there are certain classes of finite automata that are easy to invert. One such example is a class of linear
-automata, using only linear operations (addition only, or "exlusive or" in Boolean ring). Such automata may be inverted using methods from linear algebra,
-irrespective of the delay. Another class that is easy to invert are automata of delay 0.
+Despite the inversion problem is hard in general case, there are certain classes of finite automata that are
+easy to invert. One such example is a class of linear automata, using only linear operations (addition only, or
+"exlusive or" in Boolean ring). Such automata may be inverted using methods from linear algebra, irrespective of
+the delay. Another class that is easy to invert are automata of delay 0.
 
-FAPKC0 is a public-key cipher that exploits the difficulty of inverting a finite automaton. During the key generation, 2 random finite automata are created, one
-linear with nonzero delay, and one nonlinear with zero delay. They are then inverted. When they are composed, they yield a nonlinear finite automaton with nonzero
-delay that can not be inverted without the knowledge how to factorize it into the original automata. The user then has 2 automata that are their respective
-inverses (with delay). One automaton is published as the public key.
+FAPKC0 is a public-key cipher that exploits the difficulty of inverting a finite automaton. During the key generation,
+2 random finite automata are created, one linear with nonzero delay, and one nonlinear with zero delay. They are
+then inverted. When they are composed, they yield a nonlinear finite automaton with nonzero delay that can not be
+inverted without the knowledge how to factorize it into the original automata. The user then has 2 automata that
+are their respective inverses (with delay). One automaton is published as the public key.
 
-The encryption and decryption automata must start from matching states in order to perform successful encryption. One possibility is to generate a random state
-for the encryption (public) automaton, send it to the recipient along the ciphertext and then the owner of the decryption (private) automaton calculates his
-starting state using one of the private key factors and then performs decryption. A second much simpler possibility is to always start both automata from the
-same known states (for instance a vector of zeros) and fill in an initialization vector before transmitting the message. The length of the initialization vector
-must be equal to the automata delay to properly randomize the internal state.
+The encryption and decryption automata must start from matching states in order to perform successful encryption. One
+possibility is to generate a random state for the encryption (public) automaton, send it to the recipient along
+the ciphertext and then the owner of the decryption (private) automaton calculates his starting state using one of
+the private key factors and then performs decryption. A second much simpler possibility is to always start both
+automata from the same known states (for instance a vector of zeros) and fill in an initialization vector before
+transmitting the message. The length of the initialization vector must be equal to the automata delay to properly
+randomize the internal state.
 
-At the end of transmission, few last bits of the message still stay in the public automaton state and have not been transmitted to the recipient. The sender must
-fill in a vector of random bits of length equal to the delay to flush the ciphertext bits out of the pipeline.
+At the end of transmission, few last bits of the message still stay in the public automaton state and have not
+been transmitted to the recipient. The sender must fill in a vector of random bits of length equal to the delay
+to flush the ciphertext bits out of the pipeline.
 
 In Python-like pseudocode, given `delay` and `text`:
 ```
 encrypt, decrypt = generate_fapkc_keys(delay)
 encrypted = encrypt(random_vector(delay) + text + random_vector(delay))
-# send `encrypted`
-decrypted = decrypt(encrypted)
+# send `encrypted` decrypted = decrypt(encrypted)
 assert decrypted[delay:-delay] == text
 ```
 
-That means in normal one-time transmission, the overhead of ciphertext is delay times 2 (in bits). In interactive communication the sender must signal the
-recipient that the transmission is paused and flush the bits from the pipeline. On resuming the transmission, the receiver will first see a vector of random bits
-which must be ignored, then the rest of communication follows.
+That means in normal one-time transmission, the overhead of ciphertext is delay times 2 (in bits). In interactive
+communication the sender must signal the recipient that the transmission is paused and flush the bits from the
+pipeline. On resuming the transmission, the receiver will first see a vector of random bits which must be ignored,
+then the rest of communication follows.
 
 The original FAPKC0 has been broken, but a modification of the original protocol known as FAPKC3 is currently unbroken.
 
 *** Gonzalez-Llamas homomorphic cipher
 
-If one takes a finite automaton performing any function and composes it with the FAPKC decryption automaton on input and encryption automaton on output, they get
-an automaton performing operations on encrypted data. This yields a very powerful homomorphic cipher.
+If one takes a finite automaton performing any function and composes it with the FAPKC decryption automaton on
+input and encryption automaton on output, they get an automaton performing operations on encrypted data. This
+yields a very powerful homomorphic cipher.
 
-Since decryption and encryption are performed twice, and the homomorphic automaton is in the middle of the pipeline, one has to prepend an initialization vector of
-twice the length of the delay, and a flush suffix of twice the length of the delay. The result will be shifted relative to the output of the original automaton by
-twice the length of the delay. Also, the encryption automaton at the end of the pipeline needs an initialization vector of its own. It must come from the operation
-automaton. For practical purposes, the operation automaton must not process the first few bits of the input, but perform some random modification on them and pass
-them to the decryption automaton. This ensures that the encrypted input and encrypted output are not using the same initialization vector.
+Since decryption and encryption are performed twice, and the homomorphic automaton is in the middle of the pipeline,
+one has to prepend an initialization vector of twice the length of the delay, and a flush suffix of twice the length
+of the delay. The result will be shifted relative to the output of the original automaton by twice the length of
+the delay. Also, the encryption automaton at the end of the pipeline needs an initialization vector of its own. It
+must come from the operation automaton. For practical purposes, the operation automaton must not process the first
+few bits of the input, but perform some random modification on them and pass them to the decryption automaton. This
+ensures that the encrypted input and encrypted output are not using the same initialization vector.
 
 In Python-like pseudocode, given `delay`, `operation` and `text`:
 ```
@@ -206,17 +242,19 @@ decrypted_result = decrypt(encrypted_result)
 assert decrypted_result[3 * delay : -delay] == result
 ```
 
-The automata that appear in FAPKC keys are "memory automata", that means their state is simply a shift register. Such automata exhibit a natural obfuscation
-property, that helped FAPKC be used as a public-key cipher. The operation automaton in Gonzalez-Llamas cipher is no longer an example of such. While it would be
-possible to restrict operation automata to "memory automata", the class of problems that can be solved with them is severly limited.
+The automata that appear in FAPKC keys are "memory automata", that means their state is simply a shift register. Such
+automata exhibit a natural obfuscation property, that helped FAPKC be used as a public-key cipher. The operation
+automaton in Gonzalez-Llamas cipher is no longer an example of such. While it would be possible to restrict
+operation automata to "memory automata", the class of problems that can be solved with them is severly limited.
 
-In order to prevent factorization of the homomorphic operation automaton, 2 steps need to be taken:
-- the state vector of the automaton must undergo mixing
-- the constitutient circuits of the automaton must be subject to a limited form of obfuscation.
+In order to prevent factorization of the homomorphic operation automaton, 2 steps need to be taken: - the state
+vector of the automaton must undergo mixing - the constitutient circuits of the automaton must be subject to a
+limited form of obfuscation.
 
-The state mixing is performed by applying a linear transformation of all state bits, i.e. the state vector is replaced by a result of transforming the vector by
-a matrix. The inverse matrix must be prepended to the input of the circuit producing the output symbol. The matrix size is a square of the number of bits of the
-state. In order to learn any bit of the original state, the attacker must guess one row of the matrix.
+The state mixing is performed by applying a linear transformation of all state bits, i.e. the state vector is
+replaced by a result of transforming the vector by a matrix. The inverse matrix must be prepended to the input of
+the circuit producing the output symbol. The matrix size is a square of the number of bits of the state. In order
+to learn any bit of the original state, the attacker must guess one row of the matrix.
 
 The circuit obfuscation is attempted by optimizing them.
 
@@ -224,38 +262,45 @@ The Gonzalez-Llamas homomorphic cipher is non-malleable.
 
 *** Functional encryption
 
-In functional encryption if some text is encrypted by one party and decrypted by other party, the decrypted text is a result of some operation on the text, encoded
-in the keys. Functional encryption is more general than attribute-based encryption, homomorphic encryption and zero-knowledge proofs.
+In functional encryption if some text is encrypted by one party and decrypted by other party, the decrypted
+text is a result of some operation on the text, encoded in the keys. Functional encryption is more general than
+attribute-based encryption, homomorphic encryption and zero-knowledge proofs.
 
-To perform functional encryption with FAPKC, we create an automaton that performs the necessary operation and turn it into a homomorphic operation automaton, as in
-Gonzalez-Llamas cipher. It is assumed that the automaton takes the input, accumulates information and then at certain point of time it returns the result. The
-verifier must be able to learn the result and not anything else. If he was in a possession of the decryption automaton, he could append it to the operation automaton
-and read the internal state. That means, the key provided to the verifier must only show part of the output stream and hide everything else. This could be achieved
-with a decryption key composed with a "masking" automaton with a counter, that passes the information when the counter indicates that the output is ready and returns
-random data otherwise. For practical purposes such automaton should be appended to the operation automaton.
+To perform functional encryption with FAPKC, we create an automaton that performs the necessary operation and turn
+it into a homomorphic operation automaton, as in Gonzalez-Llamas cipher. It is assumed that the automaton takes the
+input, accumulates information and then at certain point of time it returns the result. The verifier must be able
+to learn the result and not anything else. If he was in a possession of the decryption automaton, he could append it
+to the operation automaton and read the internal state. That means, the key provided to the verifier must only show
+part of the output stream and hide everything else. This could be achieved with a decryption key composed with a
+"masking" automaton with a counter, that passes the information when the counter indicates that the output is ready
+and returns random data otherwise. For practical purposes such automaton should be appended to the operation automaton.
 
 `functional_operation = (decrypt @ mask) @ (encrypt @ operation @ decrypt)`
 
-The decryption automaton must be securely deleted as part of the trusted setup. This may be compared to the problem of "toxic waste" in the setup of zk-snarks.
+The decryption automaton must be securely deleted as part of the trusted setup. This may be compared to the problem
+of "toxic waste" in the setup of zk-snarks.
 
 *** Obfuscation
 
-In white-box cryptography the party with the automaton must be able to provide the input and read the output, but it must be impossible to modify the computation in
-the middle, or read the partial state. That means, the computing party must have an input key that can prepare the input at the beginning of the computation, but it
-must be impossible to inject data in the middle. Also, they must have an output key, that decrypts the result, but it must be impossible to decrypt the partial
-state.
+In white-box cryptography the party with the automaton must be able to provide the input and read the output,
+but it must be impossible to modify the computation in the middle, or read the partial state. That means, the
+computing party must have an input key that can prepare the input at the beginning of the computation, but it
+must be impossible to inject data in the middle. Also, they must have an output key, that decrypts the result,
+but it must be impossible to decrypt the partial state.
 
-In a similar way to functional encryption, this could be achieved with masking automata. The encryption key is masked so that it can produce only enough data to
-provide the input. The decryption key is masked so it only can decrypt the output.
+In a similar way to functional encryption, this could be achieved with masking automata. The encryption key is
+masked so that it can produce only enough data to provide the input. The decryption key is masked so it only can
+decrypt the output.
 
 `white_box_operation = (decrypt @ mask_output) @ (encrypt @ operation @ decrypt) @ (mask_input @ encrypt)`
 
-In order for white-box cryptography to work, the circuit obfuscators must have white-box property themselves. If we start from a certain obfuscator on circuits, FAPKC
-will yield the following results:
+In order for white-box cryptography to work, the circuit obfuscators must have white-box property themselves. If
+we start from a certain obfuscator on circuits, FAPKC will yield the following results:
 - indistinguishability obfuscation => inversion obfuscation
 - inversion obfuscation => inversion obfuscation
 - white-box obfuscation => white-box obfuscation.
 
-It is possible that some weaker obfuscator than indistinguishability will yield indistinguishability obfuscator with FAPKC.
+It is possible that some weaker obfuscator than indistinguishability will yield indistinguishability obfuscator
+with FAPKC.
 
 
