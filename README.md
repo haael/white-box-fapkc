@@ -1,6 +1,9 @@
 # white-box-fapkc
 
-White-Box Cryptography based on FAPKC algorithm
+White-Box Cryptography based on FAPKC algorithm.
+
+If you are interested in contributing, especially cryptoanalysis, please contact me via <haael@interia.pl>.
+
 
 ## What is FAPKC?
 
