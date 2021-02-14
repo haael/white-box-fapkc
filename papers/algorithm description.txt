@@ -73,23 +73,23 @@ The problem whether 2 circuits calculate the same function belongs to the class 
 A finite automaton (or short: automaton) is a machine that uses constant memory. In the context of electronics
 they are called finite-state logic. Finite automata take a possibly infinite stream of input symbols and move to
 another state on receiving each symbol. There are nondeterministic finite automata that can take many paths at
-once and deterministic, that take only one. A deterministic automata may be a discriminator when it only returns
-1 bit, depending on the final state it found itself in, or Moore machines when they return an output symbol each
-time they receive input symbol, based on their state only, or Mealy machines, when they return an output symbol
+once and deterministic, that take only one. A deterministic automaton may be a discriminator when it only returns
+1 bit, depending on the final state it found itself in, or Moore machine when it returns an output symbol each
+time they receive input symbol, based on their state only, or Mealy machine, when it returns an output symbol
 each time they receive input symbol, and the output symbol depends both on the state and input symbol. Moore and
 Mealy machines are equivalent and may be transformed one into each other.
 
 Later on, we are interested only in deterministic Mealy machines. When we say "finite automaton" we think of a
 Mealy machine.
 
-Any finite automaton may be represented by a pair of circuits. The input, output and the state of the automaton
+Any finite automaton may be represented as a pair of circuits. The input, output and the state of the automaton
 may be seen as vectors over Boolean ring. The first circuit takes the input vector and the current state vector
 and returns the output vector. The second circuit takes the input vector and the current state vector and returns
 the next state vector.
 
 2 finite automata may be composed, when the output of one of the automata is fed as the input of the other
 automaton. The resulting automaton will have the state being the Cartesian product of the states of the original
-automata (or actually a subset of such), or in vecor representation, a concatenation of their state vectors. The
+automata (or actually a subset of it), or in vecor representation, a concatenation of their state vectors. The
 circuits constituting the composed automaton will be certain compositions of the circuit of the original automata.
 
 An automaton has size, which is the sum of the sizes of its constitutient circuits. It also has state length,
@@ -153,7 +153,7 @@ A "partial" indistinguishability obfuscator is a one that reduces the probabilit
 the source code, but not to 50% as a regular indistinguishability obfuscator would do. Any function on circuits
 that preserves the functionality and is an injection is a "partial" obfuscator. If the 2 original circuits are
 mapped to the same one, the attacker can not distinguish them. Any function that maps circuits of bigger size
-into circuits of smaller size is an injection.  Circuit optimizers are functions will all of the above properties,
+into circuits of smaller size is an injection.  Circuit optimizers are functions with all of the above properties,
 thus optimizers are "partial" indistinguishability obfuscators.
 
 
@@ -237,7 +237,7 @@ homomorphic_operation.optimize()
 encrypted_text = encrypt(2 * random_vector(delay) + text + 2 * random_vector(delay))
 # send `homomorphic_operation`, `encrypted_text`
 encrypted_result = homomorphic_operation(encrypted_text)
-# receive `decrypted_result`
+# receive `encrypted_result`
 decrypted_result = decrypt(encrypted_result)
 assert decrypted_result[3 * delay : -delay] == result
 ```
@@ -247,9 +247,9 @@ automata exhibit a natural obfuscation property, that helped FAPKC be used as a 
 automaton in Gonzalez-Llamas cipher is no longer an example of such. While it would be possible to restrict
 operation automata to "memory automata", the class of problems that can be solved with them is severly limited.
 
-In order to prevent factorization of the homomorphic operation automaton, 2 steps need to be taken: - the state
-vector of the automaton must undergo mixing - the constitutient circuits of the automaton must be subject to a
-limited form of obfuscation.
+In order to prevent factorization of the homomorphic operation automaton, 2 steps need to be taken:
+- the state vector of the automaton must undergo mixing
+- the constitutient circuits of the automaton must be subject to a limited form of obfuscation.
 
 The state mixing is performed by applying a linear transformation of all state bits, i.e. the state vector is
 replaced by a result of transforming the vector by a matrix. The inverse matrix must be prepended to the input of
