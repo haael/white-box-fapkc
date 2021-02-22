@@ -38,7 +38,7 @@ polynomial-time size reduction algorithm on a given polynomial. An optimized pol
 but is an approximation of one.
 
 Elements of the Boolean ring, or polynomials over the Boolean ring may be packed into a vector. Every circuit may be
-represented as a vector of polynomials over Boolean ring. If we impose and order on the variables, they themselves
+represented as a vector of polynomials over Boolean ring. If we impose an order on the variables, they themselves
 form a vector, that we call the input vector of the circuit. The vector of the polynomials itself will be called
 the output vector. The dimension of the input and output vector does not need to be the same. If we substitute the
 input vector with some constant vector, the circuit will evaluate to some constant vector, which we call the result.
@@ -197,7 +197,8 @@ In Python-like pseudocode, given `delay` and `text`:
 ```
 encrypt, decrypt = generate_fapkc_keys(delay)
 encrypted = encrypt(random_vector(delay) + text + random_vector(delay))
-# send `encrypted` decrypted = decrypt(encrypted)
+# send `encrypted`
+decrypted = decrypt(encrypted)
 assert decrypted[delay:-delay] == text
 ```
 
@@ -206,7 +207,7 @@ communication the sender must signal the recipient that the transmission is paus
 pipeline. On resuming the transmission, the receiver will first see a vector of random bits which must be ignored,
 then the rest of communication follows.
 
-The original FAPKC0 has been broken, but a modification of the original protocol known as FAPKC3 is currently unbroken.
+The original FAPKC0 has been broken, but a modification of the original protocol known as FAPKC4 is currently unbroken.
 
 *** Gonzalez-Llamas homomorphic cipher
 
@@ -216,7 +217,7 @@ yields a very powerful homomorphic cipher.
 
 Since decryption and encryption are performed twice, and the homomorphic automaton is in the middle of the pipeline,
 one has to prepend an initialization vector of twice the length of the delay, and a flush suffix of twice the length
-of the delay. The result will be shifted relative to the output of the original automaton by twice the length of
+of the delay. The result will be shifted relative to the output of the original automaton by 3 times the length of
 the delay. Also, the encryption automaton at the end of the pipeline needs an initialization vector of its own. It
 must come from the operation automaton. For practical purposes, the operation automaton must not process the first
 few bits of the input, but perform some random modification on them and pass them to the decryption automaton. This
@@ -302,5 +303,7 @@ we start from a certain obfuscator on circuits, FAPKC will yield the following r
 
 It is possible that some weaker obfuscator than indistinguishability will yield indistinguishability obfuscator
 with FAPKC.
+
+
 
 

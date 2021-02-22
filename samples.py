@@ -1,4 +1,4 @@
-#!/usr/bin/python3
+#!/usr/bin/python3 -O
 #-*- coding:utf8 -*-
 
 from jit_types import Compiler
@@ -211,11 +211,19 @@ def test_functional_encryption():
 		print()
 		print("composing homomorphic automaton")
 		counting_homomorphic = encrypt @ counting_automaton @ decrypt # TODO: attach decryption automaton to the output
-		print("homomorphic automaton size", counting_homomorphic.output_transition.circuit_size(), counting_homomorphic.state_transition.circuit_size())
+		print("homomorphic automaton size:\t\t", counting_homomorphic.output_transition.circuit_size(), counting_homomorphic.state_transition.circuit_size())
 		
 		print("optimization pass...")
 		counting_homomorphic.optimize()
-		print("homomorphic automaton size", counting_homomorphic.output_transition.circuit_size(), counting_homomorphic.state_transition.circuit_size())
+		print("automaton size after optimization:\t", counting_homomorphic.output_transition.circuit_size(), counting_homomorphic.state_transition.circuit_size())
+		
+		print("mixing states...")
+		counting_homomorphic.mix_states()
+		print("automaton size after mixing:\t\t", counting_homomorphic.output_transition.circuit_size(), counting_homomorphic.state_transition.circuit_size())
+		
+		print("optimization pass...")
+		counting_homomorphic.optimize()
+		print("final automaton size:\t\t\t", counting_homomorphic.output_transition.circuit_size(), counting_homomorphic.state_transition.circuit_size())
 		
 		with Path('counting_homomorphic.pickle').open('wb') as f:
 			pickle.dump(counting_homomorphic, f)
@@ -335,12 +343,20 @@ def test_homomorphic_encryption():
 		print()
 		print("composing homomorphic automaton...")
 		lowercase_homomorphic = encrypt @ lowercase_automaton @ decrypt
-		print("homomorphic automaton size:", lowercase_homomorphic.output_transition.circuit_size(), lowercase_homomorphic.state_transition.circuit_size())
-		#lowercase_homomorphic.mix_states()
-		#print(lowercase_homomorphic.output_transition.circuit_size(), lowercase_homomorphic.state_transition.circuit_size())
+		print("homomorphic automaton size:\t\t", lowercase_homomorphic.output_transition.circuit_size(), lowercase_homomorphic.state_transition.circuit_size())
+		
 		print("optimization pass...")
 		lowercase_homomorphic.optimize()
-		print("homomorphic automaton size:", lowercase_homomorphic.output_transition.circuit_size(), lowercase_homomorphic.state_transition.circuit_size())
+		print("automaton size after optimization:\t", lowercase_homomorphic.output_transition.circuit_size(), lowercase_homomorphic.state_transition.circuit_size())
+		
+		print("mixing states...")
+		lowercase_homomorphic.mix_states()
+		print("automaton size after mixing:\t\t", lowercase_homomorphic.output_transition.circuit_size(), lowercase_homomorphic.state_transition.circuit_size())
+		
+		print("optimization pass...")
+		lowercase_homomorphic.optimize()
+		print("final automaton size:\t\t\t", lowercase_homomorphic.output_transition.circuit_size(), lowercase_homomorphic.state_transition.circuit_size())
+		
 		with Path('lowercase_homomorphic.pickle').open('wb') as f:
 			pickle.dump(lowercase_homomorphic, f)
 	

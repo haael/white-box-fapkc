@@ -3,11 +3,11 @@
 
 
 from collections import deque
-from itertools import product
+from itertools import product, chain
 from time import time
 from pathlib import Path
 
-from utils import memoize, parallel
+from utils import memoize, parallel, randbelow
 from rings import *
 from polynomial import *
 from linear import *
@@ -152,10 +152,16 @@ def automaton_factory(base_ring):
 				return 0
 			
 			m = 0
-			for i in range(1, 64): # FIXME: remove hard limits
-				for j in range(256):
-					if str(self.s[i, j]) in v:
-						m = i
+			for va in v:
+				vs = str(va).split('_')
+				if vs[0] != 's': continue # FIXME: assumes variable naming
+				m = max(m, int(vs[1]))
+			
+			#m = 0
+			#for i in range(1, 64): # FIXME: remove hard limits
+			#	for j in range(256):
+			#		if str(self.s[i, j]) in v:
+			#			m = i
 			
 			return m
 		
@@ -166,8 +172,40 @@ def automaton_factory(base_ring):
 			return self.state_transition.dimension
 		
 		def optimize(self):
-			self.output_transition = self.output_transition.optimized()
-			self.state_transition = self.state_transition.optimized()
+			output_transition = self.output_transition.optimized()
+			state_transition = self.state_transition.optimized()
+			
+			#print([[str(_v) for _v in _x.variables()] for _x in self.output_transition.canonical()])
+			#print([[str(_v) for _v in _x.variables()] for _x in output_transition.canonical()])
+			#print([[str(_v) for _v in _x.variables()] for _x in self.state_transition.canonical()])
+			#print([[str(_v) for _v in _x.variables()] for _x in state_transition.canonical()])
+			
+			assert self.output_transition == output_transition, f"{str(self.output_transition)} == {str(output_transition)}"
+			assert self.state_transition == state_transition, f"{str(self.state_transition)} == {str(state_transition)}"
+			
+			self.output_transition = output_transition
+			self.state_transition = state_transition
+			
+			#self.output_transition = self.output_transition.optimized()
+			#self.state_transition = self.state_transition.optimized()
+		
+		@staticmethod
+		def random_nonlinear_equation_pair(length):
+			b1 = base_vector(base_polynomial.var('a_' + str(_i)) for _i in range(length))
+			b2 = base_vector((base_polynomial.var('a_' + str(_i - randbelow(_i) - 1)) * base_polynomial.var('a_' + str(_i - randbelow(_i) - 1))) if _i else base_polynomial.zero() for _i in range(length))
+			b = b2 + b1
+			
+			a1 = base_vector(base_polynomial.var('b_' + str(_i)) for _i in range(length))
+			subst = {}
+			a = base_vector.zero(length)
+			for i in range(length):
+				a[i] = -b2[i](**subst) + a1[i]
+				subst['a_' + str(i)] = a[i]
+			
+			assert a(**{'b_' + str(_i) : b[_i] for _i in range(length)}) == b1
+			assert b(**{'a_' + str(_i) : a[_i] for _i in range(length)}) == a1
+			
+			return a.optimized(), b.optimized()
 		
 		def mix_states(self):
 			"""
@@ -180,34 +218,35 @@ def automaton_factory(base_ring):
 			This function is slow. While debugging, this step might be omitted.
 			"""
 			
-			#print("generating random matrix")
+			print("generating random matrix", self.memory_width)
 			mix, unmix = base_const_matrix.random_inverse_pair(self.memory_width)
 			mix = base_matrix(mix)
 			unmix = base_matrix(unmix)
 			
-			#print("calculating unmix substitution")
+			print("generating random nonlinear transformation")
+			mix_nonlinear, unmix_nonlinear = self.random_nonlinear_equation_pair(self.memory_width)
+			mix_nonlinear = mix_nonlinear.optimized()
+			unmix_nonlinear = unmix_nonlinear.optimized()
+			
+			print("calculating unmix substitution")
+			#unmixed = unmix @ base_vector(self.s[t, _i] for _i in range(self.memory_width))
+			unmixed = unmix @ base_vector(base_polynomial.var(f'c_{_i}') for _i in range(self.memory_width))
+			unmixed = unmix_nonlinear(**{f'a_{_i}' : unmixed[_i] for _i in range(self.memory_width)})
+			print(" before optimization:", [_c.circuit_size() for _c in unmixed])
+			unmixed = unmixed.optimized()
+			print(" after optimization:", [_c.circuit_size() for _c in unmixed])
+			
 			substitution = {}
 			for t in range(1, self.memory_length + 1):
-				unmixed = unmix @ base_vector(self.s[t, _i] for _i in range(self.memory_width))
 				for i in range(self.memory_width):
-					substitution[str(self.s[t, i])] = unmixed[i]
+					substitution[str(self.s[t, i])] = unmixed[i](**{f'c_{_i}' : self.s[t, _i] for _i in range(self.memory_width)})
 			
-			#print("applying state transition")
-			self.state_transition = mix @ base_vector(_trans(**substitution) for _trans in self.state_transition).optimized()
-			#print("applying output transition")
+			print("applying state transition")
+			bvt = base_vector(_trans(**substitution) for _trans in self.state_transition).optimized()
+			self.state_transition = (mix @ mix_nonlinear(**{f'b_{_i}' : bvt[_i] for _i in range(self.memory_width)}))
+			#self.state_transition = mix @ bvt
+			print("applying output transition")
 			self.output_transition = base_vector(_trans(**substitution) for _trans in self.output_transition)
-		
-		#def __and__(self, other):
-		#	"2 automata running in parallel (aka tuple). The input size is the sum of input sized of the provided automata. The output size is the sum of the sizes of outputs."
-		#	raise NotImplementedError
-		#
-		#def __or__(self, other):
-		#	"Choice of 1 automaton from 2 running in parallel (aka tagged union). Input sizes of the provided automata must be equal, output likewise. The input sie of the resulting automaton will be 1 position longer. The 1st argument decides which automaton returns the output."
-		#	raise NotImplementedError
-		#
-		#def cast(cls, begin, end):
-		#	"Narrow the output to the range given."
-		#	raise NotImplementedError
 		
 		@classmethod
 		def countdown(cls, block_size, memory_size, offset, length, period): # TODO
@@ -284,34 +323,46 @@ def automaton_factory(base_ring):
 			class BadLuck(BaseException):
 				"Exception that is thrown when the random objects do not have desired properties and need to be generated again."
 				pass
+
+			zero_v = base_const_vector.zero(block_size)
+			unit_m = base_const_matrix.unit(block_size)
+			zero_m = base_const_matrix.zero(block_size, block_size)
 			
 			while True: # repeat until successful
 				try:
-					zero_v = base_const_vector.zero(block_size)
-					unit_m = base_const_matrix.unit(block_size)
-					zero_m = base_const_matrix.zero(block_size, block_size)
+					assert zero_v.is_zero()
+					assert unit_m.is_one()
+					assert zero_m.is_zero()
 					
+					#print(" linear_delay_wifa_pair", 1)
 					coefficients_A = []
 					for n in range(memory_size + 1):
-						coefficients_A.append(base_const_matrix.random_rank(block_size, block_size - 1)) # FIXME: the paper suggests generating matrices of increasing rank
+						rank = max(1, block_size + n - memory_size)
+						m = base_const_matrix.random_rank(block_size, rank)
+						coefficients_A.append(m)
 					
+					#print(" linear_delay_wifa_pair", 2)
 					x = [base_vector(cls.x[_i] for _i in range(block_size))]
 					for n in range(1, memory_size + 1):
 						x.append(base_vector(cls.s[n, _i] for _i in range(block_size)))
 					
+					#print(" linear_delay_wifa_pair", 3)
 					y = [zero_v]
 					for n in range(1, memory_size + 1):
 						y.append(base_vector(cls.s[n, _i + block_size] for _i in range(block_size)))
 					
+					#print(" linear_delay_wifa_pair", 4)
 					y0 = base_vector.zero(block_size)
 					for n in range(memory_size + 1):
 						y0 += base_matrix(coefficients_A[n]) @ x[n]
 					y0 = y0.optimized()
 					
+					#print(" linear_delay_wifa_pair", 5)
 					automaton_A = cls(output_transition=y0, state_transition=x[0] | y0)
 					
 					del x, y, y0
 					
+					#print(" linear_delay_wifa_pair", 6)
 					matrix_A = dict()
 					for i in range(memory_size + 1):
 						for j in range(memory_size + 1):
@@ -320,6 +371,7 @@ def automaton_factory(base_ring):
 							else:
 								matrix_A[i, j] = zero_m
 					
+					#print(" linear_delay_wifa_pair", 7)
 					matrix_Ar = dict()
 					for i in range(memory_size + 1):
 						for j in range(memory_size):
@@ -349,6 +401,7 @@ def automaton_factory(base_ring):
 									except KeyError:
 										assert c_A == zero_m
 					
+					#print(" linear_delay_wifa_pair", 8)
 					# `P` matrix calculation
 					matrix_P = dict()
 					for i in range(memory_size + 1):
@@ -358,16 +411,19 @@ def automaton_factory(base_ring):
 							elif i == j:
 								matrix_P[i, j] = unit_m[...]
 					
+					#print(" linear_delay_wifa_pair", 9)
 					matrix_PA = dict()
 					for i, j in matrix_A.keys():
 						matrix_PA[i, j] = matrix_A[i, j][...]
 					
+					#print(" linear_delay_wifa_pair", 10)
 					for i in reversed(range(memory_size + 1)):
 						mm = []
 						for p in range(i + 1):
 							for q in range(p + 1):
 								mm.append(matrix_PA[p, q])
 						
+						#print("-------------")
 						pu = unit_m[...]
 						mm.append(pu)
 						
@@ -413,18 +469,24 @@ def automaton_factory(base_ring):
 						i = -1
 						compare_coefficients()
 					
+					#print(" linear_delay_wifa_pair", 11)
 					A00 = matrix_PA[0, 0]
 					del matrix_PA
 					
+					#print(" linear_delay_wifa_pair", 12)
 					for j in range(block_size):
 						if A00[j, :].is_zero():
+							#print(A00)
 							raise BadLuck("Leading matrix not invertible, try again.")
 					
+					#print(" linear_delay_wifa_pair", 13)
 					A00_inv = A00.inverse()
 					del A00
 					
+					#print(" linear_delay_wifa_pair", 14)
 					coefficients_P = [A00_inv @ matrix_P[0, _j] for _j in range(memory_size + 1)]
 					
+					#print(" linear_delay_wifa_pair", 15)
 					coefficients_Q = [zero_m]
 					for q in range(memory_size):
 						r = zero_m[...]
@@ -455,8 +517,10 @@ def automaton_factory(base_ring):
 							test_x0 += base_matrix(coefficients_P[n]) @ test_y[n] # substitute the result of the first function into the second function
 						test_x0 = test_x0.optimized()
 						
-						assert test_x0 == arg_x[0] # identity ?
+						# TODO:
+						#assert test_x0 == arg_x[0] # identity ?
 					
+					#print(" linear_delay_wifa_pair", 16)
 					x = dict()
 					for n in range(memory_size + 1):
 						if n == 0:
@@ -464,6 +528,7 @@ def automaton_factory(base_ring):
 						else:
 							x[-n] = base_vector(cls.s[n, _i] for _i in range(block_size))
 					
+					#print(" linear_delay_wifa_pair", 17)
 					y = dict()
 					for n in range(memory_size + 1):
 						if n == memory_size:
@@ -471,16 +536,20 @@ def automaton_factory(base_ring):
 						else:
 							y[n] = base_vector(cls.s[memory_size - n, _i + block_size] for _i in range(block_size))
 					
+					#print(" linear_delay_wifa_pair", 18)
 					x0 = base_vector.zero(block_size)
 					for n in range(memory_size + 1):
 						x0 -= base_matrix(coefficients_Q[n]) @ x[-n]
 						x0 += base_matrix(coefficients_P[n]) @ y[n]
 					x0 = x0.optimized()
 					
+					#print(" linear_delay_wifa_pair", 19)
 					s = x0 | y[memory_size]
 					
+					#print(" linear_delay_wifa_pair", 20)
 					automaton_B = cls(output_transition=x0, state_transition=s)
 					
+					#print(" linear_delay_wifa_pair", "end")
 					return automaton_A, automaton_B
 				except BadLuck:
 					# TODO: reset entropy
@@ -990,17 +1059,77 @@ if __debug__:
 
 
 
-if __debug__ and __name__ == '__main__':
+if __name__ == '__main__':
+	import pycallgraph
+	import pycallgraph.output.graphviz
+	profiler = pycallgraph.PyCallGraph(output=pycallgraph.output.graphviz.GraphvizOutput(output_file='automaton.png'))
+	
 	Automaton = automaton_factory(BooleanRing.get_algebra())
+	Vector = Automaton.base_const_vector
+	Matrix = Automaton.base_const_matrix
+	Polynomial = Automaton.base_polynomial
+	
+	#a = Matrix.random(64, 64)
+	#b = Matrix.random(64, 64)
+	print(__debug__)
+
+	#one = Polynomial.one()
+	#s_1_5, s_2_5, s_1_6, s_2_6, s_2_7, s_1_1, s_2_0, s_2_1, x_0 = [Polynomial.var(_x) for _x in ['s_1_5', 's_2_5', 's_1_6', 's_2_6', 's_2_7', 's_1_1', 's_2_0', 's_2_1', 'x_0']]
+	#p = (s_1_5 * (s_2_5 + one)) + s_1_6 + s_2_5 + s_2_6 + s_2_7 + (s_1_1 + s_2_0) + (s_1_1 + s_2_0 + s_2_1 + x_0)
+	#
+	#print(p)
+	#q = p.optimized()
+	#print(q)
+	#assert p == q
+	#quit()
+	
+	#m = Matrix.unit(16)
+	#n = m[...]
+	
+	#profiler.start()
+	#block_size = 4
+	#memory_size = 2
+	#encrypt, decrypt = Automaton.fapkc0(block_size=block_size, memory_size=memory_size)
+	#text = [Vector.random(block_size) for _i in range(32)]
+	#encrypted1 = list(encrypt(text))
+	#decrypted1 = list(decrypt(encrypted1))
+	#assert decrypted1[memory_size:] == text[:-memory_size]
+	#profiler.done()
+	
+	
+	#profiler.start()
+	#encrypt = encrypt.optimized()
+	#profiler.done()
+	
+	#quit()
+	
+	#a, b = Automaton.random_nonlinear_equation_pair(10)
+	#print(a)
+	#print(b)
+	#quit()
 	
 	memory_size = 2
 	block_size = 2
+	
+	text = [Vector.random(block_size) for _i in range(32)]
+	
 	encrypt, decrypt = Automaton.fapkc0(block_size=block_size, memory_size=memory_size)
+	print()
 	print("encrypt automaton size", encrypt.output_transition.circuit_size(), encrypt.state_transition.circuit_size())
 	print("encryption automaton component sizes:", [_c.circuit_size() for _c in encrypt.output_transition], [_c.circuit_size() for _c in encrypt.state_transition])
 	print("decrypt automaton size", decrypt.output_transition.circuit_size(), decrypt.state_transition.circuit_size())
 	print("decryption automaton component sizes:", [_c.circuit_size() for _c in decrypt.output_transition], [_c.circuit_size() for _c in decrypt.state_transition])
+	print(encrypt.output_transition)
+	print(encrypt.state_transition)
+	print(decrypt.output_transition)
+	print(decrypt.state_transition)
+	print("encryption/decryption test")
+	encrypted1 = list(encrypt(text))
+	decrypted1 = list(decrypt(encrypted1))
+	print(f"{[int(_x) for _x in decrypted1]}, {[int(_x) for _x in text]}")
+	assert decrypted1[memory_size:] == text[:-memory_size]
 	
+	print()
 	print("optimization pass...")
 	encrypt.optimize()
 	decrypt.optimize()
@@ -1009,8 +1138,17 @@ if __debug__ and __name__ == '__main__':
 	print("decrypt automaton size", decrypt.output_transition.circuit_size(), decrypt.state_transition.circuit_size())
 	print("decryption automaton component sizes:", [_c.circuit_size() for _c in decrypt.output_transition], [_c.circuit_size() for _c in decrypt.state_transition])
 	print(encrypt.output_transition)
+	print(encrypt.state_transition)
 	print(decrypt.output_transition)
+	print(decrypt.state_transition)
+	print("encryption/decryption test")
+	encrypted2 = list(encrypt(text))
+	decrypted2 = list(decrypt(encrypted2))
+	print(f"{[int(_x) for _x in decrypted2]}, {[int(_x) for _x in text]}")
+	assert decrypted2[memory_size:] == text[:-memory_size]
+	assert encrypted2 == encrypted1
 	
+	print()
 	print("obfuscating states...")
 	encrypt.mix_states()
 	decrypt.mix_states()
@@ -1018,7 +1156,13 @@ if __debug__ and __name__ == '__main__':
 	print("encryption automaton component sizes:", [_c.circuit_size() for _c in encrypt.output_transition], [_c.circuit_size() for _c in encrypt.state_transition])
 	print("decrypt automaton size", decrypt.output_transition.circuit_size(), decrypt.state_transition.circuit_size())
 	print("decryption automaton component sizes:", [_c.circuit_size() for _c in decrypt.output_transition], [_c.circuit_size() for _c in decrypt.state_transition])
+	print("encryption/decryption test")
+	encrypted3 = list(encrypt(text))
+	decrypted3 = list(decrypt(encrypted3))
+	assert decrypted3[memory_size:] == text[:-memory_size]
+	assert encrypted3 == encrypted1
 	
+	print()
 	print("optimization pass...")
 	encrypt.optimize()
 	decrypt.optimize()
@@ -1028,6 +1172,12 @@ if __debug__ and __name__ == '__main__':
 	print("decryption automaton component sizes:", [_c.circuit_size() for _c in decrypt.output_transition], [_c.circuit_size() for _c in decrypt.state_transition])
 	print(encrypt.output_transition)
 	print(decrypt.output_transition)
+	print("encryption/decryption test")
+	encrypted4 = list(encrypt(text))
+	decrypted4 = list(decrypt(encrypted4))
+	assert decrypted4[memory_size:] == text[:-memory_size]
+	assert encrypted4 == encrypted1
+	
 	
 	quit()
 	

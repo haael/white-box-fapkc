@@ -57,21 +57,30 @@ class Identical:
 		if self.term.operator in (self.term.symbol.const, self.term.symbol.var):
 			return self.term.operands == other.term.operands
 		
-		if hash(self) != hash(other):
+		if self.hash_cache != None and other.hash_cache != None and self.hash_cache != other.hash_cache:
 			return False
 		
 		return all((self.__class__(_a) == self.__class__(_b)) for (_a, _b) in zip(self.term.operands, other.term.operands))
+	
+	def __linearize(self):
+		if self.term.operator in (self.term.symbol.const, self.term.symbol.var):
+			return self.term
+		else:
+			return self.term.operator, tuple(self.__class__(_x).__linearize() for _x in self.term.operands)
 	
 	def __hash__(self):
 		if self.hash_cache != None:
 			return self.hash_cache
 		
-		if self.term.operator in (self.term.symbol.const, self.term.symbol.var):
-			self.hash_cache = hash(self.term)
-			return self.hash_cache
-		else:
-			self.hash_cache = hash((2938741, self.term.operator,) + tuple(self.__class__(_x) for _x in self.term.operands))
-			return self.hash_cache
+		self.hash_cache = hash(self.__linearize())
+		return self.hash_cache
+		
+		#if self.term.operator in (self.term.symbol.const, self.term.symbol.var):
+		#	self.hash_cache = hash(self.term)
+		#	return self.hash_cache
+		#else:
+		#	self.hash_cache = hash((2938741, self.term.operator,) + tuple(self.__class__(_x) for _x in self.term.operands))
+		#	return self.hash_cache
 	
 	def __str__(self):
 		if self.str_cache != None:
@@ -94,6 +103,7 @@ class Polynomial(Immutable, AlgebraicStructure):
 	canonical_cache = dict()
 	optimized_cache = dict()
 	evaluate_constants_cache = dict()
+	var_cache = dict()
 	
 	symbol = Enum('Polynomial.symbol', 'var const add sub neg mul')
 	
@@ -146,6 +156,7 @@ class Polynomial(Immutable, AlgebraicStructure):
 		self.mutable.add('is_optimized')
 		self.mutable.add('variables_cache')
 		self.mutable.add('circuit_size_cache')
+		self.mutable.add('cached_algebra')
 		self.is_canonical = False
 		self.is_optimized = False
 		self.immutable = True
@@ -157,8 +168,14 @@ class Polynomial(Immutable, AlgebraicStructure):
 	def __getnewargs_ex__(self):
 		return (self.operator, self.operands), {'base_ring':self.algebra.base_ring}
 	
+	
 	@property
 	def algebra(self):
+		try:
+			return self.cached_algebra
+		except AttributeError:
+			pass
+		
 		if self.operator == self.symbol.var:
 			base_ring = self.operands[1]
 		elif self.operator == self.symbol.const:
@@ -169,17 +186,27 @@ class Polynomial(Immutable, AlgebraicStructure):
 		else:
 			algebra = self.operands[0].algebra
 			if algebra.algebra_name == 'Polynomial':
+				self.cached_algebra = algebra
 				return algebra
 			else:
 				base_ring = algebra
 		
-		return self.get_algebra(base_ring=base_ring)
+		self.cached_algebra = self.get_algebra(base_ring=base_ring)
+		return self.cached_algebra
 	
 	@classmethod
 	def var(cls, name, base_ring):
+		try:
+			return cls.var_cache[base_ring][name]
+		except KeyError:
+			#print("var cache miss", name)
+			if not base_ring in cls.var_cache:
+				cls.var_cache[base_ring] = dict()
+		
 		result = cls(cls.symbol.var, [name, base_ring], base_ring=base_ring)
 		result.is_canonical = True
 		result.is_optimized = True
+		cls.var_cache[base_ring][name] = result
 		return result
 	
 	@classmethod
@@ -588,6 +615,11 @@ class Polynomial(Immutable, AlgebraicStructure):
 			p = self.algebra.product(factors)
 			self.evaluate_constants_cache[key] = p
 			return p
+		elif self.operator == self.symbol.neg:
+			operand = self.operands[0]
+			result = (self.algebra.zero() + operand).evaluate_constants()
+			self.evaluate_constants_cache[key] = result
+			return result
 		else:
 			self.evaluate_constants_cache[key] = self
 			return self
@@ -608,7 +640,18 @@ class Polynomial(Immutable, AlgebraicStructure):
 				else:
 					operands.append(operand)
 			
-			result = self.algebra.sum(sorted([_op for _op in operands if not _op.is_zero()], key=self.__class__.sort_ordering)).evaluate_constants()
+			operands_s = []
+			for operand_i, freq in Counter([Identical(_op) for _op in operands]).most_common():
+				operand = operand_i.term
+				#print("flatten const:", operand, freq, self.algebra.base_ring(freq))
+				if operand.is_zero():
+					pass
+				elif operand.is_one():
+					operands_s.append(self.algebra.const(freq))
+				else:
+					operands_s.append((operand * self.algebra.const(freq)).flatten())
+			
+			result = self.algebra.sum(sorted(operands_s, key=self.__class__.sort_ordering)).evaluate_constants()
 		elif self.operator == self.symbol.mul:
 			operands = []
 			for subterm in self.operands:
@@ -621,7 +664,14 @@ class Polynomial(Immutable, AlgebraicStructure):
 			if any(_op.is_zero() for _op in operands):
 				result = self.algebra.zero()
 			else:
-				result = self.algebra.product(sorted([_op for _op in operands if not _op.is_one()], key=self.__class__.sort_ordering)).evaluate_constants()
+				operands_s = []
+				for operand_i, freq in Counter([Identical(_op) for _op in operands]).most_common():
+					operand = operand_i.term
+					if operand.is_one():
+						pass
+					else:
+						operands_s.append((operand ** freq).flatten())
+				result = self.algebra.product(sorted(operands_s, key=self.__class__.sort_ordering)).evaluate_constants()
 		
 		elif self.operator == self.symbol.sub:
 			left, right = self.operands
@@ -666,8 +716,15 @@ class Polynomial(Immutable, AlgebraicStructure):
 			elif len(result_operands) == 1:
 				return result_operands[0]
 			else:
-				result_operands.sort(key=self.__class__.sort_ordering) # TODO?
-				return self.algebra.sum(result_operands)
+				result_operands_c = Counter([Identical(_op) for _op in result_operands])
+				result_operands_f = []
+				for operand, freq in result_operands_c.most_common():
+					result_operands_f.append((operand.term * self.algebra.const(freq)).flatten())
+
+					#print("const:", operand.term, freq, self.algebra.const(freq))
+
+				#result_operands_f.sort(key=self.__class__.sort_ordering) # TODO?
+				return self.algebra.sum(result_operands_f)
 		elif self.operator == self.symbol.mul:
 			result_factors = []
 			for operand in self.operands:
@@ -685,11 +742,19 @@ class Polynomial(Immutable, AlgebraicStructure):
 					new_result_addends.append(old_addends + factors)
 				result_addends = new_result_addends
 			
+			result_addends_s = []
 			for factors in result_addends:
-				factors.sort(key=self.__class__.sort_ordering) # TODO?
-			#result_addends.sort(key=self.__class__.sort_ordering) #TODO?
-			
-			return self.algebra.sum([self.algebra.product(_factor) for _factor in result_addends])
+				factors_c = Counter([Identical(_op) for _op in factors])
+				factors_f = []
+				for operand, freq in factors_c.most_common():
+					#print("*", operand.term, freq, (operand.term ** freq))
+					factors_f.append((operand.term ** freq).flatten())
+				result_addends_s.append(self.algebra.product(factors_f))
+			result_addends_c = Counter([Identical(_op) for _op in result_addends_s])
+			result_addends_f = []
+			for operand, freq in result_addends_c.most_common():
+				result_addends_f.append((operand.term * self.algebra.const(freq)).flatten())
+			return self.algebra.sum(result_addends_f)
 		elif self.operator == self.symbol.const:
 			try:
 				return self.algebra.const(self.operands[0].canonical())
@@ -888,8 +953,8 @@ class Polynomial(Immutable, AlgebraicStructure):
 		vs.sort(key=lambda v: current.variable_occurrences(v))
 		v = vs[-1]
 		if current.variable_occurrences(v) <= 1:
-			self.optimized_cache[key] = self
-			return self
+			self.optimized_cache[key] = current
+			return current
 		
 		#term_freq = Counter()
 		#def count_terms(term):
@@ -970,7 +1035,7 @@ class Polynomial(Immutable, AlgebraicStructure):
 	
 	def optimized_1(self):
 		if self.is_optimized or self.circuit_size() <= 3:
-			return self
+			return self.evaluate_constants()
 		
 		key = Identical(self)
 		try:
@@ -993,11 +1058,17 @@ class Polynomial(Immutable, AlgebraicStructure):
 			if s1 <= 3:
 				result = term
 			else:
-				result = term.flatten().__optimize_additive_form().__optimize_common_factors().evaluate_constants()
+				result = term.flatten().__optimize_additive_form().__optimize_common_factors().evaluate_constants().flatten()
+				#result = term.flatten()
+			
+			#print(f"{s1}: {result} == {term}")
 			
 			s2 = result.circuit_size()
-			if s2 >= s1:
+			if s2 > s1:
 				result = term
+			
+			#assert result.variables() <= term.variables()
+			#assert result == term, f"{result} == {term}"
 			
 			#print(f"before:{s1} after:{s2}")
 			result.is_optimized = True
@@ -1461,7 +1532,7 @@ class Polynomial(Immutable, AlgebraicStructure):
 	def __pow__(self, exponent):
 		if (not self) and (not exponent):
 			raise ZeroDivisionError("Zero to the power of zero.")
-					
+		
 		if not self:
 			return self.algebra.zero()
 		
@@ -1469,6 +1540,9 @@ class Polynomial(Immutable, AlgebraicStructure):
 			base = self
 		else:
 			base = self.algebra.one() / self
+		
+		if self.algebra.base_ring.size == 2 and all(_x ** exponent == _x for _x in self.algebra.base_ring.domain()):
+			return base
 		
 		result = self.algebra.one()
 		

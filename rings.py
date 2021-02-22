@@ -313,15 +313,39 @@ class BooleanRing(ModularRing):
 	def __getnewargs__(self):
 		return bool(self),
 	
+	def __new__(cls, value, *args, **kwargs):
+		try:
+			if hasattr(value, 'jit_value'):
+				pass
+			elif value is cls.yes:
+				return cls.yes
+			elif value is cls.no:
+				return cls.no
+			elif value % 2:
+				return cls.yes
+			elif not (value % 2):
+				return cls.no
+			else:
+				raise RuntimeError
+		except AttributeError:
+			pass
+		
+		return object.__new__(cls)
+	
 	def __init__(self, value, *args, **kwargs):
+		if self.immutable: return # don't redo initialization when `BooleanRing.yes` or `BooleanRing.no` has been returned from `__new__`
+		
+		#print("BooleanRing", value)
+		
 		if 'size' in kwargs:
 			assert kwargs['size'] == 2
 			del kwargs['size']
 		
+		#print("BooleanRing", value)
 		try:
 			value = bool(value % 2)
 		except TypeError:
-			pass
+			value = value % 2
 		
 		#print(value)
 		super().__init__(value, *args, size=2, **kwargs)
@@ -345,6 +369,11 @@ class BooleanRing(ModularRing):
 		return super(BooleanRing, cls).get_algebra(*params, **kwparams)
 	
 	def __add__(self, other):
+		yes = self.yes
+		no = self.no
+		if ((self is yes) or (self is no)) and ((other is yes) or (other is no)):
+			return yes if self.ring_value ^ other.ring_value else no
+		
 		try:
 			if self.algebra != other.algebra:
 				return NotImplemented
@@ -359,6 +388,11 @@ class BooleanRing(ModularRing):
 		return self
 	
 	def __or__(self, other):
+		yes = self.yes
+		no = self.no
+		if ((self is yes) or (self is no)) and ((other is yes) or (other is no)):
+			return yes if self.ring_value | other.ring_value else no
+
 		try:
 			if self.algebra != other.algebra:
 				return NotImplemented
@@ -367,9 +401,14 @@ class BooleanRing(ModularRing):
 			return NotImplemented
 	
 	def __mul__(self, other):
+		yes = self.yes
+		no = self.no
+		if ((self is yes) or (self is no)) and ((other is yes) or (other is no)):
+			return yes if self.ring_value & other.ring_value else no
+		
 		try:
 			if self.algebra != other.algebra:
-				return NotImplemented
+				return NotImplemented	
 			return self.algebra(self.ring_value & other.ring_value)
 		except AttributeError:
 			return NotImplemented
@@ -1183,6 +1222,12 @@ if __debug__:
 		if verbose: print()
 		if verbose: print("test BooleanRing()")
 		ring = BooleanRing.get_algebra()
+		assert not ring(0)
+		assert ring(1)
+		assert not ring(2)
+		assert ring(3)
+		assert not ring(False)
+		assert ring(True)
 		if verbose: print(" ring test")
 		test_ring(ring)
 		

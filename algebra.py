@@ -28,9 +28,13 @@ class Algebra(Immutable):
 		if frozenset(self.algebra_kwparams.keys()) != frozenset(init.algebra_kwparams_names):
 			raise TypeError("Provide all keyword arguments for algebra instance. Missing arguments: {}.".format(", ".join(frozenset(init.algebra_kwparams_names) - frozenset(self.algebra_kwparams.keys()))))
 		
+		#if name not in ('Polynomial', 'Vector', 'Matrix'):
+		#	self.instances_cache = dict()
+		
 		self.mutable.add('hash_cache')
 		self.mutable.add('jit_log_table')
 		self.mutable.add('jit_exp_table')
+		#self.mutable.add('instances_cache')
 		self.immutable = True
 	
 	def __getattr__(self, key):
@@ -55,6 +59,23 @@ class Algebra(Immutable):
 	
 	def __call__(self, *args, **kwargs):
 		return self.algebra_init(*(args + self.algebra_params), **dict(chain(self.algebra_kwparams.items(), kwargs.items())))
+		
+		'''
+		try:
+			instances_cache = self.instances_cache
+		except AttributeError:
+			return self.algebra_init(*(args + self.algebra_params), **dict(chain(self.algebra_kwparams.items(), kwargs.items())))
+		
+		keys = tuple(sorted(kwargs.keys()))
+		values = tuple(kwargs[_k] for _k in keys)
+		
+		try:
+			return instances_cache[args, keys, values]
+		except KeyError:
+			result = self.algebra_init(*(args + self.algebra_params), **dict(chain(self.algebra_kwparams.items(), kwargs.items())))
+			self.instances_cache[args, keys, values] = result
+			return result
+		'''
 	
 	def __hash__(self):
 		try:
@@ -65,6 +86,14 @@ class Algebra(Immutable):
 			return hash_cache
 	
 	def __eq__(self, other):
+		if self is other:
+			return True
+		
+		try:
+			self.hash_cache == other.hash_cache
+		except AttributeError:
+			pass
+		
 		try:
 			return self.algebra_name == other.algebra_name and self.algebra_params == other.algebra_params and self.algebra_kwparams == other.algebra_kwparams
 		except AttributeError:

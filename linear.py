@@ -249,19 +249,37 @@ class Vector(AlgebraicStructure):
 	
 	def __matmul__(self, other):
 		"Scalar product of vectors or product of a vector and a scalar."
-		tensor = self * other
+		
 		try:
-			return tensor.trace()
+			if self.dimension == other.dimension:
+				return sum((_a * _b for (_a, _b) in zip(self, other)), self.algebra.base_ring.zero())
+			else:
+				raise ValueError("Vectors must have the same dimension")
 		except AttributeError:
-			return tensor
+			return self * other
+		
+		#tensor = self * other
+		#try:
+		#	return tensor.trace()
+		#except AttributeError:
+		#	return tensor
 	
 	def __rmatmul__(self, other):
 		"Scalar product of vectors or product of a vector and a scalar."
-		tensor = other * self
+		
 		try:
-			return tensor.trace()
+			if self.dimension == other.dimension:
+				return sum((_b * _a for (_a, _b) in zip(self, other)), self.algebra.base_ring.zero())
+			else:
+				raise ValueError("Vectors must have the same dimension")
 		except AttributeError:
-			return tensor
+			return other * self
+		
+		#tensor = other * self
+		#try:
+		#	return tensor.trace()
+		#except AttributeError:
+		#	return tensor
 	
 	def __or__(self, other):
 		"Concatenation of vectors."
@@ -391,13 +409,15 @@ class Matrix(AlgebraicStructure):
 				
 				self.value = [base_ring(init(_i, _j)) for (_i, _j) in self.keys()]
 			except TypeError:
-				raise
+				#print(e)
+				pass # FIXME: raise?
 			#print("2 matrix initialized", base_ring)
 		
 		if self.value is None:
 			try:
 				self.value = list(init) # TODO: base_ring
 			except TypeError:
+				#raise RuntimeError
 				pass
 			#print("3 matrix initialized", base_ring)
 		
@@ -414,11 +434,14 @@ class Matrix(AlgebraicStructure):
 			except IndexError:
 				raise ValueError("For matrix of dimension 0, 0 `base_ring` is mandatory.")
 		
+		#print(self.value)
 		if not all(_value.algebra == base_ring for _value in self):
 			raise ValueError(f"All components of the matrix must be from the same ring: {base_ring}")
 		
 		#print(base_ring)
 		#print([_value.algebra for _value in self])
+		
+		self.item_cache = dict()
 		
 		assert base_ring != None
 		if vector_algebra == None:
@@ -464,12 +487,18 @@ class Matrix(AlgebraicStructure):
 		return True
 	
 	def __eq__(self, other):
-		if self.column_dimension != other.column_dimension or self.row_dimension != other.row_dimension:
-			return False
+		try:
+			if self.column_dimension != other.column_dimension or self.row_dimension != other.row_dimension:
+				return False
+			
+			assert frozenset(self.keys()) == frozenset(other.keys())
+		except AttributeError:
+			return NotImplemented
 		
-		assert frozenset(self.keys()) == frozenset(other.keys())
-		
-		return all(parallel_starmap(operator.eq, ((self[_key], other[_key]) for _key in self.keys())))
+		try:
+			return all(parallel_starmap(operator.eq, ((self[_key], other[_key]) for _key in self.keys())))
+		except TypeError:
+			return NotImplemented
 	
 	def __str__(self):
 		return "Matrix[" + ", ".join(["[" + ", ".join([str(self[_i, _j]) for _j in range(self.row_dimension)]) + "]" for _i in range(self.column_dimension)]) + "]"
@@ -489,11 +518,15 @@ class Matrix(AlgebraicStructure):
 		`matrix[i_start:i_stop:i_step, j_start:j_stop:j_step]` return a sub-matrix with the elements specified as the slices
 		"""
 		
+		try:
+			if i_j != Ellipsis:
+				return self.item_cache[i_j]
+		except (AttributeError, KeyError, TypeError):
+			pass
+		
 		def getitem(direction, indices_i, indices_j):
 			if direction == self.__direction.scalar:
-				i = indices_i
-				j = indices_j
-				return self.value[self.row_dimension * i + j]
+				return self.value[self.row_dimension * indices_i + indices_j]
 			elif direction == self.__direction.row:
 				j = indices_j
 				return self.algebra.vector_algebra(self.value[self.row_dimension * _i + j] for _i in indices_i)
@@ -504,13 +537,29 @@ class Matrix(AlgebraicStructure):
 				selection = {}
 				for (m, i), (n, j) in zip(enumerate(indices_i), enumerate(indices_j)):
 					selection[m, n] = i, j
-				return self.algebra((lambda _m, _n: self[self.row_dimension * selection[_m, _n][0] + selection[_m, _n][1]]), row_dimension=len(indices_i), column_dimension=len(indices_j))
+				return self.algebra((lambda _m, _n: self.value[self.row_dimension * selection[_m, _n][0] + selection[_m, _n][1]]), row_dimension=len(indices_i), column_dimension=len(indices_j))
 			elif direction == self.__direction.copy:
+				#return self.algebra(self.value, row_dimension=self.row_dimension, column_dimension=self.column_dimension)
 				return self.algebra(self)
 			else:
 				raise RuntimeError("Unknown direction value: `{}`".format(repr(direction)))
 		
-		return self.__analyze_indices(i_j, getitem)
+		result = self.__analyze_indices(i_j, getitem)
+		
+		if __debug__:
+			try:
+				if i_j != Ellipsis:
+					assert self.item_cache[i_j] == result, f"{repr(i_j)}, {id(self)}"
+			except (AttributeError, KeyError, TypeError) as e:
+				pass
+		
+		try:
+			if i_j != Ellipsis:
+				self.item_cache[i_j] = result
+		except (AttributeError, TypeError):
+			pass
+		
+		return result
 	
 	def __setitem__(self, i_j, value):
 		"""
@@ -521,11 +570,15 @@ class Matrix(AlgebraicStructure):
 		`matrix[i_start:i_stop:i_step, j_start:j_stop:j_step] = matrix` replace the sub-matrix of the elements specified as the slices with the matrix on the right-hand side
 		"""
 		
+		#try:
+		#	self.item_cache.clear()
+		#	assert not self.item_cache
+		#except AttributeError:
+		#	pass
+		
 		def setitem(direction, indices_i, indices_j):
 			if direction == self.__direction.scalar:
-				i = indices_i
-				j = indices_j
-				self.value[self.row_dimension * i + j] = value
+				self.value[self.row_dimension * indices_i + indices_j] = value
 			elif direction == self.__direction.row:
 				if len(value) != len(indices_i):
 					raise ValueError("Assigned value (len {}) must have length equal to indices list ({}).".format(len(value), len(indices_i)))
@@ -559,12 +612,16 @@ class Matrix(AlgebraicStructure):
 	__direction = Enum('Matrix.__direction', 'scalar row column matrix copy')
 	
 	def __analyze_indices(self, i_j, callback):
-		if i_j == Ellipsis:
-			return callback(self.__direction.copy, None, None)
-		
-		i, j = i_j
-		
+		#print("  Matrix.__analyze_indices", i_j)
 		try:
+			i, j = i_j
+		except TypeError:
+			if i_j == Ellipsis:
+				return callback(self.__direction.copy, None, None)
+			else:
+				raise IndexError("Only a pair of numbers or ranges accepted as a key, or Ellipsis.")
+		
+		if hasattr(i, 'start') and hasattr(i, 'stop') and hasattr(i, 'step'):
 			if self.column_dimension:
 				if (i.start or 0) >= 2 * self.column_dimension: raise IndexError("Start value of a slice too big. ({} vs. {})".format(i.start, 2 * self.column_dimension))
 				if (i.start or 0) < -self.column_dimension: raise IndexError("Start value of a slice too low. ({} vs. {})".format(i.start, -self.column_dimension))
@@ -604,7 +661,7 @@ class Matrix(AlgebraicStructure):
 				i_step = 1
 			
 			i_collection = True
-		except AttributeError:
+		else:
 			if self.column_dimension:
 				if i >= 2 * self.column_dimension: raise IndexError("Index too big. ({} vs. {})".format(i, 2 * self.column_dimension))
 				if i < -self.column_dimension: raise IndexError("Index too low. ({} vs. {})".format(i, -self.column_dimension))
@@ -630,7 +687,7 @@ class Matrix(AlgebraicStructure):
 		except TypeError:
 			pass
 		
-		try:
+		if hasattr(j, 'start') and hasattr(j, 'stop') and hasattr(j, 'step'):
 			if self.row_dimension:
 				if (j.start or 0) >= 2 * self.row_dimension: raise IndexError("Start value of a slice too big. ({} vs. {})".format(i.start, 2 * self.row_dimension))
 				if (j.start or 0) < -self.row_dimension: raise IndexError("Start value of a slice too low. ({} vs. {})".format(i.start, -self.row_dimension))
@@ -670,7 +727,7 @@ class Matrix(AlgebraicStructure):
 				j_step = 1
 			
 			j_collection = True
-		except AttributeError:
+		else:
 			if self.row_dimension:
 				if j >= 2 * self.row_dimension: raise IndexError("Index too big. ({} vs. {})".format(j, 2 * self.row_dimension))
 				if j < -self.row_dimension: raise IndexError("Index too low. ({} vs. {})".format(j, -self.row_dimension))
@@ -901,15 +958,9 @@ class Matrix(AlgebraicStructure):
 	@classmethod
 	def random_rank(cls, dimension, rank, base_ring=default_ring, vector_algebra=None):
 		"Generate a random square matrix of the specified rank."
-		u = cls.random(dimension, dimension, base_ring=base_ring, vector_algebra=vector_algebra)
-		v = cls.random(dimension, dimension, base_ring=base_ring, vector_algebra=vector_algebra)
-		for n in range(dimension):
-			if u[n, n].is_zero():
-				u[n, n] = base_ring.random_nonzero()
-			if v[n, n].is_zero():
-				v[n, n] = base_ring.random_nonzero()
+		u, v = cls.random_inverse_pair(dimension, base_ring=base_ring, vector_algebra=vector_algebra)
 		d = cls.random_diagonal(dimension, rank, base_ring=base_ring, vector_algebra=vector_algebra)
-		return u @ d @ v
+		return u @ d
 	
 	def __add__(self, other):
 		if self.column_dimension != other.column_dimension:
@@ -961,7 +1012,10 @@ class Matrix(AlgebraicStructure):
 			else:
 				algebra = algebra1
 			
-			return algebra((lambda _i, _j: sum((self[_i, _k] * other[_k, _j] for _k in range(self.row_dimension)), algebra.base_ring.zero())), column_dimension=self.column_dimension, row_dimension=other.row_dimension)
+			#middle_dimension = self.row_dimension
+			#zero = algebra.base_ring.zero()
+			#return algebra((lambda _i, _j: sum((self[_i, _k] * other[_k, _j] for _k in range(middle_dimension)), zero)), column_dimension=self.column_dimension, row_dimension=other.row_dimension)
+			return algebra((lambda _i, _j: self[_i, :] @ other[:, _j]), column_dimension=self.column_dimension, row_dimension=other.row_dimension)
 		except AttributeError:
 			if self.row_dimension != other.dimension:
 				raise ValueError("Trying to multiply a matrix through a vector of incompatible dimension.")
