@@ -330,6 +330,9 @@ def test_homomorphic_encryption():
 		with Path('lowercase_automaton.pickle').open('wb') as f:
 			pickle.dump(lowercase_automaton, f)
 	
+	#print()
+	#print("lowercase automaton component sizes:", [_c.circuit_size() for _c in lowercase_automaton.output_transition], [_c.circuit_size() for _c in lowercase_automaton.state_transition])
+	
 	print()
 	print("testing plain lowercase automaton")
 	

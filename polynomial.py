@@ -104,6 +104,7 @@ class Polynomial(Immutable, AlgebraicStructure):
 	optimized_cache = dict()
 	evaluate_constants_cache = dict()
 	var_cache = dict()
+	const_cache = dict()
 	
 	symbol = Enum('Polynomial.symbol', 'var const add sub neg mul')
 	
@@ -183,6 +184,16 @@ class Polynomial(Immutable, AlgebraicStructure):
 				base_ring = self.operands[0].algebra
 			except IndexError:
 				base_ring = self.default_ring
+		elif any(_op.operator == self.symbol.var or _op.operator == self.symbol.const for _op in self.operands):
+			for op in self.operands:
+				if op.operator == self.symbol.var or op.operator == self.symbol.const:
+					if op.operator == self.symbol.var:
+						base_ring = op.operands[1]
+					elif op.operator == self.symbol.const:
+						try:
+							base_ring = op.operands[0].algebra
+						except IndexError:
+							base_ring = self.default_ring
 		else:
 			algebra = self.operands[0].algebra
 			if algebra.algebra_name == 'Polynomial':
@@ -211,6 +222,11 @@ class Polynomial(Immutable, AlgebraicStructure):
 	
 	@classmethod
 	def const(cls, value, base_ring=None):
+		try:
+			return cls.const_cache[(value, base_ring)]
+		except (KeyError, TypeError):
+			pass
+		
 		if hasattr(value, 'operator') and hasattr(value, 'operands'):
 			raise TypeError("Const value must not be a polynomial.")
 		
@@ -224,6 +240,10 @@ class Polynomial(Immutable, AlgebraicStructure):
 		
 		result.is_canonical = True
 		result.is_optimized = True
+		try:
+			cls.const_cache[(value, base_ring)] = result
+		except TypeError:
+			pass
 		return result
 	
 	@classmethod
@@ -1043,9 +1063,17 @@ class Polynomial(Immutable, AlgebraicStructure):
 		except KeyError:
 			pass
 		
-		#print("optimize", self.circuit_size())
+		print()
+		print("optimize", self.circuit_size())
+		
+		n = 0
 		
 		def transform(term):
+			nonlocal n
+			if n % max((self.circuit_size() // 10**min(self.circuit_size().bit_length(), 3)), 10) == 0:
+				print(" ", n, "/", self.circuit_size())
+			n += 1
+			
 			if term.is_optimized:
 				return term
 			key = Identical(term)
@@ -1058,7 +1086,7 @@ class Polynomial(Immutable, AlgebraicStructure):
 			if s1 <= 3:
 				result = term
 			else:
-				result = term.flatten().__optimize_additive_form().__optimize_common_factors().evaluate_constants().flatten()
+				result = term.__optimize_additive_form().__optimize_common_factors().evaluate_constants().flatten()
 				#result = term.flatten()
 			
 			#print(f"{s1}: {result} == {term}")
@@ -1075,7 +1103,7 @@ class Polynomial(Immutable, AlgebraicStructure):
 			self.optimized_cache[key] = result
 			return result
 		
-		smallest_circuit = self.__traverse_subterms(transform)
+		smallest_circuit = self.evaluate_constants().flatten().__traverse_subterms(transform)
 		
 		#smallest_circuit = self.flatten().__optimize_additive_form().__optimize_common_factors()
 		if smallest_circuit.circuit_size() > self.circuit_size():
@@ -1083,7 +1111,7 @@ class Polynomial(Immutable, AlgebraicStructure):
 		smallest_circuit.is_optimized = True
 		self.optimized_cache[key] = smallest_circuit
 		
-		#print("optimized:", self.circuit_size(), smallest_circuit.circuit_size())
+		print(" optimized:", self.circuit_size(), smallest_circuit.circuit_size())
 		return smallest_circuit
 	
 	optimized = optimized_1

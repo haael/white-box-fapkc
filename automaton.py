@@ -172,22 +172,8 @@ def automaton_factory(base_ring):
 			return self.state_transition.dimension
 		
 		def optimize(self):
-			output_transition = self.output_transition.optimized()
-			state_transition = self.state_transition.optimized()
-			
-			#print([[str(_v) for _v in _x.variables()] for _x in self.output_transition.canonical()])
-			#print([[str(_v) for _v in _x.variables()] for _x in output_transition.canonical()])
-			#print([[str(_v) for _v in _x.variables()] for _x in self.state_transition.canonical()])
-			#print([[str(_v) for _v in _x.variables()] for _x in state_transition.canonical()])
-			
-			assert self.output_transition == output_transition, f"{str(self.output_transition)} == {str(output_transition)}"
-			assert self.state_transition == state_transition, f"{str(self.state_transition)} == {str(state_transition)}"
-			
-			self.output_transition = output_transition
-			self.state_transition = state_transition
-			
-			#self.output_transition = self.output_transition.optimized()
-			#self.state_transition = self.state_transition.optimized()
+			self.output_transition = self.output_transition.optimized()
+			self.state_transition = self.state_transition.optimized()
 		
 		@staticmethod
 		def random_nonlinear_equation_pair(length):
@@ -276,21 +262,21 @@ def automaton_factory(base_ring):
 			
 			return cls(output_transition=output_transition, state_transition=state_transition)
 		
-		@classmethod
-		def repeater(cls, block_size, delay=0):
-			"A simple automaton that returns back its input with optional delay."
-			
-			if delay == 0:
-				state_transition = base_vector.zero(block_size)
-				output_transition = base_vector(cls.x[_i] for _i in range(width))
-			else:
-				state_transition = base_vector(cls.x[_i] for _i in range(width))
-				output_transition = base_vector(cls.s[delay, _i] for _i in range(width))
-			
-			return cls(output_transition=output_transition, state_transition=state_transition)
-		
-		def passthrough(self, offset, length, period):
-			return (self.repeater(self.block_size) | self) @ (self.countdown(self.block_size, self.memory_size, offset, length, period) & self.repeater(self.block_size))
+		#@classmethod
+		#def repeater(cls, block_size, delay=0):
+		#	"A simple automaton that returns back its input with optional delay."
+		#	
+		#	if delay == 0:
+		#		state_transition = base_vector.zero(block_size)
+		#		output_transition = base_vector(cls.x[_i] for _i in range(width))
+		#	else:
+		#		state_transition = base_vector(cls.x[_i] for _i in range(width))
+		#		output_transition = base_vector(cls.s[delay, _i] for _i in range(width))
+		#	
+		#	return cls(output_transition=output_transition, state_transition=state_transition)
+		#
+		#def passthrough(self, offset, length, period):
+		#	return (self.repeater(self.block_size) | self) @ (self.countdown(self.block_size, self.memory_size, offset, length, period) & self.repeater(self.block_size))
 		
 		@classmethod
 		def linear_nodelay_wifa_pair(cls, block_size=8, memory_size=32):
@@ -1086,15 +1072,15 @@ if __name__ == '__main__':
 	#m = Matrix.unit(16)
 	#n = m[...]
 	
-	#profiler.start()
-	#block_size = 4
-	#memory_size = 2
-	#encrypt, decrypt = Automaton.fapkc0(block_size=block_size, memory_size=memory_size)
-	#text = [Vector.random(block_size) for _i in range(32)]
-	#encrypted1 = list(encrypt(text))
-	#decrypted1 = list(decrypt(encrypted1))
-	#assert decrypted1[memory_size:] == text[:-memory_size]
-	#profiler.done()
+	block_size = 4
+	memory_size = 2
+	encrypt, decrypt = Automaton.fapkc0(block_size=block_size, memory_size=memory_size)
+	encrypt.optimize()
+	profiler.start()
+	encrypt.mix_states()
+	#encrypt.optimize()
+	profiler.done()
+	quit()
 	
 	
 	#profiler.start()
