@@ -126,10 +126,10 @@ class AbstractRing(Immutable, AlgebraicStructure):
 		if self.algebra != other.algebra:
 			return NotImplemented
 		
-		if not other:
+		if other.is_zero():
 			raise ZeroDivisionError("Zero element used in a modulus or division.")
 		
-		if not self:
+		if self.is_zero():
 			return self.algebra.zero(), self.algebra.zero()
 		
 		quotient = self.algebra.zero()
@@ -139,14 +139,14 @@ class AbstractRing(Immutable, AlgebraicStructure):
 			if nm < modulus:
 				quotient = r
 				modulus = nm
-			if not nm: break
+			if modulus.is_zero(): break
 		
 		return quotient, modulus
 	
 	def __truediv__(self, other):
 		quotient, remainder = divmod(self, other)
 		if remainder:
-			raise ArithmeticError("`{}` is not a divisor of `{}` (`{} = {} * {} + {}`).".format(str(self), str(other), str(self), str(other), str(quotient), str(remainder)))
+			raise ArithmeticError(f"`{other}` is not a divisor of `{self}` (`{self} = {quotient} * {other} + {remainder}`).")
 		return quotient
 	
 	def __floordiv__(self, other):
@@ -1118,7 +1118,7 @@ if __debug__:
 		assert no + yes == yes
 		assert no + no == no
 		
-		assert sum([yes for _i in range(algebra_size)], no) == no
+		assert sum([yes for _i in range(algebra_size)], no) == no, str(sum([yes for _i in range(algebra_size)], no).canonical())
 		assert sum([yes for _i in range(algebra_size + 1)], no) == yes
 		
 		assert yes // yes == yes
