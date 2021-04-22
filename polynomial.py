@@ -37,6 +37,9 @@ class Polynomial(Immutable, AlgebraicStructure, Term):
 		Usage 2: `Polynomial(value, base_ring=Ring)` - create a constant from the base ring with the specified value (as interpreted by the constructor of the base ring).
 		Usage 3: `Polynomial(operator, operands)` - raw initialization; do not use, try the convenience methods instead.
 		"""
+		
+		assert base_ring.algebra_name != 'Polynomial' if base_ring != None else True
+		
 		if operands == None:
 			try:
 				self.p_operator = operator.p_operator
@@ -58,59 +61,6 @@ class Polynomial(Immutable, AlgebraicStructure, Term):
 		
 		# This is a very expensive check.
 		assert self.is_valid_polynomial(), repr(self)
-		
-		'''
-		if __debug__: len(operands) # raise TypeError if `operands` is not iterable
-		
-		if operator != self.symbol.const and operator != self.symbol.var:
-			try:
-				if base_ring != None:
-					algebra = self.get_algebra(base_ring=base_ring)
-				else:
-					algebra = operands[0].algebra
-				
-				if algebra.algebra_name != 'Polynomial':
-					raise ValueError("Constants not allowed outside of the `const` container.")
-				
-				if any(_op.algebra != algebra for _op in operands[1:]):
-					raise ValueError(f"All operands must be from the same ring: {operands}, expected: {algebra}.")
-			except IndexError:
-				pass
-		
-		assert len(operands) == 2 if operator == self.symbol.var else True
-		assert isinstance(operands[0], str) if operator == self.symbol.var else True
-		assert isinstance(operands[1], Algebra) if operator == self.symbol.var else True
-		
-		assert all(isinstance(_op, Polynomial) for _op in operands) if (operator != self.symbol.const and operator != self.symbol.var) else True
-		
-		self.p_operator = operator
-		assert isinstance(operands, list), str((operator, operands))
-		if operator == self.symbol.const:
-			self.p_const = operands[0]
-		elif operator == self.symbol.var:
-			self.p_var = operands[0]
-			if base_ring == None:
-				self.p_algebra = operands[1]
-			else:
-				if self.get_algebra(base_ring=base_ring) != operands[1]:
-					raise ValueError(f"Wrong algebra for variable: {self.get_algebra(base_ring=base_ring)} != {operands[1]}.")
-				self.p_algebra = self.get_algebra(base_ring=base_ring)
-		else:
-			self.p_operands = operands
-		
-		assert self.algebra.algebra_name == 'Polynomial'
-		
-		if base_ring != None and self.algebra.base_ring != base_ring:
-			raise ValueError("`base_ring` = {} does not match operand algebra {}.".format(base_ring, self.algebra))
-		
-		self.immutable = True
-		
-		# This is a very expensive check.
-		assert self.is_valid_polynomial(), repr(self)
-		'''
-	
-	#def __getnewargs_ex__(self):
-	#	return (self.p_operator, self.p_operands)
 	
 	def __repr__(self):
 		if self.is_const():
@@ -180,7 +130,7 @@ class Polynomial(Immutable, AlgebraicStructure, Term):
 	
 	@classmethod
 	def var(cls, name, base_ring):
-		return cls(cls.symbol.var, [name, base_ring])
+		return cls(cls.symbol.var, [name, base_ring], base_ring=base_ring)
 	
 	@classmethod
 	def const(cls, value, base_ring=None):
@@ -190,9 +140,10 @@ class Polynomial(Immutable, AlgebraicStructure, Term):
 		except AttributeError:
 			pass
 		
-		if base_ring != None and value.algebra != base_ring:
+		if base_ring != None and (not hasattr(value, 'algebra') or value.algebra != base_ring):
 			value = base_ring(value)
-		return cls(cls.symbol.const, value)
+		
+		return cls(cls.symbol.const, value, base_ring=base_ring)
 	
 	@classmethod
 	def zero(cls, base_ring=default_ring):
@@ -346,178 +297,6 @@ class Polynomial(Immutable, AlgebraicStructure, Term):
 			return NotImplemented
 		
 		return self.algebra(self.symbol.mul, [other, self])
-	
-	'''
-	@staticmethod
-	def __monomial_division(dividend, divisor):
-		if not dividend.is_multiplicative_normal_form():
-			raise ValueError("Dividend must be in multiplicative normal form.")
-		if not divisor.is_canonical_monomial():
-			raise ValueError("Divisor must be a monomial in canonical form.")
-		
-		assert dividend.algebra == divisor.algebra
-		
-		Ring = dividend.algebra.base_ring
-		
-		dividend_vars = Counter()
-		dividend_factors = list()
-		if dividend.operator == dividend.symbol.mul:
-			if dividend.operands[0].operator == dividend.symbol.const:
-				dividend_factor = dividend.operands[0].operands[0]
-				for v in dividend.operands[1:]:
-					if v.is_canonical_literal():
-						dividend_vars[v] += 1
-					else:
-						dividend_factors.append(v)
-			else:
-				dividend_factor = Ring.one()
-				for v in dividend.operands:
-					if v.is_canonical_literal():
-						dividend_vars[v] += 1
-					else:
-						dividend_factors.append(v)
-		elif dividend.operator == dividend.symbol.const:
-			if dividend.operands:
-				dividend_factor = dividend.operands[0]
-			else:
-				dividend_factor = Ring.zero()
-		elif dividend.operator == dividend.symbol.var:
-			dividend_factor = Ring.one()
-			dividend_vars[dividend] += 1
-		
-		divisor_vars = Counter()
-		if divisor.operator == divisor.symbol.mul:
-			if divisor.operands[0].operator == divisor.symbol.const:
-				divisor_factor = divisor.operands[0].operands[0]
-				for v in divisor.operands[1:]:
-					assert v.is_canonical_literal()
-					divisor_vars[v] += 1
-			else:
-				divisor_factor = Ring.one()
-				for v in divisor.operands:
-					assert v.is_canonical_literal()
-					divisor_vars[v] += 1
-		elif divisor.operator == divisor.symbol.const:
-			if divisor.operands:
-				divisor_factor = divisor.operands[0]
-			else:
-				divisor_factor = Ring.zero()
-		elif divisor.operator == divisor.symbol.var:
-			divisor_factor = Ring.one()
-			divisor_vars[divisor] += 1
-		
-		for v in divisor_vars.keys():
-			if dividend_vars[v] < divisor_vars[v]:
-				raise ArithmeticError("Monomials not divisible.")
-			else:
-				dividend_vars[v] -= divisor_vars[v]
-		
-		result = dividend.const(dividend_factor / divisor_factor)
-		for v in dividend_vars.elements():
-			result *= v
-		for v in dividend_factors:
-			result *= v
-		return result.flatten()
-	
-	@staticmethod
-	def __monomial_order(monomial):
-		if not monomial.is_canonical_monomial():
-			raise ValueError("Argument must be in a canonical form.")
-		
-		if monomial.operator not in [monomial.symbol.mul, monomial.symbol.const, monomial.symbol.var]:
-			raise ValueError("Argument is not a monomial.")
-		
-		if monomial.operator == monomial.symbol.mul:
-			if monomial.operands[0].symbol == monomial.symbol.const:
-				return len(monomial.operands) - 1
-			else:
-				return len(monomial.operands)
-		elif monomial.operator == monomial.symbol.const:
-			return 0
-		elif monomial.operator == monomial.symbol.var:
-			return 1
-	
-	def __divmod__(self, other):
-		"Polynomial Euclidean division. For arguments `self`, `other` returns a pair `f`, `r` so that `self == other * f + r`."
-		
-		if self.algebra != other.algebra:
-			divisor = self.algebra.const(other)
-		
-		Ring = self.algebra
-		
-		try:
-			if other.is_zero():
-				raise ZeroDivisionError("Division by zero in polynomial Euclidean division.")
-			elif other.is_one():
-				return self, Ring.zero()
-		except ValueError:
-			pass
-		
-		if self.is_multiplicative_normal_form() and other.is_canonical_monomial():
-			try:
-				return self.__monomial_division(self, other), Ring.zero()
-			except ArithmeticError:
-				pass
-		
-		if other.is_canonical_polynomial():
-			divisor = other
-		else:
-			try:
-				divisor = other.canonical()
-			except AttributeError:
-				return NotImplemented
-		
-		if self.is_canonical_polynomial():
-			dividend = self
-		else:
-			dividend = self.canonical()
-		
-		assert dividend.algebra == divisor.algebra
-		
-		try:
-			if dividend.is_zero():
-				return Ring.zero(), Ring.zero()
-		except ValueError:
-			pass
-		
-		try:
-			d = next(iter(divisor)) # leading term of the divisor
-		except TypeError:
-			d = self.const(divisor)
-		except StopIteration:
-			raise ZeroDivisionError("Division by zero in polynomial Euclidean division.")
-		
-		d = d.canonical()
-		do = self.__monomial_order(d)
-		
-		result = Ring.zero()
-		running = True
-		while running:
-			for x in dividend:
-				if self.__monomial_order(x) < do:
-					running = False
-					break
-				try:
-					c = self.__monomial_division(x, d)
-					assert c, "{} / {} = {}".format(x, d, c)
-					result += c
-					dividend -= c * divisor
-					with AllowCanonical():
-						dividend = dividend.canonical()
-					assert dividend.is_canonical_polynomial(), dividend
-					running = bool(dividend)
-					break
-				except ArithmeticError:
-					pass
-			else:
-				running = False
-				pass
-		
-		if not hasattr(result, 'operator'):
-			result = self.const(result)
-		
-		return result, dividend
-	'''
 	
 	def polynomial_order(self):
 		current = self.canonical()
@@ -936,6 +715,33 @@ if __debug__:
 				print(" ", p.circuit_size(), p.circuit_depth(), '->', po.circuit_size(), po.circuit_depth(), "\t", str(100 - int(100 * po.circuit_size() / p.circuit_size())) + "%")
 			assert po == p
 			assert p.circuit_size() >= po.circuit_size()
+
+	def test_compilation(polynomial, compile_tables=False):
+		from pathlib import Path
+		from itertools import product
+		from jit_types import Compiler
+		
+		compiler = Compiler()
+		
+		if compile_tables:
+			polynomial.base_ring.compile_tables('field', compiler)
+			assert hasattr(polynomial.base_ring, 'jit_log_table')
+			assert hasattr(polynomial.base_ring, 'jit_exp_table')
+		else:
+			assert not hasattr(polynomial.base_ring, 'jit_log_table')
+			assert not hasattr(polynomial.base_ring, 'jit_exp_table')
+		
+		var_list = 'abcdefgh'
+		v = list(map(polynomial.var, var_list))
+		p1 = polynomial.random(variables=v, order=7)
+		p1 = p1.optimized()
+		p1.compile('p1', compiler)
+		code = compiler.compile()
+		p1c = p1.wrap_compiled('p1', code)
+		with code:
+			for vs in range(100):
+				args = dict((_v, polynomial.base_ring.random()) for _v in var_list)
+				assert p1(**args).evaluate() == p1c(**args)
 	
 	def polynomial_test_suite(verbose=False):
 		if verbose: print("running test suite")
@@ -951,6 +757,8 @@ if __debug__:
 			test_polynomial(ring_polynomial)
 			if verbose: print(" optimization test")
 			test_optimization(ring_polynomial, verbose)
+			if verbose: print(" compilation test")
+			test_compilation(ring_polynomial)
 		
 		ring = BooleanRing.get_algebra()
 		if verbose: print()
@@ -962,6 +770,8 @@ if __debug__:
 		test_polynomial(ring_polynomial)
 		if verbose: print(" optimization test")
 		test_optimization(ring_polynomial, verbose)
+		if verbose: print(" compilation test")
+		test_compilation(ring_polynomial)
 		
 		for i in (2,): #(3, 4, 5, 7, 8, 9, 11, 13, 16, 17, 18, 19, 23, 25, 32, 49, 64, 81, 121, 128, 256, 52, 1024):
 			field = GaloisField.get_algebra(size=i)
@@ -976,6 +786,8 @@ if __debug__:
 			test_polynomial(field_polynomial)
 			if verbose: print(" optimization test")
 			test_optimization(ring_polynomial, verbose)
+			if verbose: print(" compilation test")
+			test_compilation(ring_polynomial)
 		
 		for i in (1,): #(2, 3, 4, 5, 6, 7, 8, 16, 32, 64):
 			field = BinaryField.get_algebra(exponent=i)
@@ -990,6 +802,8 @@ if __debug__:
 			test_polynomial(field_polynomial)
 			if verbose: print(" optimization test")
 			test_optimization(ring_polynomial, verbose)
+			if verbose: print(" compilation test")
+			test_compilation(ring_polynomial)
 		
 		field = RijndaelField
 		if verbose: print()
@@ -1003,86 +817,17 @@ if __debug__:
 		test_polynomial(field_polynomial)
 		if verbose: print(" optimization test")
 		test_optimization(ring_polynomial, verbose)
+		if verbose: print(" compilation test (long multiplication)")
+		test_compilation(field_polynomial, compile_tables=False)
+		if verbose: print(" compilation test (log-based multiplication)")
+		test_compilation(field_polynomial, compile_tables=True)
 	
 	__all__ = __all__ + ('test_polynomial', 'test_optimization', 'polynomial_test_suite')
 
 
 if __debug__ and __name__ == '__main__':
-	'''
-	p = Polynomial.get_algebra(base_ring=BooleanRing.get_algebra())
-	one = p.one()
-	x = p.var('x')
-	y = p.var('y')
-	z = p.var('z')
-	
-	a = x * y + x * z + y
-	b = x * y + y + one
-
-	d, r = divmod(a, b)
-
-	assert d * b + r == a
-
-	print(f"({d.canonical()}) * ({b.canonical()}) + {r.canonical()} == {a.canonical()}")
-	quit()
-
-	#test_optimization(Polynomial.get_algebra(base_ring=BooleanRing.get_algebra()), verbose=True)
-	'''
-	
 	polynomial_test_suite(verbose=True)
 	
-	quit()
-	
-	from pathlib import Path
-	from itertools import product
-	from jit_types import Compiler
-	
-	compiler = Compiler()
-	
-	RijndaelField.compile_tables('RijndaelField', compiler)
-	assert hasattr(RijndaelField, 'jit_log_table')
-	assert hasattr(RijndaelField, 'jit_exp_table')
-	
-	#polynomial = Polynomial.get_algebra(base_ring=ModularRing.get_algebra(size=301))
-	#polynomial = Polynomial.get_algebra(base_ring=BooleanRing.get_algebra())
-	polynomial = Polynomial.get_algebra(base_ring=RijndaelField.get_algebra())
-	#polynomial = Polynomial.get_algebra(base_ring=BinaryField.get_algebra(exponent=2, reducing_polynomial_bitfield=0b111))
-	var_list = 'abcdefgh'
-	v = list(map(polynomial.var, var_list))
-	p1 = polynomial.random(variables=v, order=7)
-	p1 = p1.optimized()
-	p1.compile('p1', compiler)
-	#print(p1)
-	
-	#print(compiler)
-	
-	code = compiler.compile()
-	
-	p1c = p1.wrap_compiled('p1', code)
-	#Path('polynomial.bc').write_bytes(code.modules[0].as_bitcode())
-	
-	#log_table, exp_table = RijndaelField.log_exp_tables()
-	#print(log_table)
-	#print(exp_table)
-	#for n in range(1, 256):
-	#	assert exp_table[log_table[n]] == n, str(n)
-	
-	#va = polynomial.base_ring.random()
-	#vb = polynomial.base_ring.random()
-	#va = polynomial.base_ring(178)
-	#vb = polynomial.base_ring(1)
-	#try:
-	#	print("py", va.log(), vb.log(), int(polynomial.base_ring.exp((va.log() + vb.log()) % (polynomial.base_ring.size - 1))))
-	#	print("ll", log_table[int(va)], log_table[int(vb)], exp_table[(log_table[int(va)] + log_table[int(vb)]) % (polynomial.base_ring.size - 1)])
-	#except ZeroDivisionError:
-	#	pass
-	#print("py", int(va), "*", int(vb), "=", int(p1(a=va, b=vb).evaluate()))
-	#print("ll", int(va), "*", int(vb), "=", int(p1c(a=va, b=vb)))
-	
-	with code:
-		for vs in range(100):
-			args = dict((_v, polynomial.base_ring.random()) for _v in var_list)
-			assert p1(**args).evaluate() == p1c(**args)
-
 
 
 
