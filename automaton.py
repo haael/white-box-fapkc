@@ -1,4 +1,4 @@
-#!/usr/bin/python3
+#!/usr/bin/python3 -O
 #-*- coding:utf8 -*-
 
 
@@ -177,21 +177,22 @@ def automaton_factory(base_ring):
 		
 		@staticmethod
 		def random_nonlinear_equation_pair(length):
+			print(" generating first set")
 			b1 = base_vector(base_polynomial.var('a_' + str(_i)) for _i in range(length))
 			b2 = base_vector((base_polynomial.var('a_' + str(_i - randbelow(_i) - 1)) * base_polynomial.var('a_' + str(_i - randbelow(_i) - 1))) if _i else base_polynomial.zero() for _i in range(length))
 			b = b2 + b1
+			b = b.optimized()
 			
+			print(" generating second set")
 			a1 = base_vector(base_polynomial.var('b_' + str(_i)) for _i in range(length))
 			subst = {}
 			a = base_vector.zero(length)
 			for i in range(length):
-				a[i] = -b2[i](**subst) + a1[i]
+				a[i] = (-b2[i](**subst) + a1[i]).optimized()
 				subst['a_' + str(i)] = a[i]
 			
-			assert a(**{'b_' + str(_i) : b[_i] for _i in range(length)}) == b1
-			assert b(**{'a_' + str(_i) : a[_i] for _i in range(length)}) == a1
-			
-			return a.optimized(), b.optimized()
+			#return a1, b1
+			return a, b
 		
 		def mix_states(self):
 			"""
@@ -204,23 +205,24 @@ def automaton_factory(base_ring):
 			This function is slow. While debugging, this step might be omitted.
 			"""
 			
-			print("generating random matrix", self.memory_width)
-			mix, unmix = base_const_matrix.random_inverse_pair(self.memory_width)
-			mix = base_matrix(mix)
-			unmix = base_matrix(unmix)
+			#print("generating random matrix", self.memory_width)
+			#mix, unmix = base_const_matrix.random_inverse_pair(self.memory_width)
+			#mix = base_matrix(mix)
+			#unmix = base_matrix(unmix)
 			
 			print("generating random nonlinear transformation")
 			mix_nonlinear, unmix_nonlinear = self.random_nonlinear_equation_pair(self.memory_width)
-			mix_nonlinear = mix_nonlinear.optimized()
-			unmix_nonlinear = unmix_nonlinear.optimized()
+			print(" size:", mix_nonlinear.circuit_size(), unmix_nonlinear.circuit_size())
 			
 			print("calculating unmix substitution")
-			#unmixed = unmix @ base_vector(self.s[t, _i] for _i in range(self.memory_width))
-			unmixed = unmix @ base_vector(base_polynomial.var(f'c_{_i}') for _i in range(self.memory_width))
+			print(" matrix step")
+			#unmixed = unmix @ base_vector(base_polynomial.var(f'c_{_i}') for _i in range(self.memory_width))
+			unmixed = base_vector(base_polynomial.var(f'c_{_i}') for _i in range(self.memory_width))
+			print(" substitution step")
 			unmixed = unmix_nonlinear(**{f'a_{_i}' : unmixed[_i] for _i in range(self.memory_width)})
-			print(" before optimization:", [_c.circuit_size() for _c in unmixed])
+			print(" before optimization:", unmixed.circuit_size(), [_c.circuit_size() for _c in unmixed])
 			unmixed = unmixed.optimized()
-			print(" after optimization:", [_c.circuit_size() for _c in unmixed])
+			print(" after optimization:", unmixed.circuit_size(), [_c.circuit_size() for _c in unmixed])
 			
 			substitution = {}
 			for t in range(1, self.memory_length + 1):
@@ -228,11 +230,18 @@ def automaton_factory(base_ring):
 					substitution[str(self.s[t, i])] = unmixed[i](**{f'c_{_i}' : self.s[t, _i] for _i in range(self.memory_width)})
 			
 			print("applying state transition")
-			bvt = base_vector(_trans(**substitution) for _trans in self.state_transition).optimized()
-			self.state_transition = (mix @ mix_nonlinear(**{f'b_{_i}' : bvt[_i] for _i in range(self.memory_width)}))
-			#self.state_transition = mix @ bvt
+			print(" size:", self.state_transition.circuit_size())
+			bvt = base_vector(_trans(**substitution) for _trans in self.state_transition)
+			print(" step1", bvt.circuit_size(), [_c.circuit_size() for _c in bvt])
+			bvt = bvt.optimized()
+			print(" step2", bvt.circuit_size(), [_c.circuit_size() for _c in bvt])
+			#self.state_transition = mix @ mix_nonlinear(**{f'b_{_i}' : bvt[_i] for _i in range(self.memory_width)})
+			self.state_transition = mix_nonlinear(**{f'b_{_i}' : bvt[_i] for _i in range(self.memory_width)})
+			print(" result:", self.state_transition.circuit_size())
 			print("applying output transition")
+			print(" size:", self.output_transition.circuit_size())
 			self.output_transition = base_vector(_trans(**substitution) for _trans in self.output_transition)
+			print(" result:", self.output_transition.circuit_size())
 		
 		@classmethod
 		def countdown(cls, block_size, memory_size, offset, length, period): # TODO
@@ -309,7 +318,7 @@ def automaton_factory(base_ring):
 			class BadLuck(BaseException):
 				"Exception that is thrown when the random objects do not have desired properties and need to be generated again."
 				pass
-
+			
 			zero_v = base_const_vector.zero(block_size)
 			unit_m = base_const_matrix.unit(block_size)
 			zero_m = base_const_matrix.zero(block_size, block_size)
@@ -323,7 +332,7 @@ def automaton_factory(base_ring):
 					#print(" linear_delay_wifa_pair", 1)
 					coefficients_A = []
 					for n in range(memory_size + 1):
-						rank = max(1, block_size + n - memory_size)
+						rank = min(block_size, max(block_size // 2 + 2, block_size + n - memory_size))
 						m = base_const_matrix.random_rank(block_size, rank)
 						coefficients_A.append(m)
 					
@@ -438,6 +447,7 @@ def automaton_factory(base_ring):
 								for j in range(ll, block_size):
 									matrix_PA[p, q][j, :] = matrix_PA[p + 1, q][j, :]
 							for q in range(memory_size + 1):
+								#print(" ::", i, p, q)
 								matrix_Ps[p, q] = psI_m @ matrix_P[p, q] + psO_m @ matrix_P[p + 1, q]
 						
 						for q in range(i + 1):
@@ -459,11 +469,17 @@ def automaton_factory(base_ring):
 					A00 = matrix_PA[0, 0]
 					del matrix_PA
 					
+					#print()
+					#for j in range(block_size):
+					#	print(j, A00[j, :])
+					
 					#print(" linear_delay_wifa_pair", 12)
 					for j in range(block_size):
 						if A00[j, :].is_zero():
 							#print(A00)
 							raise BadLuck("Leading matrix not invertible, try again.")
+					
+					# TODO: check if delay is not too short
 					
 					#print(" linear_delay_wifa_pair", 13)
 					A00_inv = A00.inverse()
@@ -538,6 +554,7 @@ def automaton_factory(base_ring):
 					#print(" linear_delay_wifa_pair", "end")
 					return automaton_A, automaton_B
 				except BadLuck:
+					print("bad luck")
 					# TODO: reset entropy
 					pass
 		
@@ -648,7 +665,7 @@ def automaton_factory(base_ring):
 	return Automaton
 
 
-if __debug__:
+if True or __debug__:
 	import pickle
 	from itertools import chain, tee
 	
@@ -788,24 +805,75 @@ if __debug__:
 			for a, b in zip(automaton1(input1), automaton2(input2)):
 				assert a == b
 	
-	def test_fapkc_encryption(Ring, block_size, memblock_size, length):
+	def test_fapkc_encryption(Ring, block_size, stream_length, test_uncompiled=False, print_data=False):
 		print("FAPKC encryption / decryption test")
-		print(" algebra:", Ring, ", data block size:", block_size, ", memory block size:", memblock_size, ", stream length:", length)
+		print(" algebra:", Ring, ", data block size =", block_size, ", stream length =", stream_length)
 		
 		Automaton = automaton_factory(Ring)
 		ConstVector = Automaton.base_const_vector
 		
-		def automaton_input():
-			for i in range(length):
-				yield ConstVector.random(block_size)
 		
-		for i in range(5):
-			print(" round", i)
-			mixer, unmixer = Automaton.linear_nodelay_wifa_pair(block_size=block_size, memory_size=i)
+		for memory_size in range(1, 33):
+			print()
+			print(" memory_size =", memory_size)
+			text = [ConstVector.random(block_size) for i in range(stream_length)]
+			print("  generating FAPKC0 key pair")
+			start_time = time()
+			encrypt, decrypt = Automaton.fapkc0(block_size=block_size, memory_size=memory_size)
+			print("   time:", int(time() - start_time))
 			
-			input1, input2 = tee(automaton_input())
-			for a, b in zip(input1, unmixer(mixer(input2))):
-				assert a == b
+			if test_uncompiled:
+				print("  encryption/decryption test")
+				print("  encrypt... length =", stream_length)
+				start_time = time()
+				cipher_1 = list(encrypt(text))
+				print("   time:", int(time() - start_time))
+				if print_data:
+					print(''.join(['{:02x}'.format(int(_x)) for _x in cipher_1]))
+				
+				print("  decrypt... length =", stream_length)
+				start_time = time()
+				text_1 = list(decrypt(cipher_1))
+				print("   time:", int(time() - start_time))
+				if print_data:
+					print(''.join(['  '] * memory_size + ['{:02x}'.format(int(_x)) for _x in text]))
+					print(''.join(['{:02x}'.format(int(_x)) for _x in text_1]))
+				
+				assert text_1[memory_size:] == text[:-memory_size]
+			
+			compiler = Compiler()
+			with parallel(0):
+				print("  compiling encrypt automaton")
+				start_time = time()
+				encrypt.compile('encrypt', compiler)
+				print("   time:", int(time() - start_time))
+				print("  compiling decrypt automaton")
+				start_time = time()
+				decrypt.compile('decrypt', compiler)
+				print("   time:", int(time() - start_time))
+			print("  code generation")
+			code = compiler.compile()		
+			encrypt = encrypt.wrap_compiled('encrypt', code)
+			decrypt = decrypt.wrap_compiled('decrypt', code)
+			print("   time:", int(time() - start_time))
+			
+			print("  testing compiled automata")
+			with code:
+				print("  encrypt... length =", stream_length)
+				start_time = time()
+				cipher_2 = list(encrypt(text))
+				print("   time:", int(time() - start_time))
+				if print_data:
+					print(''.join(['{:02x}'.format(int(_x)) for _x in cipher_2]))
+				
+				print("  decrypt... length =", stream_length)
+				start_time = time()
+				text_2 = list(decrypt(cipher_2))
+				print("   time:", int(time() - start_time))
+				if print_data:
+					print(''.join(['  '] * memory_size + ['{:02x}'.format(int(_x)) for _x in text]))
+					print(''.join(['{:02x}'.format(int(_x)) for _x in text_2]))
+
 	
 	def test_homomorphic_encryption(Ring, block_size, memblock_size, length):
 		print("Gonzalez-Llamas homomorphic encryption test")
@@ -827,10 +895,12 @@ if __debug__:
 				yield ConstVector.random(block_size)
 		
 		for i in range(5):
+			print()
 			print(" round", i)
 			print("  generating automata...")
-			memory_size = 4
-			mixer, unmixer = Automaton.linear_nodelay_wifa_pair(block_size=block_size, memory_size=memory_size)
+			memory_size = i + 1
+			#mixer, unmixer = Automaton.linear_nodelay_wifa_pair(block_size=block_size, memory_size=memory_size)
+			mixer, unmixer = Automaton.fapkc0(block_size=block_size, memory_size=memory_size)
 			plain_automaton = Automaton(Vector.random(dimension=block_size, variables=variables, order=3), Vector.random(dimension=memblock_size, variables=variables, order=3))
 			
 			print("  composing automata...")
@@ -853,6 +923,7 @@ if __debug__:
 			print(f"   homomorphic: {homo_automaton.output_transition.circuit_size()} {homo_automaton.state_transition.circuit_size()} {homo_automaton.output_transition.dimension} {homo_automaton.state_transition.dimension}")
 			homo_automaton.optimize()
 			print(f"                {homo_automaton.output_transition.circuit_size()} {homo_automaton.state_transition.circuit_size()}")
+			print(f"                {[_circuit.circuit_size() for _circuit in homo_automaton.output_transition]} {[_circuit.circuit_size() for _circuit in homo_automaton.state_transition]}")
 			print("   time:", int(time() - start_time))
 			
 			print("  compiling automata...")
@@ -884,8 +955,8 @@ if __debug__:
 			input1, input2 = tee(automaton_input())
 			with code:
 				for n, (a, b) in enumerate(zip(plain_automaton(input1), unmixer(homo_automaton(mixer(input2))))):
-					print(n, a, b)
-					assert a == b
+					print(n, '{:02x}'.format(int(a)), '{:02x}'.format(int(b)))
+					#assert a == b
 			print("   time:", int(time() - start_time))
 	
 	def automaton_test_suite(verbose=False):
@@ -1046,6 +1117,13 @@ if __debug__:
 
 
 if __name__ == '__main__':
+	with parallel():
+		test_fapkc_encryption(BooleanRing.get_algebra(), 8, 1024)
+
+
+quit()
+
+if __name__ == '__main__':
 	import pycallgraph
 	import pycallgraph.output.graphviz
 	profiler = pycallgraph.PyCallGraph(output=pycallgraph.output.graphviz.GraphvizOutput(output_file='automaton.png'))
@@ -1055,6 +1133,7 @@ if __name__ == '__main__':
 	Matrix = Automaton.base_const_matrix
 	Polynomial = Automaton.base_polynomial
 	
+	'''
 	#a = Matrix.random(64, 64)
 	#b = Matrix.random(64, 64)
 	print(__debug__)
@@ -1072,14 +1151,21 @@ if __name__ == '__main__':
 	#m = Matrix.unit(16)
 	#n = m[...]
 	
-	block_size = 4
+	block_size = 8
 	memory_size = 2
 	encrypt, decrypt = Automaton.fapkc0(block_size=block_size, memory_size=memory_size)
-	encrypt.optimize()
+	print("encrypt automaton size:", encrypt.output_transition.circuit_size(), encrypt.state_transition.circuit_size())
+	with parallel():
+		encrypt.optimize()
+	print("encrypt automaton size:", encrypt.output_transition.circuit_size(), encrypt.state_transition.circuit_size())
 	profiler.start()
+	print("mixing states")
 	encrypt.mix_states()
-	#encrypt.optimize()
 	profiler.done()
+	#print("encrypt automaton size:", encrypt.output_transition.circuit_size(), encrypt.state_transition.circuit_size())
+	#with parallel():
+	#	encrypt.optimize()
+	#print("encrypt automaton size:", encrypt.output_transition.circuit_size(), encrypt.state_transition.circuit_size())
 	quit()
 	
 	
@@ -1093,28 +1179,32 @@ if __name__ == '__main__':
 	#print(a)
 	#print(b)
 	#quit()
+	'''
 	
-	memory_size = 2
-	block_size = 2
+	memory_size = 4
+	block_size = 8
 	
-	text = [Vector.random(block_size) for _i in range(32)]
+	text = [Vector.random(block_size) for _i in range(64)]
 	
+	print("generating FAPKC0 key pair", block_size, memory_size)
 	encrypt, decrypt = Automaton.fapkc0(block_size=block_size, memory_size=memory_size)
 	print()
 	print("encrypt automaton size", encrypt.output_transition.circuit_size(), encrypt.state_transition.circuit_size())
 	print("encryption automaton component sizes:", [_c.circuit_size() for _c in encrypt.output_transition], [_c.circuit_size() for _c in encrypt.state_transition])
 	print("decrypt automaton size", decrypt.output_transition.circuit_size(), decrypt.state_transition.circuit_size())
 	print("decryption automaton component sizes:", [_c.circuit_size() for _c in decrypt.output_transition], [_c.circuit_size() for _c in decrypt.state_transition])
-	print(encrypt.output_transition)
-	print(encrypt.state_transition)
-	print(decrypt.output_transition)
-	print(decrypt.state_transition)
+	#print(encrypt.output_transition)
+	#print(encrypt.state_transition)
+	#print(decrypt.output_transition)
+	#print(decrypt.state_transition)
 	print("encryption/decryption test")
 	encrypted1 = list(encrypt(text))
 	decrypted1 = list(decrypt(encrypted1))
-	print(f"{[int(_x) for _x in decrypted1]}, {[int(_x) for _x in text]}")
+	print(''.join(['  '] * memory_size + ['{:02x}'.format(int(_x)) for _x in text]))
+	print(''.join(['{:02x}'.format(int(_x)) for _x in decrypted1]))
 	assert decrypted1[memory_size:] == text[:-memory_size]
 	
+	'''
 	print()
 	print("optimization pass...")
 	encrypt.optimize()
@@ -1123,44 +1213,73 @@ if __name__ == '__main__':
 	print("encryption automaton component sizes:", [_c.circuit_size() for _c in encrypt.output_transition], [_c.circuit_size() for _c in encrypt.state_transition])
 	print("decrypt automaton size", decrypt.output_transition.circuit_size(), decrypt.state_transition.circuit_size())
 	print("decryption automaton component sizes:", [_c.circuit_size() for _c in decrypt.output_transition], [_c.circuit_size() for _c in decrypt.state_transition])
-	print(encrypt.output_transition)
-	print(encrypt.state_transition)
-	print(decrypt.output_transition)
-	print(decrypt.state_transition)
+	#print(encrypt.output_transition)
+	#print(encrypt.state_transition)
+	#print(decrypt.output_transition)
+	#print(decrypt.state_transition)
 	print("encryption/decryption test")
 	encrypted2 = list(encrypt(text))
 	decrypted2 = list(decrypt(encrypted2))
-	print(f"{[int(_x) for _x in decrypted2]}, {[int(_x) for _x in text]}")
+	print(f"{['{:02x}'.format(_x) for _x in decrypted2]}, {['{:02x}'.format(_x) for _x in text]}")
 	assert decrypted2[memory_size:] == text[:-memory_size]
 	assert encrypted2 == encrypted1
+	'''
 	
 	print()
 	print("obfuscating states...")
-	encrypt.mix_states()
-	decrypt.mix_states()
+	with parallel():
+		encrypt.mix_states()
+		decrypt.mix_states()
 	print("encrypt automaton size", encrypt.output_transition.circuit_size(), encrypt.state_transition.circuit_size())
 	print("encryption automaton component sizes:", [_c.circuit_size() for _c in encrypt.output_transition], [_c.circuit_size() for _c in encrypt.state_transition])
 	print("decrypt automaton size", decrypt.output_transition.circuit_size(), decrypt.state_transition.circuit_size())
 	print("decryption automaton component sizes:", [_c.circuit_size() for _c in decrypt.output_transition], [_c.circuit_size() for _c in decrypt.state_transition])
-	print("encryption/decryption test")
-	encrypted3 = list(encrypt(text))
-	decrypted3 = list(decrypt(encrypted3))
-	assert decrypted3[memory_size:] == text[:-memory_size]
-	assert encrypted3 == encrypted1
+	
+	#compiler = Compiler()
+	#with parallel(0):
+	#	print("compiling encrypt automaton")
+	#	encrypt.compile('encrypt', compiler)
+	#	print("compiling decrypt automaton")
+	#	decrypt.compile('decrypt', compiler)
+	#code = compiler.compile()		
+	#encrypt_c = encrypt.wrap_compiled('encrypt', code)
+	#decrypt_c = decrypt.wrap_compiled('decrypt', code)
+	
+	#print("encryption/decryption test")
+	#encrypted3 = list(encrypt_c([int(_x) for _x in text]))
+	#decrypted3 = list(decrypt_c(encrypted3))
+	#print(''.join(['{:02x}'.format(_x) for _x in decrypted3]))
+	#print(''.join(['  '] * memory_size + ['{:02x}'.format(int(_x)) for _x in text]))
+	#assert decrypted3[memory_size:] == text[:-memory_size]
+	#assert encrypted3 == encrypted1
 	
 	print()
 	print("optimization pass...")
-	encrypt.optimize()
-	decrypt.optimize()
+	with parallel():
+		encrypt.optimize()
+		decrypt.optimize()
 	print("encrypt automaton size", encrypt.output_transition.circuit_size(), encrypt.state_transition.circuit_size())
 	print("encryption automaton component sizes:", [_c.circuit_size() for _c in encrypt.output_transition], [_c.circuit_size() for _c in encrypt.state_transition])
 	print("decrypt automaton size", decrypt.output_transition.circuit_size(), decrypt.state_transition.circuit_size())
 	print("decryption automaton component sizes:", [_c.circuit_size() for _c in decrypt.output_transition], [_c.circuit_size() for _c in decrypt.state_transition])
-	print(encrypt.output_transition)
-	print(decrypt.output_transition)
+	#print(encrypt.output_transition)
+	#print(decrypt.output_transition)
+	
+	compiler = Compiler()
+	with parallel(0):
+		print("compiling encrypt automaton")
+		encrypt.compile('encrypt', compiler)
+		print("compiling decrypt automaton")
+		decrypt.compile('decrypt', compiler)
+	code = compiler.compile()		
+	encrypt_c = encrypt.wrap_compiled('encrypt', code)
+	decrypt_c = decrypt.wrap_compiled('decrypt', code)
+	
 	print("encryption/decryption test")
-	encrypted4 = list(encrypt(text))
-	decrypted4 = list(decrypt(encrypted4))
+	encrypted4 = list(encrypt_c(text))
+	decrypted4 = list(decrypt_c(encrypted4))
+	print(''.join(['  '] * memory_size + ['{:02x}'.format(int(_x)) for _x in text]))
+	print(''.join(['{:02x}'.format(int(_x)) for _x in decrypted4]))
 	assert decrypted4[memory_size:] == text[:-memory_size]
 	assert encrypted4 == encrypted1
 	

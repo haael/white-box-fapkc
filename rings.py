@@ -335,19 +335,15 @@ class BooleanRing(ModularRing):
 	def __init__(self, value, *args, **kwargs):
 		if self.immutable: return # don't redo initialization when `BooleanRing.yes` or `BooleanRing.no` has been returned from `__new__`
 		
-		#print("BooleanRing", value)
-		
 		if 'size' in kwargs:
 			assert kwargs['size'] == 2
 			del kwargs['size']
 		
-		#print("BooleanRing", value)
 		try:
 			value = bool(value % 2)
 		except TypeError:
 			value = value % 2
 		
-		#print(value)
 		super().__init__(value, *args, size=2, **kwargs)
 	
 	@classmethod

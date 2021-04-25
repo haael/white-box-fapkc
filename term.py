@@ -6,7 +6,7 @@ Optimized transformation algorithms on generic terms.
 """
 
 
-__all__ = 'Identical', 'Term'
+__all__ = 'Identical', 'Term', 'cached'
 
 
 from collections import Counter, defaultdict
@@ -42,28 +42,31 @@ class Identical:
 		
 		return all((self.__class__(_a) == self.__class__(_b)) for (_a, _b) in zip(self.term.subterms(), other.term.subterms()))
 	
-	def linearize(self):
+	def shallow_hash(self, depth):
 		if self.term.is_const():
-			yield 203985
-			yield self.term.const_value()
+			return hash(('const', self.term.const_value()))
 		elif self.term.is_var():
-			yield 897458
-			yield self.term.var_name()
+			return hash(('var', self.term.var_name()))
+		
+		if depth <= 0:
+			return hash((self.term.is_add(), self.term.is_sub(), self.term.is_mul(), self.term.is_neg(), len(self.term.subterms())))
 		else:
-			yield 782323
-			yield hash((self.term.is_add(), self.term.is_sub(), self.term.is_mul(), self.term.is_neg()))
-			n = 384753
-			for subterm in self.term.subterms():
-				yield n
-				n += 1
-				yield from self.__class__(subterm).linearize()
+			return hash((self.term.is_add(), self.term.is_sub(), self.term.is_mul(), self.term.is_neg()) + tuple(Identical(_subterm).shallow_hash(depth - _n - 1) for (_n, _subterm) in enumerate(self.term.subterms())))
 	
 	def __hash__(self):
 		if self.hash_cache != None:
 			return self.hash_cache
 		
-		self.hash_cache = hash(tuple(_x for _x in self.linearize()))
-		return self.hash_cache
+		try:
+			return self.term.identical_hash_cache
+		except AttributeError:
+			pass
+		
+		result = self.shallow_hash(4) # optimization parameter
+		
+		self.term.identical_hash_cache = result
+		self.hash_cache = result
+		return result
 	
 	def __str__(self):
 		if self.str_cache != None:
@@ -164,6 +167,38 @@ def sorted_and_unique(old_gen):
 				yield monomial
 	
 	return new_gen
+
+
+'''
+def cached(old_method):
+	name = old_method.__qualname__
+	
+	def new_method(self):
+		try:
+			return self.__class__.cache[name][Identical(self)]
+		except KeyError:
+			result = old_method(self)
+			self.__class__.cache[name][Identical(self)] = result
+			return result
+	
+	new_method.__qualname__ = name
+	return new_method
+'''
+
+
+def cached(old_method):
+	name = old_method.__name__
+	
+	def new_method(self):
+		try:
+			return getattr(self, 'cached_' + name)
+		except AttributeError:
+			result = old_method(self)
+			setattr(self, 'cached_' + name, result)
+			return result
+	
+	new_method.__name__ = name
+	return new_method
 
 
 class Term:
@@ -295,9 +330,9 @@ class Term:
 		elif not frozenset(str(_v) for _v in self.variables()) & frozenset(substitution.keys()):
 			return self
 		elif self.is_add():
-			return self.algebra.sum([_subterm(**substitution) for _subterm in self.subterms()])
+			return self.algebra.sum(_subterm(**substitution) for _subterm in self.subterms())
 		elif self.is_mul():
-			return self.algebra.product([_subterm(**substitution) for _subterm in self.subterms()])
+			return self.algebra.product(_subterm(**substitution) for _subterm in self.subterms())
 		elif self.is_sub():
 			return self.subterms()[0](**substitution) - self.subterms()[1](**substitution)
 		elif self.is_neg():
@@ -355,6 +390,7 @@ class Term:
 		else:
 			raise RuntimeError
 	
+	@cached
 	def circuit_size(self):
 		if self.is_const():
 			return 0
@@ -552,10 +588,12 @@ class Term:
 	def fixed_point(self, transform):
 		term1 = self
 		term2 = self.algebra.zero()
-		while not Identical(term1) == Identical(term2):
+		term3 = self.algebra.zero()
+		while not (Identical(term1) == Identical(term2) or Identical(term1) == Identical(term3)):
+			term3 = term2
 			term2 = term1
 			term1 = transform(term1)
-		return term2
+		return term1
 	
 	def traverse_before(self, transform):
 		"Apply the transformation on all subterms (recursively) and then on the resulting term."
@@ -944,36 +982,86 @@ class Term:
 			else:
 				return h.if_smaller(lambda g: g.fixed_point(self.__class__.flatten).additive_form().extract().traverse_before(self.__class__.evaluate_constants))
 		
+		#s = self.circuit_size()
+		#hs = hash(Identical(self))
+		#print("  optimize", hex(hs), s)
 		def step(h):
 			h = h.traverse_before(self.__class__.evaluate_constants)
 			h = h.traverse_before(self.__class__.order)
 			h = h.traverse_after(self.__class__.evaluate_repetitions)
 			h = h.traverse_after(extract)
 			h = h.traverse_before(self.__class__.flatten)
+			#print("  optimize", hex(hs), s, '...', h.circuit_size())
 			return h
 		
-		return self.fixed_point(step)
+		r = self.fixed_point(step)
+		#print("  optimize", hex(hs), s, '->', r.circuit_size())
+		return r
 	
 	def canonical(self):
-		return self.algebra.sum(self.monomials()).flatten()
+		try:
+			return self.canonical_cache
+		except AttributeError:
+			pass
+		
+		result = self.algebra.sum(self.monomials()).flatten()
+		self.canonical_cache = result
+		return result
 	
 	def __eq__(self, other):
+		#if not (self.is_const() or self.is_var()):
+		#	raise RuntimeError
+		
+		if self is other:
+			return True
+		
 		if isinstance(other, Identical):
 			raise ValueError
 		
+		try:
+			if self.hash_cache != other.hash_cache:
+				return False
+		except AttributeError:
+			pass
+		
+		try:
+			if self.identical_hash_cache != other.identical_hash_cache:
+				return False
+		except AttributeError:
+			pass
+		
 		if isinstance(other, Term):
+			if Identical(self) == Identical(other):
+				return True
 			return Identical(other.canonical()) == Identical(self.canonical())
 		else:
+			if Identical(self) == Identical(self.algebra.const(other)):
+				return True
 			return Identical(self.algebra.const(other).canonical()) == Identical(self.canonical())
 		
 		return NotImplemented
 	
 	def __hash__(self):
+		if self.is_const():
+			return hash(self.const_value())
+		elif self.is_var():
+			return hash(self.var_name())
+		
+		#raise RuntimeError
+		
+		try:
+			return self.hash_cache
+		except AttributeError:
+			pass
+		
 		c = self.canonical()
 		if c.is_const():
-			return hash(c.const_value())
+			result = hash(c.const_value())
 		else:
-			return hash(Identical(c))
+			result = hash(Identical(c))
+		
+		self.hash_cache = result
+		return result
 
 
 if __name__ == '__main__' and __debug__:

@@ -39,18 +39,20 @@ class Vector(AlgebraicStructure):
 				size = base_ring.size
 			self.value = list(base_ring((init // size**_n) % size) for _n in range(dimension))
 		except (TypeError, AttributeError):
-			if base_ring == None:
-				self.value = list(init) # TODO: base_ring
-				try:
-					base_ring = self.value[0].algebra
-				except IndexError:
-					raise ValueError("For vectors of 0 dimension `base_ring` is mandatory.")
+			if isinstance(init, list):
+				self.value = init
 			else:
-				self.value = [base_ring(_i) for _i in init]
+				self.value = list(init)
+		
+		if base_ring == None:
+			try:
+				base_ring = self.value[0].algebra
+			except IndexError:
+				raise ValueError("For vectors of 0 dimension `base_ring` is mandatory.")
 		
 		assert len(self) == dimension if (dimension != None) else True
-		assert all(self[_key] == _value for (_key, _value) in zip(self.keys(), self.values()))		
-		if not all(_value.algebra == base_ring for _value in self):
+		assert all(self[_key] == _value for (_key, _value) in zip(self.keys(), self.values()))
+		if __debug__ and not all(_value.algebra == base_ring for _value in self):
 			raise ValueError("All components of the vector {} must be from the same ring {}.".format([str(_v) for _v in self], base_ring))
 		
 		AlgebraicStructure.__init__(self, base_ring=base_ring)
@@ -376,50 +378,33 @@ class Matrix(AlgebraicStructure):
 					self.value = [base_ring(_element) for _element in init.value]
 			except AttributeError:
 				pass
-			#print("00 matrix initialized", base_ring)
 		
 		if self.value is None:
 			if init is None:
 				if len(self) and (base_ring == None):
 					base_ring = BooleanRing.get_algebra()
 				self.value = [base_ring.zero()] * len(self)
-			#print("0 matrix initialized", base_ring)
 		
 		if self.value is None:
 			try:
-				if base_ring is None:
-					try:
-						base_ring = init[0, 0].algebra
-					except IndexError:
-						raise ValueError("For matrix of dimension 0, 0 `base_ring` is mandatory.")
-				
-				self.value = [base_ring(init[_i, _j]) for (_i, _j) in self.keys()]
+				self.value = [init[_i, _j] for (_i, _j) in self.keys()]
 			except TypeError:
 				pass
-			#print("1 matrix initialized", base_ring)
 		
 		if self.value is None:
 			try:
-				if base_ring is None:
-					#print("base_ring is None")
-					try:
-						base_ring = init(0, 0).algebra
-					except IndexError:
-						raise ValueError("For matrix of dimension 0, 0 `base_ring` is mandatory.")
-				
-				self.value = [base_ring(init(_i, _j)) for (_i, _j) in self.keys()]
+				self.value = [init(_i, _j) for (_i, _j) in self.keys()]
 			except TypeError:
-				#print(e)
-				pass # FIXME: raise?
-			#print("2 matrix initialized", base_ring)
-		
-		if self.value is None:
-			try:
-				self.value = list(init) # TODO: base_ring
-			except TypeError:
-				#raise RuntimeError
 				pass
-			#print("3 matrix initialized", base_ring)
+		
+		if self.value is None:
+			try:
+				if isinstance(init, list):
+					self.value = init
+				else:
+					self.value = list(init)
+			except TypeError:
+				pass
 		
 		if self.value is None:
 			self.value = [init] * len(self)
@@ -428,18 +413,14 @@ class Matrix(AlgebraicStructure):
 		assert all(self[_key] == _value for (_key, _value) in zip(self.keys(), self.values()))
 		assert len(self.value) == self.column_dimension * self.row_dimension
 		
-		if base_ring is None:
+		if base_ring == None:
 			try:
 				base_ring = self[0, 0].algebra
 			except IndexError:
 				raise ValueError("For matrix of dimension 0, 0 `base_ring` is mandatory.")
 		
-		#print(self.value)
 		if not all(_value.algebra == base_ring for _value in self):
 			raise ValueError(f"All components of the matrix must be from the same ring: {base_ring}")
-		
-		#print(base_ring)
-		#print([_value.algebra for _value in self])
 		
 		self.item_cache = dict()
 		
@@ -521,8 +502,24 @@ class Matrix(AlgebraicStructure):
 		try:
 			if i_j != Ellipsis:
 				return self.item_cache[i_j]
-		except (AttributeError, KeyError, TypeError):
+		except TypeError:
+			'''
+			c_i_j = []
+			for n in (0, 1):
+				try:
+					c_i_j.append((i_j[n].start, i_j[n].stop, i_j[n].step))
+				except AttributeError:
+					c_i_j.append(i_j[n])
+			c_i_j = tuple(c_i_j)
+			try:
+				return self.item_cache[c_i_j]
+			except KeyError:
+				pass
+			'''
 			pass
+			c_i_j = i_j
+		except (AttributeError, KeyError):
+			c_i_j = i_j
 		
 		def getitem(direction, indices_i, indices_j):
 			if direction == self.__direction.scalar:
@@ -549,13 +546,13 @@ class Matrix(AlgebraicStructure):
 		if __debug__:
 			try:
 				if i_j != Ellipsis:
-					assert self.item_cache[i_j] == result, f"{repr(i_j)}, {id(self)}"
-			except (AttributeError, KeyError, TypeError) as e:
+					assert self.item_cache[c_i_j] == result, f"{repr(c_i_j)}, {id(self)}"
+			except (AttributeError, KeyError, TypeError):
 				pass
 		
 		try:
 			if i_j != Ellipsis:
-				self.item_cache[i_j] = result
+				self.item_cache[c_i_j] = result
 		except (AttributeError, TypeError):
 			pass
 		
@@ -1012,10 +1009,11 @@ class Matrix(AlgebraicStructure):
 			else:
 				algebra = algebra1
 			
-			#middle_dimension = self.row_dimension
-			#zero = algebra.base_ring.zero()
-			#return algebra((lambda _i, _j: sum((self[_i, _k] * other[_k, _j] for _k in range(middle_dimension)), zero)), column_dimension=self.column_dimension, row_dimension=other.row_dimension)
-			return algebra((lambda _i, _j: self[_i, :] @ other[:, _j]), column_dimension=self.column_dimension, row_dimension=other.row_dimension)
+			#print("__matmul__", id(self), id(other))
+			self_columns = [self[_i, :] for _i in range(self.column_dimension)]
+			other_rows = [other[:, _j] for _j in range(self.row_dimension)]
+			return algebra((lambda _i, _j: self_columns[_i] @ other_rows[_j]), column_dimension=self.column_dimension, row_dimension=other.row_dimension)
+			#return algebra((lambda _i, _j: self[_i, :] @ other[:, _j]), column_dimension=self.column_dimension, row_dimension=other.row_dimension)
 		except AttributeError:
 			if self.row_dimension != other.dimension:
 				raise ValueError("Trying to multiply a matrix through a vector of incompatible dimension.")

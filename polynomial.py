@@ -15,7 +15,7 @@ from random import choice
 from utils import Immutable, random_sample, parallel_map, parallel_starmap, canonical, optimized, evaluate, substitute
 from algebra import Algebra, AlgebraicStructure
 from rings import BooleanRing
-from term import Term, Identical
+from term import Term, Identical, cached
 
 
 __all__ = 'Polynomial',
@@ -53,14 +53,19 @@ class Polynomial(Immutable, AlgebraicStructure, Term):
 				raise ValueError(f"Wrong operator: {repr(operator)}")
 			self.p_operator = operator
 			self.p_operands = operands
-
+		
+		self.mutable.add('hash_cache')
+		self.mutable.add('identical_hash_cache')
+		self.mutable.add('canonical_cache')
+		self.mutable.add('cached_algebra')
+		self.mutable.add('cached_circuit_size')
 		self.immutable = True
 		
 		assert self.algebra.algebra_name == 'Polynomial'
 		assert base_ring == None or self.algebra.base_ring == base_ring
 		
-		# This is a very expensive check.
-		assert self.is_valid_polynomial(), repr(self)
+		## This is a very expensive check.
+		#assert self.is_valid_polynomial(), repr(self)
 	
 	def __repr__(self):
 		if self.is_const():
@@ -110,6 +115,7 @@ class Polynomial(Immutable, AlgebraicStructure, Term):
 			raise ValueError
 	
 	@property
+	@cached
 	def algebra(self):
 		if self.is_var():
 			base_ring = self.p_operands[1]
@@ -658,7 +664,6 @@ if __debug__:
 			except ArithmeticError:
 				assert yes % a
 			
-			# FIXME: fails
 			try:
 				assert (a**-1 == yes // a) or (yes % a)
 			except ZeroDivisionError:
@@ -666,7 +671,6 @@ if __debug__:
 			except ArithmeticError:
 				assert yes % a
 			
-			# FIXME: fails
 			try:
 				assert (a * a**-1 == yes) or (yes % a)
 			except ZeroDivisionError:
