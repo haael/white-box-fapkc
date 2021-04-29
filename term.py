@@ -982,20 +982,23 @@ class Term:
 			else:
 				return h.if_smaller(lambda g: g.fixed_point(self.__class__.flatten).additive_form().extract().traverse_before(self.__class__.evaluate_constants))
 		
-		#s = self.circuit_size()
-		#hs = hash(Identical(self))
-		#print("  optimize", hex(hs), s)
+		print_msg = False
+		s = self.circuit_size()
+		if s > 100000:
+			print_msg = True
+		hs = hash(Identical(self))
+		if print_msg: print("  optimize", hex(hs), s)
 		def step(h):
 			h = h.traverse_before(self.__class__.evaluate_constants)
 			h = h.traverse_before(self.__class__.order)
 			h = h.traverse_after(self.__class__.evaluate_repetitions)
 			h = h.traverse_after(extract)
 			h = h.traverse_before(self.__class__.flatten)
-			#print("  optimize", hex(hs), s, '...', h.circuit_size())
+			if print_msg: print("  optimize", hex(hs), s, '...', h.circuit_size())
 			return h
 		
 		r = self.fixed_point(step)
-		#print("  optimize", hex(hs), s, '->', r.circuit_size())
+		if print_msg: print("  optimize", hex(hs), s, '->', r.circuit_size())
 		return r
 	
 	def canonical(self):

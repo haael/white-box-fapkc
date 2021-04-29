@@ -205,10 +205,10 @@ def automaton_factory(base_ring):
 			This function is slow. While debugging, this step might be omitted.
 			"""
 			
-			#print("generating random matrix", self.memory_width)
-			#mix, unmix = base_const_matrix.random_inverse_pair(self.memory_width)
-			#mix = base_matrix(mix)
-			#unmix = base_matrix(unmix)
+			print("generating random permutation", self.memory_width)
+			mix, unmix = base_const_matrix.random_permutation_pair(self.memory_width)
+			mix = base_matrix(mix)
+			unmix = base_matrix(unmix)
 			
 			print("generating random nonlinear transformation")
 			mix_nonlinear, unmix_nonlinear = self.random_nonlinear_equation_pair(self.memory_width)
@@ -216,8 +216,8 @@ def automaton_factory(base_ring):
 			
 			print("calculating unmix substitution")
 			print(" matrix step")
-			#unmixed = unmix @ base_vector(base_polynomial.var(f'c_{_i}') for _i in range(self.memory_width))
-			unmixed = base_vector(base_polynomial.var(f'c_{_i}') for _i in range(self.memory_width))
+			unmixed = unmix @ base_vector(base_polynomial.var(f'c_{_i}') for _i in range(self.memory_width))
+			#unmixed = base_vector(base_polynomial.var(f'c_{_i}') for _i in range(self.memory_width))
 			print(" substitution step")
 			unmixed = unmix_nonlinear(**{f'a_{_i}' : unmixed[_i] for _i in range(self.memory_width)})
 			print(" before optimization:", unmixed.circuit_size(), [_c.circuit_size() for _c in unmixed])
@@ -235,8 +235,8 @@ def automaton_factory(base_ring):
 			print(" step1", bvt.circuit_size(), [_c.circuit_size() for _c in bvt])
 			bvt = bvt.optimized()
 			print(" step2", bvt.circuit_size(), [_c.circuit_size() for _c in bvt])
-			#self.state_transition = mix @ mix_nonlinear(**{f'b_{_i}' : bvt[_i] for _i in range(self.memory_width)})
-			self.state_transition = mix_nonlinear(**{f'b_{_i}' : bvt[_i] for _i in range(self.memory_width)})
+			self.state_transition = mix @ mix_nonlinear(**{f'b_{_i}' : bvt[_i] for _i in range(self.memory_width)})
+			#self.state_transition = mix_nonlinear(**{f'b_{_i}' : bvt[_i] for _i in range(self.memory_width)})
 			print(" result:", self.state_transition.circuit_size())
 			print("applying output transition")
 			print(" size:", self.output_transition.circuit_size())
@@ -894,20 +894,14 @@ if True or __debug__:
 			for i in range(length):
 				yield ConstVector.random(block_size)
 		
-		for i in range(5):
+		for i in range(1, 5):
 			print()
 			print(" round", i)
 			print("  generating automata...")
-			memory_size = i + 1
+			memory_size = i + 4
 			#mixer, unmixer = Automaton.linear_nodelay_wifa_pair(block_size=block_size, memory_size=memory_size)
 			mixer, unmixer = Automaton.fapkc0(block_size=block_size, memory_size=memory_size)
 			plain_automaton = Automaton(Vector.random(dimension=block_size, variables=variables, order=3), Vector.random(dimension=memblock_size, variables=variables, order=3))
-			
-			print("  composing automata...")
-			start_time = time()
-			homo_automaton = mixer @ plain_automaton @ unmixer
-			homo_automaton.mix_states()
-			print("   time:", int(time() - start_time))
 			
 			print("  optimizing automata...")
 			start_time = time()
@@ -920,7 +914,21 @@ if True or __debug__:
 			print(f"   plain: {plain_automaton.output_transition.circuit_size()} {plain_automaton.state_transition.circuit_size()} {plain_automaton.output_transition.dimension} {plain_automaton.state_transition.dimension}")
 			plain_automaton.optimize()
 			print(f"          {plain_automaton.output_transition.circuit_size()} {plain_automaton.state_transition.circuit_size()}")
+			print("   time:", int(time() - start_time))
+			
+			print("  composing automata...")
+			start_time = time()
+			homo_automaton = mixer @ plain_automaton @ unmixer
+			print("   time:", int(time() - start_time))
+			print("  mixing states")
+			start_time = time()
+			homo_automaton.mix_states()
+			print("   time:", int(time() - start_time))
+			
+			print("  optimizing automata...")
+			start_time = time()
 			print(f"   homomorphic: {homo_automaton.output_transition.circuit_size()} {homo_automaton.state_transition.circuit_size()} {homo_automaton.output_transition.dimension} {homo_automaton.state_transition.dimension}")
+			print(f"                {[_circuit.circuit_size() for _circuit in homo_automaton.output_transition]} {[_circuit.circuit_size() for _circuit in homo_automaton.state_transition]}")
 			homo_automaton.optimize()
 			print(f"                {homo_automaton.output_transition.circuit_size()} {homo_automaton.state_transition.circuit_size()}")
 			print(f"                {[_circuit.circuit_size() for _circuit in homo_automaton.output_transition]} {[_circuit.circuit_size() for _circuit in homo_automaton.state_transition]}")
@@ -954,7 +962,7 @@ if True or __debug__:
 			start_time = time()
 			input1, input2 = tee(automaton_input())
 			with code:
-				for n, (a, b) in enumerate(zip(plain_automaton(input1), unmixer(homo_automaton(mixer(input2))))):
+				for n, (a, b) in enumerate(zip(homo_automaton(input1), mixer(plain_automaton(unmixer(input2))))):
 					print(n, '{:02x}'.format(int(a)), '{:02x}'.format(int(b)))
 					#assert a == b
 			print("   time:", int(time() - start_time))
@@ -1118,7 +1126,8 @@ if True or __debug__:
 
 if __name__ == '__main__':
 	with parallel():
-		test_fapkc_encryption(BooleanRing.get_algebra(), 8, 1024)
+		#test_fapkc_encryption(BooleanRing.get_algebra(), 8, 64, print_data=True)
+		test_homomorphic_encryption(BooleanRing.get_algebra(), 8, 8, 64)
 
 
 quit()
