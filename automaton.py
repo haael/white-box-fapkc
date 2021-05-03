@@ -958,12 +958,14 @@ if True or __debug__:
 			print("   time:", int(time() - start_time))
 			
 			print("  encryption/decryption test...")
+			text = list(automaton_input())
 			start_time = time()
-			input1, input2 = tee(automaton_input())
 			with code:
-				for n, (a, b) in enumerate(zip(homo_automaton(input1), mixer(plain_automaton(unmixer(input2))))):
-					print(n, '{:02x}'.format(int(a)), '{:02x}'.format(int(b)))
-					#assert a == b
+				result1 = list(homo_automaton(text))
+				result2 = list(mixer(plain_automaton(unmixer(text))))
+			print("   actual:   ", ''.join(['{:02x}'.format(int(_ch)) for _ch in result1]))
+			print("   predicted:", ''.join(['{:02x}'.format(int(_ch)) for _ch in result2]))
+			assert result1 == result2
 			print("   time:", int(time() - start_time))
 	
 	def automaton_test_suite(verbose=False):
@@ -1126,7 +1128,7 @@ if True or __debug__:
 if __name__ == '__main__':
 	with parallel():
 		#test_fapkc_encryption(BooleanRing.get_algebra(), 8, 64, print_data=True)
-		test_homomorphic_encryption(BooleanRing.get_algebra(), 8, 8, 64)
+		test_homomorphic_encryption(BooleanRing.get_algebra(), 8, 8, 128)
 
 
 quit()

@@ -246,10 +246,19 @@ class Compiler:
 				current_builder = builder
 				
 				result = old_func(*[_argtype.to_symbolic_type()(_arg) for (_argtype, _arg) in zip(argtypes, jit_func.args)])
-				try:
-					builder.ret(result.jit_value)
-				except AttributeError:
+				
+				if result == None:
+					if rettype.bits != 0:
+						raise TypeError(f"The function returned no value despite declared as returning `{rettype}`.")
 					builder.ret_void()
+				elif hasattr(result, 'jit_value'):
+					if rettype.to_llvm_type(False) != result.jit_value.type:
+						raise TypeError(f"The function returned type `{result.jit_value.type}` incompatible from declared `{rettype}`.")
+					builder.ret(result.jit_value)
+				else:
+					if rettype.bits == 0:
+						raise TypeError(f"The function returned value `{result}` despite declared as returning void.")
+					builder.ret(rettype.to_llvm_type(False)(result))
 			
 			except NotImplementedError:
 				jit_func.blocks.remove(block)
@@ -348,6 +357,7 @@ class Integer:
 			return
 		
 		if bits == None:
+			assert hasattr(value, 'type') and hasattr(value.type, 'width')
 			self.jit_value = value
 		else:
 			self.jit_value = llvmlite.ir.IntType(bits)(value)
