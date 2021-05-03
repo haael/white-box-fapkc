@@ -650,7 +650,6 @@ def automaton_factory(base_ring):
 			
 			return fn	
 	
-	
 	Automaton.base_ring = base_ring
 	Automaton.base_const_vector = base_const_vector
 	Automaton.base_const_matrix = base_const_matrix

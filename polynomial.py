@@ -186,6 +186,12 @@ class Polynomial(Immutable, AlgebraicStructure, Term):
 		if variables == None:
 			variables = []
 		
+		if any(not hasattr(_var, 'is_var') for _var in variables):
+			variables = list(variables)
+			for n, v in enumerate(variables):
+				if not hasattr(v, 'is_var'):
+					variables[n] = algebra.var(v)
+		
 		ds = []
 		for n in range(order + 1):
 			for m in range(min(n, order - n) + 1): # TODO: factorial
@@ -478,29 +484,65 @@ class Polynomial(Immutable, AlgebraicStructure, Term):
 	def __int__(self):
 		return int(self.evaluate())
 	
-	def compile(self, name, compiler):
-		sorted_vars = sorted([str(_var) for _var in self.variables()])
+	def compile(self, name, compiler, variables=None):
+		from jit_types import Void, Bit, Byte, Short
+		
+		if variables == None:
+			variables = sorted([str(_var) for _var in frozenset(self.variables())])
+		
 		try:
 			bl = self.algebra.exponent
 		except AttributeError:
 			bl = (self.algebra.base_ring.size - 1).bit_length()
 		bits = (8 * ((bl - 1) // 8 + 1)) if bl > 1 else 8
 		
-		@compiler.function(name=name, bits=bits, arg_count=len(sorted_vars))
-		def evaluate_polynomial(*args):
-			result = self(**dict(zip(sorted_vars, [self.algebra.const(_arg) for _arg in args]))).evaluate()
+		if bits == 0:
+			Type = Void
+		elif bits == 1:
+			Type = Bit
+		elif bits < 8:
+			Type = Byte
+		else:
+			Type = Short
+		
+		@compiler.function(name=name)
+		def evaluate_polynomial(arg:Type[len(variables)]) -> Type:
+			result = self(**dict(zip(variables, [self.algebra.const(_arg) for _arg in arg]))).evaluate()
 			try:
 				return result.ring_value
 			except AttributeError:
 				return result.binary_field_value
+		
+		return evaluate_polynomial
 	
-	def wrap_compiled(self, name, code):
-		compiled = code.symbol[name]
-		sorted_vars = sorted([str(_var) for _var in self.variables()])
+	def wrap_compiled(self, name, code, variables=None):
+		from jit_types import Void, Bit, Byte, Short
+		
+		if variables == None:
+			variables = sorted([str(_var) for _var in frozenset(self.variables())])
+		
+		try:
+			bl = self.algebra.exponent
+		except AttributeError:
+			bl = (self.algebra.base_ring.size - 1).bit_length()
+		bits = (8 * ((bl - 1) // 8 + 1)) if bl > 1 else 8
+		
+		if bits == 0:
+			Type = Void
+		elif bits == 1:
+			Type = Bit
+		elif bits < 8:
+			Type = Byte
+		else:
+			Type = Short
+		
 		ring = self.algebra.base_ring
+		compiled = code.symbol[name]
+		len_variables = len(variables)
 		def wrapped(**kwargs):
-			return ring(compiled(*[int(kwargs[_v]) for _v in sorted_vars]))
+			return ring(compiled(Type[len_variables](*[int(kwargs[_v]) for _v in variables])))
 		wrapped.__name__ = name
+		
 		return wrapped
 	
 	__hash__ = Term.__hash__
@@ -721,8 +763,6 @@ if __debug__:
 			assert p.circuit_size() >= po.circuit_size()
 
 	def test_compilation(polynomial, compile_tables=False):
-		from pathlib import Path
-		from itertools import product
 		from jit_types import Compiler
 		
 		compiler = Compiler()
@@ -750,6 +790,19 @@ if __debug__:
 	def polynomial_test_suite(verbose=False):
 		if verbose: print("running test suite")
 		
+		ring = BooleanRing.get_algebra()
+		if verbose: print()
+		if verbose: print("test Polynomial(base_ring=BooleanRing())")
+		ring_polynomial = Polynomial.get_algebra(base_ring=ring)
+		if verbose: print(" ring test")
+		test_ring(ring_polynomial)
+		#if verbose: print(" polynomial test")
+		#test_polynomial(ring_polynomial)
+		#if verbose: print(" optimization test")
+		#test_optimization(ring_polynomial, verbose)
+		if verbose: print(" compilation test")
+		test_compilation(ring_polynomial)
+		
 		for i in chain(range(2, 16), (2**_i for _i in range(5, 9))):
 			ring = ModularRing.get_algebra(size=i)
 			if verbose: print()
@@ -763,19 +816,6 @@ if __debug__:
 			test_optimization(ring_polynomial, verbose)
 			if verbose: print(" compilation test")
 			test_compilation(ring_polynomial)
-		
-		ring = BooleanRing.get_algebra()
-		if verbose: print()
-		if verbose: print("test Polynomial(base_ring=BooleanRing())")
-		ring_polynomial = Polynomial.get_algebra(base_ring=ring)
-		if verbose: print(" ring test")
-		test_ring(ring_polynomial)
-		if verbose: print(" polynomial test")
-		test_polynomial(ring_polynomial)
-		if verbose: print(" optimization test")
-		test_optimization(ring_polynomial, verbose)
-		if verbose: print(" compilation test")
-		test_compilation(ring_polynomial)
 		
 		for i in (2,): #(3, 4, 5, 7, 8, 9, 11, 13, 16, 17, 18, 19, 23, 25, 32, 49, 64, 81, 121, 128, 256, 52, 1024):
 			field = GaloisField.get_algebra(size=i)

@@ -8,13 +8,104 @@ from llvmlite.ir._utils import DuplicatedNameError
 import ctypes
 
 
-__all__ = 'Compiler', 'Code', 'Function', 'Integer', 'Array'
+__all__ = 'Compiler', 'Code', 'Bitvector', 'Void', 'Bit', 'Byte', 'Short', 'Word', 'Long'
+
+
+
+class Value:
+	def __init__(self, type_, value):
+		self.type_ = type_
+		self.value = value
+	
+	@property
+	def _as_parameter_(self):
+		try:
+			return self.c_parameter
+		except AttributeError:
+			pass
+		
+		if self.type_.length == None:
+			result = self.type_.to_c_type()(*self.value)
+		else:
+			result = self.type_.to_c_type(False)(*self.value)
+		
+		self.c_parameter = result
+		return result
+	
+	def __len__(self):
+		return self.type_.length
+	
+	def __int__(self):
+		return int(self._as_parameter_)
+	
+	def __getitem__(self, index):
+		return self._as_parameter_[index]
+	
+	def to_llvm_constant(self):
+		assert self.type_.length == len(self.value) if self.type_.length != None else True
+		return llvmlite.ir.Constant(self.type_.to_llvm_type(False), self.value)
+
+
+class Bitvector:
+	def __init__(self, bits, length=None):
+		self.bits = bits
+		self.length = length
+	
+	def __getitem__(self, length):
+		return self.__class__(self.bits, length)
+	
+	def __call__(self, *value):
+		if self.length != None and len(value) > self.length:
+			raise ValueError("Array initializer too long.")
+		
+		if self.length != None and len(value) != self.length and value[-1] != Ellipsis:
+			raise ValueError("Array initializer too short.")
+		
+		if value[-1] == Ellipsis:
+			value = value[:-1]
+		
+		return Value(self, value)
+	
+	def __repr__(self):
+		return self.__class__.__name__ + '(' + str(self.bits) + ', ' + str(self.length) + ')'
+	
+	def to_symbolic_type(self):
+		if self.length != None:
+			return Array
+		elif self.bits:
+			return Integer
+		else:
+			return Null
+	
+	def to_llvm_type(self, pointers):
+		if self.length != None:
+			if pointers:
+				return llvmlite.ir.ArrayType(llvmlite.ir.IntType(self.bits), self.length).as_pointer()
+			else:
+				return llvmlite.ir.ArrayType(llvmlite.ir.IntType(self.bits), self.length)
+		elif self.bits:
+			return llvmlite.ir.IntType(self.bits)
+		else:
+			return llvmlite.ir.VoidType()
+	
+	def to_c_type(self, pointers):
+		return typeconv(self.to_llvm_type(pointers), pointers)
+
+
+Void = Bitvector(0)
+Bit = Bitvector(1)
+Byte = Bitvector(8)
+Short = Bitvector(16)
+Word = Bitvector(32)
+Long = Bitvector(64)
 
 
 compiler_initialized = False
 
 
 def initialize_compiler():
+	"Initialize the LLVM compiler."
+	
 	global compiler_initialized
 	llvmlite.binding.initialize()
 	llvmlite.binding.initialize_native_target()
@@ -26,22 +117,46 @@ def initialize_compiler():
 
 
 def finish_compiler():
+	"Finish the compiler."
+	
 	global compiler_initialized
 	compiler_initialized = False
 
 
-def typeconv(lltype):
-	if lltype == llvmlite.ir.IntType(1):
+def typeconv(lltype, pointers):
+	"Convert an LLVM type to C type. Only limited subset of types is supported."
+	
+	try:
+		if hasattr(lltype, 'pointee'):
+			return ctypes.c_void_p
+	except AttributeError:
+		pass
+	
+	if lltype == llvmlite.ir.VoidType():
+		return None
+	elif lltype == llvmlite.ir.IntType(1):
 		return ctypes.c_bool
 	elif lltype == llvmlite.ir.IntType(8):
 		return ctypes.c_ubyte
 	elif lltype == llvmlite.ir.IntType(16):
 		return ctypes.c_ushort
-	else:
-		raise ValueError(str(lltype))
+	
+	try:
+		if pointers:
+			if hasattr(lltype, 'element') and hasattr(lltype, 'count'):
+				return ctypes.c_void_p
+		else:
+			return typeconv(lltype.element, False) * lltype.count
+	except AttributeError:
+		pass
+	
+	raise ValueError(str(lltype))
+
 
 
 class Code:
+	"Compiled C code, from LLVM compiler. Compiled symbols are available under the attribute `symbol`. Symbols are guaranteed to be initialized only after entering the context."
+	
 	def __init__(self, modules):
 		if not compiler_initialized:
 			initialize_compiler()
@@ -69,89 +184,91 @@ class Code:
 				fname = function.name
 				ftype = function.function_type
 				faddr = self.engine.get_function_address(fname)
-				cfunc = ctypes.CFUNCTYPE(typeconv(ftype.return_type), *[typeconv(_arg) for _arg in ftype.args])(faddr)
+				cfunc = ctypes.CFUNCTYPE(typeconv(ftype.return_type, False), *[typeconv(_arg, True) for _arg in ftype.args])(faddr)
 				self.symbol[fname] = cfunc
+			
+			for glob in module.globals.values():
+				if glob.name in self.symbol: continue
+				gaddr = self.engine.get_global_value_address(glob.name)
+				self.symbol[glob.name] = typeconv(glob.type, True)(gaddr)
 	
 	def __enter__(self):
+		"Initalize certain C-level objects, such as global variables."
 		self.engine.run_static_constructors()
 	
 	def __exit__(self, *arg):
 		self.engine.run_static_destructors()
 
 
-class Array:
-	def __init__(self, array):
-		self.array = array
-	
-	def __getitem__(self, item):
-		builder = get_builder()
-		index = builder.zext(Integer(item).jit_value, llvmlite.ir.IntType(16))
-		return Integer(builder.load(builder.gep(self.array, [Integer(0).jit_value, index]))) # TODO: overflow
+
+
 
 
 class Compiler:
+	"The compiler, allowing compiling Python function to C and declaring C constants."
+	
 	def __init__(self, name=''):
 		self.module = llvmlite.ir.Module(name=name)
 		self.defined_functions = {}
+		self.defined_globals = {}
 	
-	def array(self, name, bits, elements):
-		itype = llvmlite.ir.IntType(bits)
-		value = llvmlite.ir.Constant.literal_array([itype(_el) for _el in elements])
-		variable = llvmlite.ir.GlobalVariable(self.module, value.type, name)
-		variable.initializer = value
+	def __setitem__(self, name, constant):
+		variable = llvmlite.ir.GlobalVariable(self.module, constant.type_.to_llvm_type(False), name)
+		variable.initializer = constant.to_llvm_constant()
 		variable.global_constant = True
-		return Array(variable)
+		self.defined_globals[name] = variable
 	
-	def function(self, bits, arg_count=None, name=None):
-		return lambda callback: self.declare_function(name, arg_count, bits, callback)
+	def __getitem__(self, name):
+		return Array(self.defined_globals[name])
 	
-	def declare_function(self, name, arg_count, bits, callback=None):
-		try:
+	def function(self, name=None):
+		def decorator(old_func):
+			nonlocal name
 			if name == None:
-				name = callback.__name__
+				name = old_func.__name__
 			
-			if arg_count == None:
-				arg_count = callback.__code__.co_argcount
-		except AttributeError:
-			raise ValueError("If `arg_count` or `name` is undefined, then `callback` must be a valid Python function.")
-		
-		itype = llvmlite.ir.IntType(bits)
-		
-		func_type = llvmlite.ir.FunctionType(itype, (itype,) * arg_count)
-		
-		try:
-			func = llvmlite.ir.Function(self.module, func_type, name=name)
-			self.defined_functions[name] = func
-		except DuplicatedNameError:
-			func = self.defined_functions[name]
-		
-		if callback != None:
-			block = func.append_basic_block()
+			argtypes = [old_func.__annotations__[_arg] for _arg in old_func.__code__.co_varnames[:old_func.__code__.co_argcount]]
+			rettype = old_func.__annotations__['return']
+			functype = llvmlite.ir.FunctionType(rettype.to_llvm_type(False), [_argtype.to_llvm_type(True) for _argtype in argtypes])
+			
+			try:
+				jit_func = llvmlite.ir.Function(self.module, functype, name=name)
+				self.defined_functions[name] = jit_func
+			except DuplicatedNameError:
+				jit_func = self.defined_functions[name]
+			
+			block = jit_func.append_basic_block()
 			builder = llvmlite.ir.IRBuilder(block)
 			
 			global current_builder
 			try:
 				old_builder = current_builder
 				current_builder = builder
-				result = callback(*[Integer(_arg) for _arg in func.args])
-				if result == None:
-					builder.ret(llvmlite.ir.VoidType()())
-				else:
-					try:
-						builder.ret(result.jit_value)
-					except AttributeError:
-						builder.ret(llvmlite.ir.IntType(bits)(result))
+				
+				result = old_func(*[_argtype.to_symbolic_type()(_arg) for (_argtype, _arg) in zip(argtypes, jit_func.args)])
+				try:
+					builder.ret(result.jit_value)
+				except AttributeError:
+					builder.ret_void()
+			
+			except NotImplementedError:
+				jit_func.blocks.remove(block)
+			
 			finally:
 				current_builder = old_builder
+			
+			new_func = Function(jit_func, rettype, argtypes)
+			new_func.__name__ = name
+			return new_func
 		
-		fn_object = Function(func, arg_count)
-		fn_object.__name__ = name
-		return fn_object
+		return decorator
 	
 	def __str__(self):
+		"LLVM assembler representation of the code compiled so far."
 		return str(self.module)
 	
 	def compile(self):
+		"Compile the LLVM module to C code."
 		return Code([self.module])
 
 
@@ -162,390 +279,190 @@ def get_builder():
 
 
 class Function:
-	def __init__(self, func, arg_count):
-		self.func = func
-		self.arg_count = arg_count
+	"An LLVM function object to be called from other Python functions that are to be compiled. Calling this object will create a call in the code."
+	
+	def __init__(self, func, rettype, argtypes):
+		self.jit_func = func
+		self.rettype = rettype
+		self.argtypes = argtypes
 	
 	def __call__(self, *args):
-		if len(args) != self.arg_count:
-			raise TypeError
+		parms = []
+		for argtype, arg in zip(self.argtypes, args):
+			if argtype.length != None:
+				parms.append(arg.jit_array)
+			else:
+				parms.append(arg.jit_value)
+		result = get_builder().call(self.jit_func, parms)
+		return self.rettype.to_symbolic_type()(result)
+
+
+class Array:
+	"Wrapper around an LLVM array. Can be used in Python code like a list."
+	
+	def __init__(self, array, bits=None):
+		try:
+			self.jit_array = array.jit_array
+		except AttributeError:
+			pass
+		else:
+			return
+		
+		if bits == None:
+			self.jit_array = array
+		else:
+			self.jit_array = llvmlite.ir.ArrayType(llvmlite.ir.IntType(bits), array)
+	
+	def __getitem__(self, index):
+		index = Integer(index, 16)
 		builder = get_builder()
-		result = builder.call(self.func, [_arg.jit_value for _arg in args])
-		return Integer(result)
+		return Integer(builder.load(builder.gep(self.jit_array, [Integer(0, 16).jit_value, index.jit_value])))
+	
+	def __setitem__(self, index, value):
+		index = Integer(index, 16)
+		value = Integer(value, self.jit_array.type.pointee.element.width)
+		builder = get_builder()
+		builder.store(value.jit_value, builder.gep(self.jit_array, [Integer(0, 16).jit_value, index.jit_value]))
+	
+	def __len__(self):
+		return self.jit_array.type.pointee.count
+	
+	def __iter__(self):
+		for n in range(len(self)):
+			yield self[n]
+	
+	@property
+	def _as_parameter_(self):
+		return ctypes.pointer(typeconv(self.jit_array.type, False)(*[_x.constant for _x in self.jit_array.initializer.constant]))
 
 
 class Integer:
-	def __init__(self, value):
+	"Wrapper around an LLVM integer. Can be used like an integer in Python code."
+	
+	def __init__(self, value, bits=None):
 		try:
 			self.jit_value = value.jit_value
-			return
 		except AttributeError:
 			pass
+		else:
+			return
 		
-		try:
-			bits = self.round_8(value.bit_length())
+		if bits == None:
+			self.jit_value = value
+		else:
 			self.jit_value = llvmlite.ir.IntType(bits)(value)
-			return
-		except AttributeError:
-			pass
-		
-		self.jit_value = value
-
-		if self.jit_value.type.width > self.max_bits: raise ValueError("Maximum bit width exceeded")
-	
-	max_bits = 64
-	
-	@staticmethod
-	def round_8(i):
-		return 1 << (i - 1).bit_length() if i >= 8 else 8
-		#return 8 * ( ((i - 1) // 8 + 1) ) if i > 1 else 8
 	
 	def bit_length(self):
 		return self.jit_value.type.width
 	
-	def upper_bound(self):
-		try:
-			return self.jit_value.constant
-		except AttributeError:
-			return (1 << self.bit_length()) - 1
-	
 	def __add__(self, other):
-		other = self.__class__(other)
-		bits = self.round_8(max(self.bit_length(), other.bit_length()) + 1)
-		result_type = llvmlite.ir.IntType(bits)
-		
-		builder = get_builder()
-		
-		first = self.jit_value
-		if self.bit_length() < bits:
-			try:
-				first = result_type(first.constant)
-			except AttributeError:
-				first = builder.zext(first, result_type)
-		
-		second = other.jit_value
-		if other.bit_length() < bits:
-			try:
-				second = result_type(second.constant)
-			except AttributeError:
-				second = builder.zext(second, result_type)
-		
-		return self.__class__(builder.add(first, second))
+		other = self.__class__(other, self.bit_length())
+		return self.__class__(get_builder().add(self.jit_value, other.jit_value))
 	
 	__radd__ = __add__
 	
 	def __sub__(self, other):
-		other = self.__class__(other)
-		bits = self.round_8(max(self.bit_length(), other.bit_length()))
-		if bits > self.max_bits: raise ValueError("Maximum bit width exceeded")
-		result_type = llvmlite.ir.IntType(bits)
-		
-		builder = get_builder()
-		
-		first = self.jit_value
-		if self.bit_length() < bits:
-			try:
-				first = result_type(first.constant)
-			except AttributeError:
-				first = builder.zext(first, result_type)
-		
-		second = other.jit_value
-		if other.bit_length() < bits:
-			try:
-				second = result_type(second.constant)
-			except AttributeError:
-				second = builder.zext(second, result_type)
-		
-		return self.__class__(builder.sub(first, second))
+		other = self.__class__(other, self.bit_length())
+		return self.__class__(get_builder().sub(self.jit_value, other.jit_value))
 	
 	def __rsub__(self, other):
-		other = self.__class__(other)
-		bits = self.round_8(max(self.bit_length(), other.bit_length()))
-		if bits > self.max_bits: raise ValueError("Maximum bit width exceeded")
-		result_type = llvmlite.ir.IntType(bits)
-		
-		builder = get_builder()
-		
-		first = self.jit_value
-		if self.bit_length() < bits:
-			try:
-				first = result_type(first.constant)
-			except AttributeError:
-				first = builder.zext(first, result_type)
-		
-		second = other.jit_value
-		if other.bit_length() < bits:
-			try:
-				second = result_type(second.constant)
-			except AttributeError:
-				second = builder.zext(second, result_type)
-		
-		return self.__class__(builder.sub(second, first))
+		other = self.__class__(other, self.bit_length())
+		return self.__class__(get_builder().sub(other.jit_value, self.jit_value))
 	
 	def __mul__(self, other):
-		other = self.__class__(other)
-		bits = self.round_8(self.bit_length() + other.bit_length())
-		if bits > self.max_bits: raise ValueError("Maximum bit width exceeded")
-		result_type = llvmlite.ir.IntType(bits)
-		
-		builder = get_builder()
-		
-		first = self.jit_value
-		if self.bit_length() < bits:
-			try:
-				first = result_type(first.constant)
-			except AttributeError:
-				first = builder.zext(first, result_type)
-		
-		second = other.jit_value
-		if other.bit_length() < bits:
-			try:
-				second = result_type(second.constant)
-			except AttributeError:
-				second = builder.zext(second, result_type)
-		
-		return self.__class__(builder.mul(first, second))
+		other = self.__class__(other, self.bit_length())
+		return self.__class__(get_builder().mul(self.jit_value, other.jit_value))
 	
 	__rmul__ = __mul__
 	
 	def __mod__(self, other):
-		other = self.__class__(other)
-		
-		arg_bits = self.round_8(max(self.bit_length(), other.bit_length()))
-		if arg_bits > self.max_bits: raise ValueError("Maximum bit width exceeded")
-		arg_type = llvmlite.ir.IntType(arg_bits)
-		
-		result_bits = self.round_8((other.upper_bound() - 1).bit_length())
-		if result_bits > self.max_bits: raise ValueError("Maximum bit width exceeded")
-		result_type = llvmlite.ir.IntType(result_bits)
-		
-		builder = get_builder()
-		
-		# TODO: division by zero
-		
-		first = self.jit_value
-		if self.bit_length() < arg_bits:
-			try:
-				first = arg_type(first.constant)
-			except AttributeError:
-				first = builder.zext(first, arg_type)
-		
-		second = other.jit_value
-		if other.bit_length() < arg_bits:
-			try:
-				second = arg_type(second.constant)
-			except AttributeError:
-				second = builder.zext(second, arg_type)
-		
-		result = self.__class__(builder.urem(first, second))
-		if result.bit_length() > result_bits:
-			result = self.__class__(builder.trunc(result.jit_value, result_type))
-		return result
+		other = self.__class__(other, self.bit_length())
+		return self.__class__(get_builder().urem(self.jit_value, other.jit_value))
 	
 	def __and__(self, other):
-		other = self.__class__(other)
-		bits = self.round_8(min(self.bit_length(), other.bit_length()))
-		if bits > self.max_bits: raise ValueError("Maximum bit width exceeded")
-		result_type = llvmlite.ir.IntType(bits)
-		
-		builder = get_builder()
-		
-		first = self.jit_value
-		if self.bit_length() > bits:
-			try:
-				first = result_type(first.constant)
-			except AttributeError:
-				first = builder.trunc(first, result_type)
-		
-		second = other.jit_value
-		if other.bit_length() > bits:
-			try:
-				second = result_type(second.constant)
-			except AttributeError:
-				second = builder.trunc(second, result_type)
-		
-		try:
-			if second.constant + 1 == 1 << bits:
-				return self.__class__(first)
-		except AttributeError:
-			pass
-		
-		try:
-			if first.constant + 1 == 1 << bits:
-				return self.__class__(second)
-		except AttributeError:
-			pass
-		
-		return self.__class__(builder.and_(first, second))
+		other = self.__class__(other, self.bit_length())
+		return self.__class__(get_builder().and_(self.jit_value, other.jit_value))
 	
 	__rand__ = __and__
 	
 	def __or__(self, other):
-		other = self.__class__(other)
-		bits = self.round_8(max(self.bit_length(), other.bit_length()))
-		if bits > self.max_bits: raise ValueError("Maximum bit width exceeded")
-		result_type = llvmlite.ir.IntType(bits)
-		
-		builder = get_builder()
-		
-		first = self.jit_value
-		if self.bit_length() < bits:
-			try:
-				first = result_type(first.constant)
-			except AttributeError:
-				first = builder.zext(first, result_type)
-		
-		second = other.jit_value
-		if other.bit_length() < bits:
-			try:
-				second = result_type(second.constant)
-			except AttributeError:
-				second = builder.zext(second, result_type)
-		
-		return self.__class__(builder.or_(first, second))
+		other = self.__class__(other, self.bit_length())
+		return self.__class__(get_builder().or_(self.jit_value, other.jit_value))
 	
 	__ror__ = __or__
 	
 	def __xor__(self, other):
-		other = self.__class__(other)
-		bits = self.round_8(max(self.bit_length(), other.bit_length()))
-		if bits > self.max_bits: raise ValueError("Maximum bit width exceeded")
-		result_type = llvmlite.ir.IntType(bits)
-		
-		builder = get_builder()
-		
-		first = self.jit_value
-		if self.bit_length() < bits:
-			try:
-				first = result_type(first.constant)
-			except AttributeError:
-				first = builder.zext(first, result_type)
-		
-		second = other.jit_value
-		if other.bit_length() < bits:
-			try:
-				second = result_type(second.constant)
-			except AttributeError:
-				second = builder.zext(second, result_type)
-		
-		return self.__class__(builder.xor(first, second))
+		other = self.__class__(other, self.bit_length())
+		return self.__class__(get_builder().xor(self.jit_value, other.jit_value))
 	
 	__rxor__ = __xor__
 	
 	def __neg__(self):
-		return self.__class__(builder.not_(self.jit_value))
+		return self.__class__(get_builder().not_(self.jit_value))
 	
 	def __lshift__(self, other):
-		other = self.__class__(other)
-		bits = self.round_8(self.bit_length() + other.upper_bound())
-		result_type = llvmlite.ir.IntType(bits)
-		
-		builder = get_builder()
-		
-		first = self.jit_value
-		if self.bit_length() < bits:
-			try:
-				first = result_type(first.constant)
-			except AttributeError:
-				first = builder.zext(first, result_type)
-		
-		second = other.jit_value
-		if other.bit_length() < bits:
-			try:
-				second = result_type(second.constant)
-			except AttributeError:
-				second = builder.zext(second, result_type)
-		
-		return self.__class__(builder.shl(first, second))
+		other = self.__class__(other, self.bit_length())
+		return self.__class__(get_builder().shl(self.jit_value, other.jit_value))
 	
 	def __rshift__(self, other):
-		other = self.__class__(other)
-		bits = self.round_8(max(self.bit_length(), other.bit_length()))
-		result_type = llvmlite.ir.IntType(bits)
-		
-		builder = get_builder()
-		
-		first = self.jit_value
-		if self.bit_length() < bits:
-			try:
-				first = result_type(first.constant)
-			except AttributeError:
-				first = builder.zext(first, result_type)
-		
-		second = other.jit_value
-		if other.bit_length() < bits:
-			try:
-				second = result_type(second.constant)
-			except AttributeError:
-				second = builder.zext(second, result_type)
-		
-		return self.__class__(builder.lshr(first, second))
+		other = self.__class__(other, self.bit_length())
+		return self.__class__(get_builder().lshr(self.jit_value, other.jit_value))
 	
 	def __floordiv__(self, other):
-		other = self.__class__(other)
-		bits = self.round_8(max(self.bit_length(), other.bit_length()))
-		if bits > self.max_bits: raise ValueError("Maximum bit width exceeded")
-		result_type = llvmlite.ir.IntType(bits)
-		
-		builder = get_builder()
-		
-		# TODO: division by zero
-		#with builder.if_then(other.jit_value == other.type(0)):
-		#	raise_exception
-		
-		first = self.jit_value
-		if self.bit_length() < bits:
-			try:
-				first = result_type(first.constant)
-			except AttributeError:
-				first = builder.zext(first, result_type)
-		
-		second = other.jit_value
-		if other.bit_length() < bits:
-			try:
-				second = result_type(second.constant)
-			except AttributeError:
-				second = builder.zext(second, result_type)
-		
-		return self.__class__(builder.sdiv(first, second))
+		other = self.__class__(other, self.bit_length())
+		return self.__class__(get_builder().sdiv(self.jit_value, other.jit_value))
 	
 	def __ne__(self, other):
-		other = self.__class__(other)
-		builder = get_builder()
-		return self.__class__(builder.icmp_unsigned('!=', self.jit_value, other.jit_value))
+		other = self.__class__(other, self.bit_length())
+		return self.__class__(get_builder().icmp_unsigned('!=', self.jit_value, other.jit_value))
 	
 	__bool__ = None
 	
 	__hash__ = None
+	
+	@property
+	def _as_parameter_(self):
+		return typeconv(self.jit_value.type)(self.jit_value.constant)
+
+
+class Null:
+	def __init__(self, value=None):
+		assert value == None
+		self.jit_value = llvmlite.ir.VoidType()()
+
+
 
 
 if __debug__ and __name__ == '__main__':
 	compiler = Compiler()
+
+	@compiler.function()
+	def adder(x:Byte, y:Byte) -> Byte:
+		return x + y
 	
-	increment = compiler.declare_function('increment', arg_count=1, bits=8)
+	@compiler.function()
+	def muller(x:Byte, y:Byte) -> Byte:
+		return x * y
 	
-	@compiler.function(bits=8)
-	def inc2(x):
+	@compiler.function()
+	def square(x:Byte) -> Byte:
+		return muller(x, x)
+	
+	@compiler.function()
+	def increment(x:Byte) -> Byte:
+		raise NotImplementedError
+	
+	@compiler.function()
+	def inc2(x:Byte) -> Byte:
 		a = increment(x)
 		b = increment(a)
 		return b
 	
-	@compiler.function(bits=8)
-	def adder(x, y):
-		return (x + y) & 255
+	@compiler.function()
+	def increment(x:Byte) -> Byte:
+		return x + 1
 	
-	@compiler.function(bits=8)
-	def muller(x, y):
-		return (x * y) & 255
-	
-	@compiler.function(bits=8)
-	def square(x):
-		return muller(x, x)
-	
-	@compiler.function(bits=8)
-	def increment(x):
-		return (x + 1) & 255
-	
+	'''
 	@compiler.function(bits=8)
 	def divide_by_zero(x):
 		return x // 0
@@ -573,8 +490,37 @@ if __debug__ and __name__ == '__main__':
 	@compiler.function(bits=8)
 	def xorer(x, y):
 		return x ^ y
+	'''
 	
-
+	compiler['zero_vec'] = Byte[4](0, 0, 0, 0)
+	compiler['one_vec'] = Byte[4](1, 0, 0, 0)
+	compiler['one_prim_vec'] = Byte[4](0, 1, 0, 0)
+	compiler['series_vec'] = Byte[4](4, 3, 2, 1)
+	
+	one_prim_vec = compiler['one_prim_vec']
+	
+	@compiler.function()
+	def summer(a:Byte[4]) -> Byte:
+		return a[0] + a[1] + a[2] + a[3]
+	
+	@compiler.function()
+	def scalar_product(a:Byte[4], b:Byte[4]) -> Byte:
+		r = 0
+		for n in range(4):
+			r += a[n] * b[n]
+		return r
+	
+	@compiler.function()
+	def static_selector(a:Byte[4]) -> Byte:
+		r = 0
+		for n in range(4):
+			r += a[n] * one_prim_vec[n]
+		return r
+	
+	@compiler.function()
+	def output_array(a:Byte[6]) -> Void:
+		for n in range(len(a)):
+			a[n] = n
 	
 	print(compiler)
 	
@@ -585,10 +531,16 @@ if __debug__ and __name__ == '__main__':
 	
 	with code:
 		assert adder(2, 2) == 4
+		assert adder(250, 5) == 255
+		assert adder(250, 6) == 0
+		
 		assert muller(2, 3) == 6
 		assert square(4) == 16
+		
 		assert increment(7) == 8
 		assert inc2(8) == 10
+		
+		'''
 		assert divide_by_zero(99) == 0
 		assert subber(1, 2) == 255
 		assert rshifter(255) == 0b1111111
@@ -596,6 +548,29 @@ if __debug__ and __name__ == '__main__':
 		assert ander(47, 23) == 47 & 23
 		assert orer(47, 23) == 47 | 23
 		assert xorer(47, 23) == 47 ^ 23
+		'''
+		
+		six_times_four = Byte[4](6, 6, 6, 6)
+		assert summer(six_times_four) == 24
+		assert summer(Byte[4](5, 5, 5, 5)) == 20
+		assert summer(zero_vec) == 0
+		assert summer(one_vec) == 1
+		assert summer(one_prim_vec) == 1
+		assert summer(series_vec) == 10
+		
+		assert scalar_product(zero_vec, zero_vec) == 0
+		assert scalar_product(one_vec, one_vec) == 1
+		assert scalar_product(one_vec, one_prim_vec) == 0
+		assert scalar_product(one_prim_vec, one_vec) == 0
+		assert scalar_product(one_vec, series_vec) == 4
+		assert scalar_product(one_prim_vec, series_vec) == 3
+		assert scalar_product(series_vec, series_vec) == 1 + 4 + 9 + 16
+		
+		assert static_selector(series_vec) == 3
+		
+		buf = Byte[6](...)
+		output_array(buf)
+		assert all(buf[_n] == _n for _n in range(len(buf)))
 
 
 

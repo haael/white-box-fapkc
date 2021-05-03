@@ -323,19 +323,90 @@ class Vector(AlgebraicStructure):
 	def circuit_size(self):
 		return sum(_value.circuit_size() for _value in self.values())
 	
-	def compile(self, name, module):
-		for n, el in enumerate(self):
-			el.compile(name + '_' + str(n), module)
-	
-	def wrap_compiled(self, name, engine):
-		wrapped = []
-		for n, el in enumerate(self):
-			wrapped.append(el.wrap_compiled(name + '_' + str(n), engine))
-		algebra = self.__class__.get_algebra(base_ring=self.algebra.base_ring.base_ring)
+	def compile(self, name, compiler, variables=None):
+		from jit_types import Void, Bit, Byte, Short
 		
-		def fn(**kwargs):
-			return algebra([_w(**kwargs) for _w in wrapped])
-		return fn
+		if variables == None:
+			var_set = set()
+			for element in self:
+				if element.algebra.algebra_name == 'Polynomial':
+					var_set.update(frozenset(element.variables()))
+			variables = sorted(str(_var) for _var in var_set)
+		
+		polys = []
+		for n, el in enumerate(self):
+			p = el.compile(name + '.' + str(n), compiler, variables)
+			polys.append(p)
+		
+		try:
+			bl = self.algebra.base_ring.exponent
+		except AttributeError:
+			bl = (self.algebra.base_ring.base_ring.size - 1).bit_length()
+		bits = (8 * ((bl - 1) // 8 + 1)) if bl > 1 else 8
+		
+		if bits == 0:
+			Type = Void
+		elif bits == 1:
+			Type = Bit
+		elif bits < 8:
+			Type = Byte
+		else:
+			Type = Short
+		
+		@compiler.function(name=name)
+		def evaluate_vector(in_arg:Type[len(variables)], out_arg:Type[len(self)]) -> Void:
+			for n, p in enumerate(polys):
+				out_arg[n] = p(in_arg)
+		
+		return evaluate_vector
+	
+	def wrap_compiled(self, name, code, variables=None):
+		from jit_types import Void, Bit, Byte, Short
+		
+		if variables == None:
+			var_set = set()
+			for element in self:
+				if element.algebra.algebra_name == 'Polynomial':
+					var_set.update(frozenset(element.variables()))
+			variables = sorted(str(_var) for _var in var_set)
+		
+		#wrapped = []
+		#for n, el in enumerate(self):
+		#	wrapped.append(el.wrap_compiled(name + '.' + str(n), code, variables))
+		#algebra = self.__class__.get_algebra(base_ring=self.algebra.base_ring.base_ring)
+		#
+		#def fn(**kwargs):
+		#	return algebra([_w(**kwargs) for _w in wrapped])
+		#return fn
+		
+		try:
+			bl = self.algebra.base_ring.exponent
+		except AttributeError:
+			bl = (self.algebra.base_ring.base_ring.size - 1).bit_length()
+		bits = (8 * ((bl - 1) // 8 + 1)) if bl > 1 else 8
+		
+		if bits == 0:
+			Type = Void
+		elif bits == 1:
+			Type = Bit
+		elif bits < 8:
+			Type = Byte
+		else:
+			Type = Short		
+		
+		compiled = code.symbol[name]
+		ring = self.algebra.base_ring.base_ring
+		algebra = self.get_algebra(base_ring=ring)
+		len_self = len(self)
+		len_variables = len(variables)
+		def wrapped(**kwargs):
+			in_array = Type[len_variables](*[int(kwargs[_v]) for _v in variables])
+			out_array = Type[len_self](...)
+			compiled(in_array, out_array)
+			return algebra([ring(int(_x)) for _x in out_array])
+		
+		wrapped.__name__ = name
+		return wrapped
 	
 	def is_zero(self):
 		return all(_element.is_zero() for _element in self)
@@ -567,11 +638,19 @@ class Matrix(AlgebraicStructure):
 		`matrix[i_start:i_stop:i_step, j_start:j_stop:j_step] = matrix` replace the sub-matrix of the elements specified as the slices with the matrix on the right-hand side
 		"""
 		
-		#try:
-		#	self.item_cache.clear()
-		#	assert not self.item_cache
-		#except AttributeError:
-		#	pass
+		if i_j == Ellipsis:
+			self.item_cache.clear()
+			assert not self.item_cache
+		else:
+			try:
+				if any((hasattr(ij, 'start') and hasattr(ij, 'stop') and hasattr(ij, 'step')) for ij in i_j):
+					self.item_cache.clear()
+					assert not self.item_cache
+			except TypeError:
+				try:
+					del self.item_cache[i_j]
+				except KeyError:
+					pass
 		
 		def setitem(direction, indices_i, indices_j):
 			if direction == self.__direction.scalar:
@@ -596,7 +675,7 @@ class Matrix(AlgebraicStructure):
 				for (m, i), (n, j) in product(enumerate(indices_i), enumerate(indices_j)):
 					self.value[self.row_dimension * i + j] = value[m, n]
 			elif direction == self.__direction.copy:
-				if self.__class__ != value.__class__:
+				if self.algebra != value.algebra:
 					raise TypeError("In-place matrix assignment works only from a matrix of the same type.")
 				if self.column_dimension != value.column_dimension or self.row_dimension != value.row_dimension:
 					raise ValueError("In-place matrix assignment works only from a matrix of the same dimensions.")
@@ -609,7 +688,6 @@ class Matrix(AlgebraicStructure):
 	__direction = Enum('Matrix.__direction', 'scalar row column matrix copy')
 	
 	def __analyze_indices(self, i_j, callback):
-		#print("  Matrix.__analyze_indices", i_j)
 		try:
 			i, j = i_j
 		except TypeError:
@@ -1009,7 +1087,6 @@ class Matrix(AlgebraicStructure):
 			else:
 				algebra = algebra1
 			
-			#print("__matmul__", id(self), id(other))
 			self_columns = [self[_i, :] for _i in range(self.column_dimension)]
 			other_rows = [other[:, _j] for _j in range(self.row_dimension)]
 			return algebra((lambda _i, _j: self_columns[_i] @ other_rows[_j]), column_dimension=self.column_dimension, row_dimension=other.row_dimension)
@@ -1073,7 +1150,6 @@ class Matrix(AlgebraicStructure):
 		for row, m in zip(rows, (self,) + matrices):
 			v = m[-1, :]
 			row.append(v)
-			#print(v.dimension, m.column_dimension, m.row_dimension)
 			assert v.dimension == m.row_dimension
 		
 		results = [self.algebra((lambda _i, _j: _row[_i][_j]), column_dimension=self.column_dimension, row_dimension=_m.row_dimension) for (_row, _m) in zip(rows, (self,) + matrices)]
@@ -1211,6 +1287,45 @@ if __debug__:
 	from polynomial import *
 	from utils import parallel
 	
+	def test_compilation(Vector):
+		from jit_types import Compiler
+		from time import time
+		
+		Polynomial = Vector.base_ring
+		Ring = Vector.base_ring
+		variables='abcdefghijklmnopqrstuvwxyz'
+		
+		for m in range(10):
+			print("test size =", m * 10 + 1)
+			v = Vector.zero(m * 100 + 1)
+			for n in range(v.dimension):
+				v[n] = Polynomial.random(variables=variables, order=8)
+			
+			print("optimizing...")
+			print(v.circuit_size())
+			v = v.optimized()
+			print(v.circuit_size())
+			print(" optimized")
+			print("compiling...")
+			compiler = Compiler()
+			v.compile('v', compiler)
+			code = compiler.compile()
+			w = v.wrap_compiled('v', code)
+			print(" compiled")
+			
+			print("correctness test")
+			for n in range(5):
+				print(" test", n)
+				s = dict((_v, Ring.random()) for _v in variables)
+				assert w(**s) == v(**s)
+			
+			print("performance test")
+			t = time()
+			for n in range(1000):
+				s = dict((_v, Ring.random()) for _v in variables)
+				assert w(**s) or True
+			print(" ", time() - t)
+	
 	def test_vector(Vector):
 		"Test suite for vectors."
 		
@@ -1221,7 +1336,6 @@ if __debug__:
 		assert p1[...] == p1
 		
 		p2 = pickle.loads(pickle.dumps(p1))
-		#print(p1, p2)
 		assert p1 == p2
 		
 		p3 = p1[1:-1:2] # 1, 3, 5
@@ -1401,9 +1515,6 @@ if __debug__:
 		assert m1 == m2
 		
 		m2 = m1.cancel_rows()
-		#print(ps)
-		#print(str(m1))
-		#print(str(m2))
 		redc = False
 		for n, row in enumerate(m2.iter_rows()):
 			pn, c = row.pivot()
@@ -1659,6 +1770,14 @@ if __debug__:
 
 
 if __debug__ and __name__ == '__main__':
+	
+	ring = BooleanRing.get_algebra()
+	polynomial = Polynomial.get_algebra(base_ring=ring)
+	vector = Vector.get_algebra(base_ring=polynomial)
+	
+	test_compilation(vector)
+	quit()
+
 	linear_test_suite(verbose=True)
 	
 	#from jit_types import Compiler
