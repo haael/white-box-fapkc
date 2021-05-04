@@ -338,20 +338,9 @@ class Vector(AlgebraicStructure):
 			p = el.compile(name + '.' + str(n), compiler, variables)
 			polys.append(p)
 		
-		try:
-			bl = self.algebra.base_ring.exponent
-		except AttributeError:
-			bl = (self.algebra.base_ring.base_ring.size - 1).bit_length()
-		bits = (8 * ((bl - 1) // 8 + 1)) if bl > 1 else 8
-		
-		if bits == 0:
-			Type = Void
-		elif bits == 1:
-			Type = Bit
-		elif bits < 8:
-			Type = Byte
-		else:
-			Type = Short
+		from jit_types import HardwareType
+		bits = self.algebra.base_ring.bit_arithmetics()
+		Type = HardwareType(bits)
 		
 		@compiler.function(name=name)
 		def evaluate_vector(in_arg:Type[len(variables)], out_arg:Type[len(self)]) -> Void:
@@ -361,8 +350,6 @@ class Vector(AlgebraicStructure):
 		return evaluate_vector
 	
 	def wrap_compiled(self, name, code, variables=None):
-		from jit_types import Void, Bit, Byte, Short
-		
 		if variables == None:
 			var_set = set()
 			for element in self:
@@ -370,29 +357,9 @@ class Vector(AlgebraicStructure):
 					var_set.update(frozenset(element.variables()))
 			variables = sorted(str(_var) for _var in var_set)
 		
-		#wrapped = []
-		#for n, el in enumerate(self):
-		#	wrapped.append(el.wrap_compiled(name + '.' + str(n), code, variables))
-		#algebra = self.__class__.get_algebra(base_ring=self.algebra.base_ring.base_ring)
-		#
-		#def fn(**kwargs):
-		#	return algebra([_w(**kwargs) for _w in wrapped])
-		#return fn
-		
-		try:
-			bl = self.algebra.base_ring.exponent
-		except AttributeError:
-			bl = (self.algebra.base_ring.base_ring.size - 1).bit_length()
-		bits = (8 * ((bl - 1) // 8 + 1)) if bl > 1 else 8
-		
-		if bits == 0:
-			Type = Void
-		elif bits == 1:
-			Type = Bit
-		elif bits < 8:
-			Type = Byte
-		else:
-			Type = Short		
+		from jit_types import HardwareType
+		bits = self.algebra.base_ring.bit_arithmetics()
+		Type = HardwareType(bits)
 		
 		compiled = code.symbol[name]
 		ring = self.algebra.base_ring.base_ring

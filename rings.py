@@ -224,7 +224,10 @@ class ModularRing(AbstractRing):
 		try:
 			ring_value = value.ring_value
 		except AttributeError:
-			ring_value = value % size
+			if hasattr(value, 'jit_value') and value.jit_value.type.width == 1 and size == 2:
+				ring_value = value
+			else:
+				ring_value = value % size
 		
 		if not hasattr(self, 'ring_value'):
 			self.ring_value = ring_value
@@ -244,7 +247,7 @@ class ModularRing(AbstractRing):
 		try:
 			if self.algebra != other.algebra:
 				return NotImplemented
-			return self.algebra((self.ring_value + other.ring_value) % self.algebra.size)
+			return self.algebra(self.ring_value + other.ring_value)
 		except AttributeError:
 			return NotImplemented
 	
@@ -252,18 +255,18 @@ class ModularRing(AbstractRing):
 		try:
 			if self.algebra != other.algebra:
 				return NotImplemented
-			return self.algebra((self.algebra.size + self.ring_value - other.ring_value) % self.algebra.size)
+			return self.algebra(self.algebra.size + self.ring_value - other.ring_value)
 		except AttributeError:
 			return NotImplemented
 	
 	def __neg__(self):
-		return self.algebra((self.algebra.size - self.ring_value) % self.algebra.size)
+		return self.algebra(self.algebra.size - self.ring_value)
 	
 	def __mul__(self, other):
 		try:
 			if self.algebra != other.algebra:
 				return NotImplemented
-			return self.algebra((self.ring_value * other.ring_value) % self.algebra.size)
+			return self.algebra(self.ring_value * other.ring_value)
 		except AttributeError:
 			return NotImplemented
 	
@@ -339,10 +342,11 @@ class BooleanRing(ModularRing):
 			assert kwargs['size'] == 2
 			del kwargs['size']
 		
-		try:
-			value = bool(value % 2)
-		except TypeError:
-			value = value % 2
+		if not hasattr(value, 'jit_value'):
+			try:
+				value = bool(value % 2)
+			except TypeError:
+				value = value % 2
 		
 		super().__init__(value, *args, size=2, **kwargs)
 	
@@ -860,8 +864,14 @@ class GaloisField(AbstractRing):
 		algebra = cls.get_algebra(*args, **kwargs)
 		log_table, exp_table = algebra.log_exp_tables()
 		bits = (algebra.size - 1).bit_length()
-		algebra.jit_log_table = compiler.array(name + '.jit_log_table', bits, log_table)
-		algebra.jit_exp_table = compiler.array(name + '.jit_exp_table', bits, exp_table)
+		
+		from jit_types import HardwareType
+		Type = HardwareType(bits)
+		
+		compiler[name + '.jit_log_table'] = Type[len(log_table)](*log_table)
+		algebra.jit_log_table = compiler[name + '.jit_log_table']
+		compiler[name + '.jit_exp_table'] = Type[len(exp_table)](*exp_table)
+		algebra.jit_exp_table = compiler[name + '.jit_exp_table']
 
 
 class BinaryField(GaloisField):

@@ -8,7 +8,7 @@ from llvmlite.ir._utils import DuplicatedNameError
 import ctypes
 
 
-__all__ = 'Compiler', 'Code', 'Bitvector', 'Void', 'Bit', 'Byte', 'Short', 'Word', 'Long'
+__all__ = 'Compiler', 'Code', 'Bitvector', 'Void', 'Bit', 'Byte', 'Short', 'Word', 'Long', 'HardwareType'
 
 
 
@@ -92,12 +92,29 @@ class Bitvector:
 		return typeconv(self.to_llvm_type(pointers), pointers)
 
 
+
 Void = Bitvector(0)
 Bit = Bitvector(1)
 Byte = Bitvector(8)
 Short = Bitvector(16)
 Word = Bitvector(32)
 Long = Bitvector(64)
+
+def HardwareType(bits):
+	if bits == 0:
+		return Void
+	elif bits == 1:
+		return Bit
+	elif 1 < bits <= 8:
+		return Byte
+	elif 8 < bits <= 16:
+		return Short
+	elif 16 < bits <= 32:
+		return Word
+	elif 32 < bits <= 64:
+		return Long
+	else:
+		raise ValueError
 
 
 compiler_initialized = False
@@ -472,6 +489,10 @@ if __debug__ and __name__ == '__main__':
 	def increment(x:Byte) -> Byte:
 		return x + 1
 	
+	@compiler.function()
+	def return_const() -> Byte:
+		return 1
+	
 	'''
 	@compiler.function(bits=8)
 	def divide_by_zero(x):
@@ -532,7 +553,7 @@ if __debug__ and __name__ == '__main__':
 		for n in range(len(a)):
 			a[n] = n
 	
-	print(compiler)
+	#print(compiler)
 	
 	code = compiler.compile()
 	
@@ -549,6 +570,8 @@ if __debug__ and __name__ == '__main__':
 		
 		assert increment(7) == 8
 		assert inc2(8) == 10
+		
+		assert return_const() == 1
 		
 		'''
 		assert divide_by_zero(99) == 0

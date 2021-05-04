@@ -485,25 +485,12 @@ class Polynomial(Immutable, AlgebraicStructure, Term):
 		return int(self.evaluate())
 	
 	def compile(self, name, compiler, variables=None):
-		from jit_types import Void, Bit, Byte, Short
-		
 		if variables == None:
 			variables = sorted([str(_var) for _var in frozenset(self.variables())])
 		
-		try:
-			bl = self.algebra.exponent
-		except AttributeError:
-			bl = (self.algebra.base_ring.size - 1).bit_length()
-		bits = (8 * ((bl - 1) // 8 + 1)) if bl > 1 else 8
-		
-		if bits == 0:
-			Type = Void
-		elif bits == 1:
-			Type = Bit
-		elif bits < 8:
-			Type = Byte
-		else:
-			Type = Short
+		from jit_types import HardwareType
+		bits = self.algebra.bit_arithmetics()
+		Type = HardwareType(bits)
 		
 		@compiler.function(name=name)
 		def evaluate_polynomial(arg:Type[len(variables)]) -> Type:
@@ -513,28 +500,17 @@ class Polynomial(Immutable, AlgebraicStructure, Term):
 			except AttributeError:
 				return result.binary_field_value
 		
-		return evaluate_polynomial
-	
-	def wrap_compiled(self, name, code, variables=None):
-		from jit_types import Void, Bit, Byte, Short
+		#print(compiler)
 		
+		return evaluate_polynomial
+		
+	def wrap_compiled(self, name, code, variables=None):
 		if variables == None:
 			variables = sorted([str(_var) for _var in frozenset(self.variables())])
 		
-		try:
-			bl = self.algebra.exponent
-		except AttributeError:
-			bl = (self.algebra.base_ring.size - 1).bit_length()
-		bits = (8 * ((bl - 1) // 8 + 1)) if bl > 1 else 8
-		
-		if bits == 0:
-			Type = Void
-		elif bits == 1:
-			Type = Bit
-		elif bits < 8:
-			Type = Byte
-		else:
-			Type = Short
+		from jit_types import HardwareType
+		bits = self.algebra.bit_arithmetics()
+		Type = HardwareType(bits)
 		
 		ring = self.algebra.base_ring
 		compiled = code.symbol[name]
@@ -796,12 +772,31 @@ if __debug__:
 		ring_polynomial = Polynomial.get_algebra(base_ring=ring)
 		if verbose: print(" ring test")
 		test_ring(ring_polynomial)
-		#if verbose: print(" polynomial test")
-		#test_polynomial(ring_polynomial)
-		#if verbose: print(" optimization test")
-		#test_optimization(ring_polynomial, verbose)
+		if verbose: print(" field test")
+		test_field(ring_polynomial)
+		if verbose: print(" polynomial test")
+		test_polynomial(ring_polynomial)
+		if verbose: print(" optimization test")
+		test_optimization(ring_polynomial, verbose)
 		if verbose: print(" compilation test")
 		test_compilation(ring_polynomial)
+
+		field = RijndaelField
+		if verbose: print()
+		if verbose: print("test Polynomial(base_ring=RijndaelField())")
+		field_polynomial = Polynomial.get_algebra(base_ring=field)
+		if verbose: print(" ring test")
+		test_ring(field_polynomial)
+		if verbose: print(" field test")
+		test_field(field_polynomial)
+		#if verbose: print(" polynomial test")
+		#test_polynomial(field_polynomial)
+		if verbose: print(" optimization test")
+		test_optimization(ring_polynomial, verbose)
+		if verbose: print(" compilation test (long multiplication)")
+		test_compilation(field_polynomial, compile_tables=False)
+		#if verbose: print(" compilation test (log-based multiplication)")
+		#test_compilation(field_polynomial, compile_tables=True)
 		
 		for i in chain(range(2, 16), (2**_i for _i in range(5, 9))):
 			ring = ModularRing.get_algebra(size=i)
@@ -810,8 +805,8 @@ if __debug__:
 			ring_polynomial = Polynomial.get_algebra(base_ring=ring)
 			if verbose: print(" ring test")
 			test_ring(ring_polynomial)
-			if verbose: print(" polynomial test")
-			test_polynomial(ring_polynomial)
+			#if verbose: print(" polynomial test")
+			#test_polynomial(ring_polynomial)
 			if verbose: print(" optimization test")
 			test_optimization(ring_polynomial, verbose)
 			if verbose: print(" compilation test")
@@ -826,8 +821,8 @@ if __debug__:
 			test_ring(field_polynomial)
 			if verbose: print(" field test")
 			test_field(field_polynomial)
-			if verbose: print(" polynomial test")
-			test_polynomial(field_polynomial)
+			#if verbose: print(" polynomial test")
+			#test_polynomial(field_polynomial)
 			if verbose: print(" optimization test")
 			test_optimization(ring_polynomial, verbose)
 			if verbose: print(" compilation test")
@@ -842,30 +837,13 @@ if __debug__:
 			test_ring(field_polynomial)
 			if verbose: print(" field test")
 			test_field(field_polynomial)
-			if verbose: print(" polynomial test")
-			test_polynomial(field_polynomial)
+			#if verbose: print(" polynomial test")
+			#test_polynomial(field_polynomial)
 			if verbose: print(" optimization test")
 			test_optimization(ring_polynomial, verbose)
 			if verbose: print(" compilation test")
 			test_compilation(ring_polynomial)
 		
-		field = RijndaelField
-		if verbose: print()
-		if verbose: print("test Polynomial(base_ring=RijndaelField())")
-		field_polynomial = Polynomial.get_algebra(base_ring=field)
-		if verbose: print(" ring test")
-		test_ring(field_polynomial)
-		if verbose: print(" field test")
-		test_field(field_polynomial)
-		if verbose: print(" polynomial test")
-		test_polynomial(field_polynomial)
-		if verbose: print(" optimization test")
-		test_optimization(ring_polynomial, verbose)
-		if verbose: print(" compilation test (long multiplication)")
-		test_compilation(field_polynomial, compile_tables=False)
-		if verbose: print(" compilation test (log-based multiplication)")
-		test_compilation(field_polynomial, compile_tables=True)
-	
 	__all__ = __all__ + ('test_polynomial', 'test_optimization', 'polynomial_test_suite')
 
 

@@ -620,12 +620,12 @@ def automaton_factory(base_ring):
 			return straight, inverse
 		
 		def compile(self, name, module):
-			self.state_transition.compile(name + '_st', module)
-			self.output_transition.compile(name + '_ot', module)
+			self.state_transition.compile(name + '.s', module)
+			self.output_transition.compile(name + '.y', module)
 		
 		def wrap_compiled(self, name, engine):
-			st = self.state_transition.wrap_compiled(name + '_st', engine)
-			ot = self.output_transition.wrap_compiled(name + '_ot', engine)
+			st = self.state_transition.wrap_compiled(name + '.s', engine)
+			ot = self.output_transition.wrap_compiled(name + '.y', engine)
 			
 			def t(x, history):
 				state = {}
@@ -967,6 +967,8 @@ if True or __debug__:
 			print("   predicted:", ''.join(['{:02x}'.format(int(_ch)) for _ch in result2]))
 			assert result1 == result2
 			print("   time:", int(time() - start_time))
+			
+			Path(f'homomorphic_{i}.ll').write_text(str(compiler))
 	
 	def automaton_test_suite(verbose=False):
 		if verbose: print("running test suite")

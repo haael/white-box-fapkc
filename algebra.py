@@ -59,23 +59,6 @@ class Algebra(Immutable):
 	
 	def __call__(self, *args, **kwargs):
 		return self.algebra_init(*(args + self.algebra_params), **dict(chain(self.algebra_kwparams.items(), kwargs.items())))
-		
-		'''
-		try:
-			instances_cache = self.instances_cache
-		except AttributeError:
-			return self.algebra_init(*(args + self.algebra_params), **dict(chain(self.algebra_kwparams.items(), kwargs.items())))
-		
-		keys = tuple(sorted(kwargs.keys()))
-		values = tuple(kwargs[_k] for _k in keys)
-		
-		try:
-			return instances_cache[args, keys, values]
-		except KeyError:
-			result = self.algebra_init(*(args + self.algebra_params), **dict(chain(self.algebra_kwparams.items(), kwargs.items())))
-			self.instances_cache[args, keys, values] = result
-			return result
-		'''
 	
 	def __hash__(self):
 		try:
@@ -108,6 +91,20 @@ class Algebra(Immutable):
 	
 	def __str__(self):
 		return self.algebra_name + '(' + ', '.join(self.algebra_params) + (', ' if self.algebra_params and self.algebra_kwparams else '') + ', '.join((_k + '=' + str(_v)) for (_k, _v) in self.algebra_kwparams.items()) + ')'
+	
+	def bit_arithmetics(self):
+		"How many bits is needed to perform arithmetics in this algebra."
+		
+		try:
+			bits = self.exponent
+		except AttributeError:
+			bits = (self.base_ring.size - 1).bit_length()
+		
+		if self.base_ring.algebra_name != 'BooleanRing':
+			bits *= 2
+		
+		return bits
+
 
 
 class AlgebraicStructure:
