@@ -24,23 +24,54 @@ class Identical:
 	def __eq__(self, other):
 		if self.term is other.term:
 			return True
-				
-		if self.term.is_const() and other.term.is_const():
-			return self.term.const_value() == other.term.const_value()
 		
-		if self.term.is_var() and other.term.is_var():
-			return self.term.var_name() == other.term.var_name()
+		if self.term.is_const():
+			if other.term.is_const():
+				return self.term.const_value() == other.term.const_value()
+			else:
+				return False
 		
-		if not ((self.term.is_add() and other.term.is_add()) or (self.term.is_sub() and other.term.is_sub()) or (self.term.is_mul() and other.term.is_mul()) or (self.term.is_neg() and other.term.is_neg())):
-			return False
+		if self.term.is_var():
+			if other.term.is_var():
+				return self.term.var_name() == other.term.var_name()
+			else:
+				return False
+		
+		try:
+			if self.term.p_operator != other.term.p_operator:
+				return False
+		except AttributeError:
+			if not ((self.term.is_add() and other.term.is_add()) or (self.term.is_sub() and other.term.is_sub()) or (self.term.is_mul() and other.term.is_mul()) or (self.term.is_neg() and other.term.is_neg())):
+				return False
+		
+		for attr_name in self.term.mutable:
+			try:
+				if getattr(self.term, attr_name) != getattr(other.term, attr_name):
+					return False
+			except AttributeError:
+				pass
 		
 		if len(self.term.subterms()) != len(other.term.subterms()):
 			return False
+				
+		try:
+			result = all(_a.operator == _b.operator for (_a, _b) in zip(self.term.subterms(), other.term.subterms()))
+		except AttributeError:
+			result = all(_a.p_operator == _b.p_operator for (_a, _b) in zip(self.term.subterms(), other.term.subterms()))
 		
-		if self.hash_cache != None and other.hash_cache != None and self.hash_cache != other.hash_cache:
-			return False
+		if result:
+			result = all((self.__class__(_a) == self.__class__(_b)) for (_a, _b) in zip(self.term.subterms(), other.term.subterms()))
 		
-		return all((self.__class__(_a) == self.__class__(_b)) for (_a, _b) in zip(self.term.subterms(), other.term.subterms()))
+		if result:
+			try:
+				self.term.identical_hash_cache = other.term.identical_hash_cache
+			except AttributeError:
+				try:
+					other.term.identical_hash_cache = self.term.identical_hash_cache
+				except AttributeError:
+					pass
+		
+		return result
 	
 	def shallow_hash(self, depth):
 		if self.term.is_const():
@@ -54,19 +85,31 @@ class Identical:
 			return hash((self.term.is_add(), self.term.is_sub(), self.term.is_mul(), self.term.is_neg()) + tuple(Identical(_subterm).shallow_hash(depth - _n - 1) for (_n, _subterm) in enumerate(self.term.subterms())))
 	
 	def __hash__(self):
-		if self.hash_cache != None:
-			return self.hash_cache
-		
 		try:
-			return self.term.identical_hash_cache
+			return hash(self.term.operator) + len(self.term.operands)
 		except AttributeError:
-			pass
-		
-		result = self.shallow_hash(4) # optimization parameter
-		
-		self.term.identical_hash_cache = result
-		self.hash_cache = result
-		return result
+			if self.term.is_const():
+				return hash(self.term.const_value())
+			elif self.term.is_var():
+				return hash(self.term.var_name()) + 993992
+			else:
+				try:
+					return self.term.identical_hash_cache
+				except AttributeError:
+					pass
+				
+				h = [4368, self.term.p_operator.value]
+				for subterm in self.term.subterms():
+					h.append(subterm.p_operator.value)
+					if subterm.is_const():
+						h.extend([subterm.const_value(), 39487])
+					elif subterm.is_var():
+						h.extend([subterm.var_name(), 180341])
+					else:
+						h.extend([len(subterm.subterms()), 77777])
+				r = hash(tuple(h))
+				self.term.identical_hash_cache = r
+				return r
 	
 	def __str__(self):
 		if self.str_cache != None:
@@ -203,8 +246,8 @@ def cached(old_method):
 
 class Term:
 	def __init__(self, operator, operands):
-		if not isinstance(operator, str):
-			raise ValueError
+		#if not isinstance(operator, str):
+		#	raise ValueError("Operator must be a string.")
 		self.operator = operator
 		self.operands = operands
 	
@@ -282,21 +325,21 @@ class Term:
 		if not self.is_const() and not self.is_var():
 			return self.operands
 		else:
-			raise ValueError
+			raise ValueError("Constants and variables do not have subterms.")
 	
 	def const_value(self):
 		"Return the value of the constant (type: `self.base_ring`)."
 		if self.is_const():
 			return self.operands
 		else:
-			raise ValueError
+			raise ValueError("Only constants have a value.")
 	
 	def var_name(self):
 		"Return the name of the variable (type: `str`)."
 		if self.is_var():
 			return self.operands
 		else:
-			raise ValueError
+			raise ValueError("Only variables have a name.")
 	
 	@property
 	def algebra(self):
@@ -411,7 +454,7 @@ class Term:
 		elif self.is_add() or self.is_mul() or self.is_sub():
 			return 1 + max(_operand.circuit_depth() for _operand in self.subterms())
 		elif self.is_neg():
-			return 1 + self.symbol.operands[0].circuit_depth()
+			return 1 + self.subterms()[0].circuit_depth()
 		else:
 			raise RuntimeError
 	
@@ -586,27 +629,84 @@ class Term:
 			raise RuntimeError
 	
 	def fixed_point(self, transform):
-		term1 = self
-		term2 = self.algebra.zero()
-		term3 = self.algebra.zero()
-		while not (Identical(term1) == Identical(term2) or Identical(term1) == Identical(term3)):
-			term3 = term2
-			term2 = term1
-			term1 = transform(term1)
-		return term1
+		term = self
+		iden_term = Identical(term)
+		#size = term.circuit_size()
+		
+		term_history = []
+		#size_history = []
+		
+		#while all(size < prev_size for prev_size in size_history) and all(iden_term != prev_term for prev_term in term_history):
+		while all(iden_term != prev_term for prev_term in term_history):
+			term_history.append(iden_term)
+			if len(term_history) > 6:
+				term_history = term_history[-6:]
+			
+			#size_history.append(term.circuit_size())
+			#if len(size_history) > 5:
+			#	size_history = size_history[-5:]
+			
+			term = transform(term)
+			iden_term = Identical(term)
+			#size = term.circuit_size()
+		
+		return term
 	
 	def traverse_before(self, transform):
 		"Apply the transformation on all subterms (recursively) and then on the resulting term."
 		
 		if self.is_add():
-			candidate = self.algebra.sum(_subterm.traverse_before(transform) for _subterm in self.subterms())
+			addends = [_subterm.traverse_before(transform) for _subterm in self.subterms()]
+			if all(_a is _b for (_a, _b) in zip(addends, self.subterms())): # optimization: don't reconstruct the tree if all subtrees are the same as original
+				candidate = self
+			else:
+				candidate = self.algebra.sum(addends)
 		elif self.is_mul():
-			candidate = self.algebra.product(_subterm.traverse_before(transform) for _subterm in self.subterms())
+			factors = [_subterm.traverse_before(transform) for _subterm in self.subterms()]
+			if all(_a is _b for (_a, _b) in zip(factors, self.subterms())): # optimization: don't reconstruct the tree if all subtrees are the same as original
+				candidate = self
+			else:
+				candidate = self.algebra.product(factors)
 		elif self.is_sub():
 			left, right = [_subterm.traverse_before(transform) for _subterm in self.subterms()]
 			candidate = left - right
 		elif self.is_neg():
 			candidate = -self.subterms()[0].traverse_before(transform)
+		else:
+			candidate = self
+		
+		return transform(candidate)
+	
+	def traverse_before_filtered(self, transform, filter_):
+		"Apply the transformation on all subterms (recursively) and then on the resulting term."
+		
+		if self.is_add():
+			addends = [_subterm.traverse_before(transform) if filter_(_subterm) else _subterm for _subterm in self.subterms()]
+			if all(_a is _b for (_a, _b) in zip(addends, self.subterms())): # optimization: don't reconstruct the tree if all subtrees are the same as original
+				candidate = self
+			else:
+				candidate = self.algebra.sum(addends)
+		elif self.is_mul():
+			factors = [_subterm.traverse_before(transform) if filter_(_subterm) else _subterm for _subterm in self.subterms()]
+			if all(_a is _b for (_a, _b) in zip(factors, self.subterms())): # optimization: don't reconstruct the tree if all subtrees are the same as original
+				candidate = self
+			else:
+				candidate = self.algebra.product(factors)
+		elif self.is_sub():
+			left, right = [_subterm.traverse_before(transform) if filter_(_subterm) else _subterm for _subterm in self.subterms()]
+			if left is self.subterms()[0] and right is self.subterms()[1]:
+				candidate = self
+			else:
+				candidate = left - right
+		elif self.is_neg():
+			if filter_(self.subterms()[0]):
+				transformed = self.subterms()[0].traverse_before(transform)
+				if transformed is self.subterms()[0]:
+					candidate = self
+				else:
+					candidate = -transformed
+			else:
+				candidate = self
 		else:
 			candidate = self
 		
@@ -629,6 +729,34 @@ class Term:
 		else:
 			return candidate
 	
+	@cached
+	def has_nonreduced_constants(self):
+		if self.is_const() or self.is_var():
+			return False
+		
+		elif self.is_add():
+			cc = Counter(_subterm.const_value() for _subterm in self.subterms() if _subterm.is_const())
+			if cc[self.algebra.base_ring.zero()] != 0 or len(cc) > 1:
+				return True
+		
+		elif self.is_mul():
+			cc = Counter(_subterm.const_value() for _subterm in self.subterms() if _subterm.is_const())
+			if cc[self.algebra.base_ring.zero()] != 0 or cc[self.algebra.base_ring.one()] != 0 or len(cc) > 1:
+				return True
+		
+		elif self.is_neg() and self.subterms()[0].is_const():
+			return True
+		
+		elif self.is_sub():
+			if all(_operand.is_const() for _operand in self.subterms()):
+				return True
+			elif self.subterms()[1].is_const() and self.subterms()[1].is_zero():
+				return True
+			elif self.subterms()[0].is_const() and self.subterms()[0].is_zero():
+				return True
+		
+		return any(_subterm.has_nonreduced_constants() for _subterm in self.subterms())
+	
 	def evaluate_constants(self):
 		"Simplifies the polynomial by removing 1s and 0s."
 		
@@ -644,6 +772,11 @@ class Term:
 				return -self.subterms()[1]
 		
 		elif self.is_add():
+			cc = Counter(_subterm.const_value() for _subterm in self.subterms() if _subterm.is_const())
+			##print("    add", cc)
+			if cc[self.algebra.base_ring.zero()] == 0 and len(cc) <= 1:
+				return self
+			
 			constant = self.algebra.base_ring.zero()
 			operands = []
 			for subterm in self.subterms():
@@ -666,6 +799,11 @@ class Term:
 				return self.algebra.sum(operands + [self.algebra.const(constant)])
 		
 		elif self.is_mul():
+			cc = Counter(_subterm.const_value() for _subterm in self.subterms() if _subterm.is_const())
+			##print("    mul", cc)
+			if cc[self.algebra.base_ring.zero()] == 0 and cc[self.algebra.base_ring.one()] == 0 and len(cc) <= 1:
+				return self
+			
 			constant = self.algebra.base_ring.one()
 			operands = []
 			for subterm in self.subterms():
@@ -698,13 +836,28 @@ class Term:
 				return self.algebra.zero()
 			else:
 				return self
+		
 		elif self.is_add():
-			operands = defaultdict(lambda: self.algebra.base_ring.zero())
+			operands = Counter()
+			#print("     evaluate repetitions: ", len(self.subterms()))
 			for subterm in self.subterms():
-				operands[Identical(subterm)] += self.algebra.base_ring.one()
+				operands[Identical(subterm)] += 1
+			#print("      evaluate repetitions most common:", [_v for (_k, _v) in operands.most_common()[:5]], all(_v == 1 for _v in operands.values()))
 			
+			if all(_v == 1 for _v in operands.values()):
+				return self
+			
+			#operands = defaultdict(lambda: self.algebra.base_ring.zero())
+			#for subterm in self.subterms():
+			#	operands[Identical(subterm)] += self.algebra.base_ring.one()
+			
+			one = self.algebra.base_ring.one()
 			addends = []
-			for operand, factor in operands.items():
+			for operand, reps in operands.items():
+				factor = self.algebra.base_ring.zero()
+				for n in range(reps):
+					factor += one
+				
 				if factor.is_zero():
 					pass
 				elif factor.is_one():
@@ -713,10 +866,16 @@ class Term:
 					addends.append(self.algebra.const(factor) * operand.term)
 			
 			return self.algebra.sum(addends)
+		
 		elif self.is_mul():
 			operands = Counter()
+			#print("     evaluate repetitions: ", len(self.subterms()))
 			for subterm in self.subterms():
 				operands[Identical(subterm)] += 1
+			#print("      evaluate repetitions most common:", [_v for (_k, _v) in operands.most_common()[:5]], all(_v == 1 for _v in operands.values()))
+			
+			if all(_v == 1 for _v in operands.values()):
+				return self
 			
 			factors = []
 			for operand, exponent in operands.items():
@@ -728,6 +887,7 @@ class Term:
 					factors.append(operand.term ** exponent)
 			
 			return self.algebra.product(factors)
+		
 		else:
 			return self
 	
@@ -765,6 +925,7 @@ class Term:
 				return self.algebra.product(operands)
 		
 		elif self.is_sub():
+			assert len(self.subterms()) == 2
 			a, b = self.subterms()
 			return (a + (-b).flatten()).flatten()
 		
@@ -773,6 +934,7 @@ class Term:
 			n = 0
 			while flat.is_neg():
 				n += 1
+				assert len(flat.subterms()) == 1
 				flat = flat.subterms()[0].flatten()
 			
 			if n % 2 == 0:
@@ -783,6 +945,7 @@ class Term:
 				minus_one = self.algebra.const(-self.algebra.base_ring.one())
 				return self.algebra.product(flat.subterms() + [minus_one])
 			elif flat.is_sub():
+				assert len(flat.subterms()) == 2
 				a, b = flat.subterms()
 				return b - a
 			else:
@@ -790,6 +953,23 @@ class Term:
 		
 		else:
 			return self
+	
+	def additive_form_subterms(self):
+		if self.is_sub():
+			return 2
+		
+		elif self.is_neg():
+			return self.subterms()[0].additive_form_subterms()
+		
+		elif self.is_mul():
+			length = 1
+			for subterm in self.subterms():
+				if subterm.is_add():
+					length *= len(subterm.subterms())
+			return length
+		
+		else:
+			return len(self.subterms())
 	
 	def additive_form(self):
 		"Transforms the polynomial into the form `f[0, 0] * f[0, 1] * f[0, 2] * ... + f[1, 0] * f[1, 1] * ... + f[2, 0] * ... + ...`. May return a monomial, variable or a constant."
@@ -815,11 +995,15 @@ class Term:
 		elif self.is_mul():
 			operands = []
 			for subterm in self.subterms():
+				#print("for subterm", repr(subterm))
 				if subterm.is_add():
+					#print(" + is_add")
 					operands.append(subterm.subterms())
 				else:
+					#print(" + not is_add")
 					operands.append([subterm])
 			
+			#print(" --", operands)
 			if not operands:
 				return self.algebra.zero()
 			
@@ -875,69 +1059,97 @@ class Term:
 		if not self.is_add():
 			return self
 		
+		addends = []
 		factors = Counter()
 		for monomial in self.subterms():
 			if monomial.is_mul():
+				addend = []
 				for factor in monomial.subterms():
+					#print(repr(factor))
 					factors[Identical(factor)] += 1
+					addend.append(Identical(factor))
+				addends.append(addend)
 			else:
 				factors[Identical(monomial)] += 1
+				addends.append([Identical(monomial)])
 		
-		try:
-			factor, frequency = factors.most_common()[0]
-		except IndexError:
+		winner = None
+		winner_reduction = 0
+		for factor, frequency in factors.most_common():
+			if frequency < 2: break
+			reduction = factor.term.circuit_size() * (frequency - 1)
+			if reduction > winner_reduction:
+				winner_reduction = reduction
+				winner = factor
+		
+		if winner is None:
 			return self
-		if frequency < 2:
-			return self
+		factor = winner
 		
 		main = []
 		rest = []
-		for monomial in self.subterms():
-			if factor == Identical(monomial):
-				main.append(self.algebra.one())
-			elif monomial.is_mul() and factor in frozenset(Identical(_subterm) for _subterm in monomial.subterms()):
-				main.append(self.algebra.product(_factor for _factor in monomial.subterms() if Identical(_factor) != factor))
+		for addend in addends:
+			if factor in addend:
+				addend.remove(factor)
+				
+				if len(addend) == 0:
+					main.append(self.algebra.one())
+				elif len(addend) == 1:
+					main.append(addend[0].term)
+				else:
+					main.append(self.algebra.product(_factor.term for _factor in addend))
 			else:
-				rest.append(monomial)
+				if len(addend) == 0:
+					rest.append(self.algebra.one())
+				elif len(addend) == 1:
+					rest.append(addend[0].term)
+				else:
+					rest.append(self.algebra.product(_factor.term for _factor in addend))
 		
-		factor_zero = (factor.term.is_const() or factor.term.is_var()) and factor.term.is_zero()
+		factor_zero = factor.term.is_const() and factor.term.is_zero()
 		
 		if (factor_zero or not main) and not rest:
 			return self.algebra.zero()
 		elif not (factor_zero or not main) and not rest:
-			return factor.term * self.algebra.sum(main)
+			result = factor.term * self.algebra.sum(main)
 		elif (factor_zero or not main) and rest:
-			return self.algebra.sum(rest)
+			result = self.algebra.sum(rest)
 		else:
-			return factor.term * self.algebra.sum(main) + self.algebra.sum(rest)
+			result = factor.term * self.algebra.sum(main) + self.algebra.sum(rest)
+		
+		if result.circuit_size() <= self.circuit_size():
+			return result
+		else:
+			return self
 	
-	def fold(self):
+	def fold(self, v=None):
 		"Transforms a polynomial `p` into the form `cls(v == 0) * p(v=0) + cls(v == 1) * p(v=1) + ...`."
 		
-		v, n = Counter(self.variables()).most_common()[0]
-		if n < 2:
-			return self
+		if v is None:
+			v, _ = Counter(self.variables()).most_common()[0]
 		
 		addends = []
 		for d in self.algebra.base_ring.domain():
-			s = self(**{str(v):self.algebra.const(d)}).evaluate_constants()
-			f = self.algebra.one()
+			s = self(**{str(v):self.algebra.const(d)})
+			factors = []
+			g = self.algebra.base_ring.one()
 			for e in self.algebra.base_ring.domain():
 				if d != e:
-					f *= v - self.algebra.const(e)
-					f = f.flatten()
-			f = f.additive_form().evaluate_constants()
+					factors.append((v - self.algebra.const(e)).additive_form())
+					g *= d - e
+			factors.append(self.algebra.const(g**-1))
+			f = self.algebra.product(factors)
 			addends.append(f * s)
 		
 		return self.algebra.sum(addends)
 	
 	def __repr__(self):
 		if self.is_const():
-			return self.__class__.__name__ + '(' + self.operator + ', [' + repr(self.const_value()) + '])'
+			return self.__class__.__name__ + '(' + repr(self.operator) + ', [' + repr(self.const_value()) + '])'
 		elif self.is_var():
-			return self.__class__.__name__ + '(' + self.operator + ', [' + repr(self.var_name()) + '])'
+			return self.__class__.__name__ + '(' + repr(self.operator) + ', [' + repr(self.var_name()) + '])'
 		else:
-			return self.__class__.__name__ + '(' + self.operator + ', [' + (', '.join(repr(_subterm) for _subterm in self.subterms())) + '])'
+			return self.__class__.__name__ + '(' + repr(self.operator) + ', [' + (', '.join(repr(_subterm) for _subterm in self.subterms())) + '])'
 	
 	def __str__(self):
 		if self.is_const():
@@ -965,41 +1177,75 @@ class Term:
 		elif self.is_neg():
 			subterm = self.subterms()[0]
 			return '-' + (('(' + str(subterm) + ')') if (not subterm.is_const() and not subterm.is_var() and not subterm.is_mul()) else str(subterm))
+		else:
+			return 'Term(' + str(self.operator) + ', [' + ', '.join([str(_subterm) for _subterm in self.subterms()]) + '])'
 	
 	def if_smaller(self, transform):
+		if self.circuit_size() <= 1:
+			return self
 		t = transform(self)
 		if t.circuit_size() < self.circuit_size():
 			return t
 		else:
 			return self
 	
-	def optimized(self):
-		def extract(h):
-			if h.circuit_size() <= 1:
-				return h
-			elif h.circuit_size() <= 16:
-				return h.fixed_point(self.__class__.flatten).additive_form().extract().traverse_before(self.__class__.evaluate_constants)
-			else:
-				return h.if_smaller(lambda g: g.fixed_point(self.__class__.flatten).additive_form().extract().traverse_before(self.__class__.evaluate_constants))
+	def optimized(self): # FIXME: sometimes eats all memory
+		if self.is_optimized:
+			return self
 		
-		print_msg = False
-		s = self.circuit_size()
-		if s > 100000:
-			print_msg = True
-		hs = hash(Identical(self))
-		if print_msg: print("  optimize", hex(hs), s)
-		def step(h):
-			h = h.traverse_before(self.__class__.evaluate_constants)
-			h = h.traverse_before(self.__class__.order)
-			h = h.traverse_after(self.__class__.evaluate_repetitions)
-			h = h.traverse_after(extract)
-			h = h.traverse_before(self.__class__.flatten)
-			if print_msg: print("  optimize", hex(hs), s, '...', h.circuit_size())
+		inner_fp_set = {}
+		def inner_step(h):
+			if h.circuit_size() <= 3:
+				return h
+			
+			if h.is_mul():
+				return h
+			
+			try:
+				return inner_fp_set[Identical(h)]
+			except KeyError:
+				pass
+			
+			g = h
+			h = h.fixed_point(self.__class__.flatten)
+			h = h.additive_form()
+			h = h.extract()
+			h = h.evaluate_constants()
+			
+			if h.circuit_size() > g.circuit_size():
+				h = g
+			
+			inner_fp_set[Identical(g)] = h
+			
 			return h
 		
-		r = self.fixed_point(step)
-		if print_msg: print("  optimize", hex(hs), s, '->', r.circuit_size())
-		return r
+		def outer_step(h):
+			if h.circuit_size() <= 1:
+				return h
+			#print("  optimize outer step", h.circuit_size(), h.circuit_depth())
+			h = h.traverse_before_filtered(self.__class__.evaluate_constants, self.__class__.has_nonreduced_constants)
+			h = h.traverse_before(self.__class__.order)
+			h = h.traverse_after(self.__class__.evaluate_repetitions)
+			h = h.traverse_after(inner_step)
+			h = h.traverse_before(self.__class__.flatten)
+			
+			return h
+		
+		#print(" optimize", self.circuit_size(), self.circuit_depth())
+		
+		if self.has_nonreduced_constants():
+			#print("  optimize: evaluate constants")
+			result = self.traverse_before_filtered(self.__class__.evaluate_constants, self.__class__.has_nonreduced_constants)
+		else:
+			result = self
+		
+		if result.circuit_size() > 1:
+			#print("  optimize: outer step")
+			result = result.fixed_point(outer_step)
+		
+		result.is_optimized = True
+		#print(" optimize: result", result.circuit_size(), self.circuit_depth())
+		return result
 	
 	def canonical(self):
 		try:
@@ -1019,7 +1265,7 @@ class Term:
 			return True
 		
 		if isinstance(other, Identical):
-			raise ValueError
+			raise ValueError("Comparing `Term` with `Identical` is an error.")
 		
 		try:
 			if self.hash_cache != other.hash_cache:
