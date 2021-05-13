@@ -335,7 +335,14 @@ class Polynomial(Immutable, AlgebraicStructure, Term):
 		except (AttributeError, ValueError):
 			return NotImplemented
 		
-		return self.algebra(self.symbol.mul, [self, other])
+		if (self.is_const() and self.is_zero()) or (other.is_const() and other.is_zero()):
+			return self.algebra(self.symbol.mul, [self.algebra.zero()])
+		elif self.is_const() and self.is_one():
+			return self.algebra(self.symbol.mul, [other])
+		elif other.is_const() and other.is_one():
+			return self.algebra(self.symbol.mul, [self])
+		else:
+			return self.algebra(self.symbol.mul, [self, other])
 	
 	def __rmul__(self, other):
 		try:
@@ -344,7 +351,14 @@ class Polynomial(Immutable, AlgebraicStructure, Term):
 		except (AttributeError, ValueError):
 			return NotImplemented
 		
-		return self.algebra(self.symbol.mul, [other, self])
+		if (self.is_const() and self.is_zero()) or (other.is_const() and other.is_zero()):
+			return self.algebra(self.symbol.mul, [self.algebra.zero()])
+		elif self.is_const() and self.is_one():
+			return self.algebra(self.symbol.mul, [other])
+		elif other.is_const() and other.is_one():
+			return self.algebra(self.symbol.mul, [self])
+		else:
+			return self.algebra(self.symbol.mul, [other, self])
 	
 	def polynomial_order(self):
 		current = self.canonical()

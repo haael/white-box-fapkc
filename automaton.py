@@ -199,9 +199,7 @@ def automaton_factory(base_ring):
 			To factorize a compound automaton it is necessary and sufficient to split its state vector into the part related to the first automaton and the part related to the second automaton.
 			The naive composition algorithm produces an automaton where the parts are simply concatenated, which leaves them open to factorization by the attacker. To prevent that, the state
 			representation must be obfuscated.
-			This function applies a linear transform to the state vector. In order to factorize the automaton into components, the attacker must guess the transformation matrix. In order to
-			learn one bit of one of the original states, he must guess one row of the matrix. The transformation is a square matrix of the size equal to the number of bits of the compound state
-			squared.
+			This function applies a nonlinear transform to the state vector. In order to factorize the automaton into components, the attacker must solve a set of nonlinear equations.
 			This function is slow. While debugging, this step might be omitted.
 			"""
 			
@@ -230,18 +228,18 @@ def automaton_factory(base_ring):
 					substitution[str(self.s[t, i])] = unmixed[i](**{f'c_{_i}' : self.s[t, _i] for _i in range(self.memory_width)})
 			
 			print("applying state transition")
-			print(" size:", self.state_transition.circuit_size())
+			print(" state transition circuit size:", self.state_transition.circuit_size(), [_c.circuit_size() for _c in self.state_transition])
 			bvt = base_vector(_trans(**substitution) for _trans in self.state_transition)
-			print(" step1", bvt.circuit_size(), [_c.circuit_size() for _c in bvt])
+			print(" mixing circuit size:          ", bvt.circuit_size(), [_c.circuit_size() for _c in bvt])
 			bvt = bvt.optimized()
-			print(" step2", bvt.circuit_size(), [_c.circuit_size() for _c in bvt])
+			print(" (after optimization):         ", bvt.circuit_size(), [_c.circuit_size() for _c in bvt])
 			self.state_transition = mix @ mix_nonlinear(**{f'b_{_i}' : bvt[_i] for _i in range(self.memory_width)})
 			#self.state_transition = mix_nonlinear(**{f'b_{_i}' : bvt[_i] for _i in range(self.memory_width)})
-			print(" result:", self.state_transition.circuit_size())
+			print(" mixed circuit size:           ", self.state_transition.circuit_size(), [_c.circuit_size() for _c in self.state_transition])
 			print("applying output transition")
-			print(" size:", self.output_transition.circuit_size())
+			print(" plain circuit size:", self.output_transition.circuit_size(), [_c.circuit_size() for _c in self.output_transition])
 			self.output_transition = base_vector(_trans(**substitution) for _trans in self.output_transition)
-			print(" result:", self.output_transition.circuit_size())
+			print(" mixed circuit size:", self.output_transition.circuit_size(), [_c.circuit_size() for _c in self.output_transition])
 		
 		@classmethod
 		def countdown(cls, block_size, memory_size, offset, length, period): # TODO

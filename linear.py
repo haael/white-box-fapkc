@@ -254,7 +254,7 @@ class Vector(AlgebraicStructure):
 		
 		try:
 			if self.dimension == other.dimension:
-				return sum((_a * _b for (_a, _b) in zip(self, other)), self.algebra.base_ring.zero())
+				return self.algebra.base_ring.sum(_a * _b for (_a, _b) in zip(self, other))
 			else:
 				raise ValueError("Vectors must have the same dimension")
 		except AttributeError:
@@ -271,7 +271,7 @@ class Vector(AlgebraicStructure):
 		
 		try:
 			if self.dimension == other.dimension:
-				return sum((_b * _a for (_a, _b) in zip(self, other)), self.algebra.base_ring.zero())
+				return self.algebra.base_ring.sum(_b * _a for (_a, _b) in zip(self, other))
 			else:
 				raise ValueError("Vectors must have the same dimension")
 		except AttributeError:
