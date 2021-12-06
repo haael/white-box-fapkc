@@ -1,12 +1,17 @@
 #!/usr/bin/python3
 #-*- coding:utf8 -*-
 
+
+"Helper classes that allow implementing finite automata using standard Python syntax."
+
+
 from rings import BooleanRing
-#from polynomial import Polynomial
-#from linear import Vector, Matrix
 from automaton import automaton_factory
 from utils import parallel
 from itertools import zip_longest
+
+
+__all__ = 'Boolean', 'Integer', 'Array'
 
 
 Automaton = automaton_factory(BooleanRing.get_algebra())
@@ -32,25 +37,45 @@ class Boolean:
 		except AttributeError:
 			pass
 		
-		self.b_value = value.optimized()
+		try:
+			self.b_value = polynomial(value.optimized())
+			return
+		except AttributeError:
+			pass
+		
+		self.b_value = polynomial.const(ring(bool(value)))
+	
+	def __str__(self):
+		try:
+			return str(bool(self))
+		except ValueError:
+			return f'Boolean({str(self.b_value)})'
+	
+	def __bool__(self):
+		if self.b_value.is_zero():
+			return False
+		elif self.b_value.is_one():
+			return True
+		else:
+			raise ValueError("`Boolean` value not true nor false.")
 	
 	def __and__(self, other):
-		try:
-			return self.__class__(self.b_value * other.b_value)
-		except AttributeError:
+		if hasattr(other, 'i_value'):
 			return NotImplemented
+		other = self.__class__(other)
+		return self.__class__(self.b_value * other.b_value)
 	
 	def __or__(self, other):
-		try:
-			return self.__class__(self.b_value | other.b_value)
-		except AttributeError:
+		if hasattr(other, 'i_value'):
 			return NotImplemented
+		other = self.__class__(other)
+		return self.__class__(self.b_value | other.b_value)
 	
 	def __xor__(self, other):
-		try:
-			return self.__class__(self.b_value + other.b_value)
-		except AttributeError:
+		if hasattr(other, 'i_value'):
 			return NotImplemented
+		other = self.__class__(other)
+		return self.__class__(self.b_value + other.b_value)
 	
 	def __invert__(self):
 		return self.__class__(self.b_value + one)
@@ -62,7 +87,10 @@ class Boolean:
 		return NotImplemented
 	
 	def __mul__(self, other):
-		return NotImplemented
+		if hasattr(other, 'i_value'):
+			return NotImplemented
+		else:
+			return self * Integer(other)
 	
 	def __lshift__(self, other):
 		return Integer(vector([self.b_value])) << other
@@ -82,21 +110,30 @@ class Integer:
 			pass
 		
 		try:
-			self.i_value = vector(value, value.bit_length())
+			self.i_value = vector(value, value.bit_length()).optimized()
 			return
 		except (TypeError, AttributeError):
 			pass
 		
 		try:
-			self.i_value = vector([value.b_value])
+			self.i_value = vector([value.b_value]).optimized()
 			return
 		except AttributeError:
 			pass
 		
 		self.i_value = value.optimized()
 	
+	def __str__(self):
+		try:
+			return hex(int(self))
+		except ValueError:
+			return f'Integer({", ".join([str(_x) for _x in self.i_value])})'
+	
 	def __bool__(self):
-		return bool(self.i_value)
+		b = Boolean(True)
+		for d in self.i_value:
+			b &= d
+		return bool(b)
 	
 	def __int__(self):
 		return int(self.i_value)
@@ -109,18 +146,32 @@ class Integer:
 		result = vector.zero(max(self.bit_length(), other.bit_length()) + 1)
 		c = zero
 		for n, (a, b) in enumerate(zip_longest(self.i_value, other.i_value, fillvalue=zero)):
-			result[n] = (a + b + c).optimized()
+			result[n] = (a + b + c)
 			c = (a * b | b * c | a * c).optimized()
+		
+		if(result[-1].optimized().is_zero()):
+			result = result[:-1]
+		
 		return self.__class__(result)
+	
+	def __radd__(self, other):
+		return self + self.__class__(other)
+	
+	def __sub__(self, other):
+		minus_1 = self.__class__(vector([one] * self.bit_length()))
+		return (self + other * minus_1) & minus_1
 	
 	def __mul__(self, other):
 		other = self.__class__(other)
 		result = self.__class__(vector.zero(self.bit_length()))
 		for n in range(other.bit_length()):
-			a = self.__class__(((self << n).i_value * other.i_value[n]).optimized())
+			a = self.__class__(((self << n).i_value * other.i_value[n]))
 			result += a
 			#print(int(self << n), int(other.i_value[n]), int(a), int(result))
 		return result
+	
+	def __rmul__(self, other):
+		return self * self.__class__(other)
 	
 	def __and__(self, other):
 		other = self.__class__(other)
@@ -130,12 +181,32 @@ class Integer:
 		return self.__class__(result)
 	
 	def __xor__(self, other):
-		return self.__class__(self.i_value + other.i_value)
+		other = self.__class__(other)
+
+		if len(self.i_value) < len(other.i_value):
+			i_ext = vector.zero(len(other.i_value) - len(self.i_value))
+		else:
+			i_ext = vector.zero(0)
+
+		if len(self.i_value) > len(other.i_value):
+			o_ext = vector.zero(len(self.i_value) - len(other.i_value))
+		else:
+			o_ext = vector.zero(0)
+		
+		return self.__class__((self.i_value | i_ext) + (other.i_value | o_ext))
+	
+	def __rxor__(self, other):
+		return self ^ self.__class__(other)
 	
 	def __rshift__(self, n):
-		return self.__class__(self.i_value[n:])
+		# TODO: support variable shifts
+		try:
+			return self.__class__(self.i_value[n:])
+		except IndexError:
+			return self.__class__(0)
 	
 	def __lshift__(self, n):
+		# TODO: support variable shifts
 		result = vector.zero(len(self.i_value) + n)
 		for m in range(len(self.i_value)):
 			result[m + n] = self.i_value[m]
@@ -144,149 +215,82 @@ class Integer:
 	def __eq__(self, other):
 		other = self.__class__(other)
 		all_eq = one
-		for n, (a, b) in enumerate(zip(self.i_value, other.i_value)):
-			bit_eq = (a + b + one).optimized()
+		for n, (a, b) in enumerate(zip_longest(self.i_value, other.i_value, fillvalue=zero)):
+			bit_eq = (a + b + one)
 			all_eq = (all_eq * bit_eq).optimized()
 		return Boolean(all_eq)
 	
 	def __ne__(self, other):
+		other = self.__class__(other)
 		any_ne = zero
-		for n, (a, b) in enumerate(zip(self.i_value, other.i_value)):
-			bit_ne = (a + b).optimized()
+		for n, (a, b) in enumerate(zip_longest(self.i_value, other.i_value, fillvalue=zero)):
+			bit_ne = (a + b)
 			any_ne = (any_ne | bit_ne).optimized()
 		return Boolean(any_ne)
 	
 	def __gt__(self, other):
+		other = self.__class__(other)
 		self_wins = zero
 		other_wins = zero
-		for a, b in reversed(list(zip(self.i_value, other.i_value))):
+		for a, b in reversed(list(zip_longest(self.i_value, other.i_value, fillvalue=zero))):
 			self_wins |= (a * (b + one) * (other_wins + one)).optimized()
 			other_wins |= ((a + one) * b * (self_wins + one)).optimized()
-		return Boolean(self_wins.optimized())
+		return Boolean(self_wins)
 	
 	def __ge__(self, other):
 		other = self.__class__(other)
 		self_wins = zero
 		other_wins = zero
-		for a, b in reversed(list(zip(self.i_value, other.i_value))):
+		for a, b in reversed(list(zip_longest(self.i_value, other.i_value, fillvalue=zero))):
 			self_wins |= (a * (b + one) * (other_wins + one)).optimized()
 			other_wins |= ((a + one) * b * (self_wins + one)).optimized()
-		return Boolean((other_wins + one).optimized())
+		return Boolean(other_wins + one)
 	
 	def __lt__(self, other):
 		other = self.__class__(other)
 		self_wins = zero
 		other_wins = zero
-		for a, b in reversed(list(zip(self.i_value, other.i_value))):
+		for a, b in reversed(list(zip_longest(self.i_value, other.i_value, fillvalue=zero))):
 			self_wins |= (a * (b + one) * (other_wins + one)).optimized()
 			other_wins |= ((a + one) * b * (self_wins + one)).optimized()
-		return Boolean(other_wins.optimized())
+		return Boolean(other_wins)
 	
 	def __le__(self, other):
 		other = self.__class__(other)
 		self_wins = zero
 		other_wins = zero
-		for a, b in reversed(list(zip(self.i_value, other.i_value))):
+		for a, b in reversed(list(zip_longest(self.i_value, other.i_value, fillvalue=zero))):
 			self_wins |= (a * (b + one) * (other_wins + one)).optimized()
 			other_wins |= ((a + one) * b * (self_wins + one)).optimized()
-		return Boolean((self_wins + one).optimized())
+		return Boolean(self_wins + one)
 	
+	def __str__(self):
+		return str(self.i_value)
+	
+	def __repr__(self):
+		return self.__class__.__name__ + '(' + repr(self.i_value) + ')'
 
 
-if __name__ == '__main__':	
-	
-	def sample_fn(input_stream, state=vector.zero(8 + 1)):
-		uppercase = Boolean(state[0])
-		lowercase = Boolean(state[1])
-		numbers = Boolean(state[2])
-		special = Boolean(state[3])
-		length = Integer(state[4:8])
-		
-		bit_one = polynomial.one()
-		
-		min_pass_len = 3
-		lower_a = ord('a')
-		lower_z = ord('z')
-		upper_a = ord('A')
-		upper_z = ord('Z')
-		char_0 = ord('0')
-		char_9 = ord('9')
-		
-		for symbol in input_stream:
-			assert len(symbol) <= 8
-			char = Integer(symbol)
-			
-			lower_letter = (lower_a <= char) & (char <= lower_z)
-			upper_letter = (upper_a <= char) & (char <= upper_z)
-			digit = (char_0 <= char) & (char <= char_9)
-			special_char = ~lower_letter & ~upper_letter & ~digit
-			
-			uppercase |= upper_letter
-			lowercase |= lower_letter
-			numbers |= digit
-			special |= special_char
-			length += (length < min_pass_len)
-			length &= 0b1111
-			
-			#print(int(length))
-			
-			pass_ok = uppercase & lowercase & numbers & special & (length == min_pass_len)
-			
-			yield vector([pass_ok.b_value])
-			
-			assert length.bit_length() <= 4
-		
-		state[0] = uppercase.b_value
-		state[1] = lowercase.b_value
-		state[2] = numbers.b_value
-		state[3] = special.b_value
-		state[4:8] = length.i_value
-	
-	print("converting function to automaton")
-	
-	a = vector(ord('A'), 8)
-	b = vector(ord('b'), 8)
-	c = vector(ord(':'), 8)
-	d = vector(ord('0'), 8)
 
+class Array:
+	"This class transforms a list of `Integer` values into an equivalent circuit that can be addressed using `Integer`. Behaves like an immutable list in the code."
 	
-	source_output = [int(x) for x in sample_fn([a, b, c, d])]
-	print("source function output:", source_output)
+	def __init__(self, array):
+		"Compile the object from a collection of elements. This may take a long time."
+		self.index = Integer(vector([polynomial.var(f'index_{_n}') for _n in range((len(array) - 1).bit_length())]))
+		circuit = Integer(0)
+		for n, element in enumerate(array):
+			circuit ^= (self.index == Integer(n)) * Integer(element)
+		self.circuit = circuit
+	
+	def __getitem__(self, index):
+		"Get item at the specified position. Index may be the `Integer` class and does not need to be constant. If the position is larger than the array size, the result is undefined."
+		subst = {}
+		for n in range(self.index.bit_length()):
+			i = (Integer(index) >> n).i_value
+			subst[f'index_{n}'] = i[0] if len(i) else zero
+		return Integer(self.circuit.i_value(**subst))
 
-	argument = vector(Automaton.x[_i] for _i in range(8))
-	state = vector(Automaton.s[1, _i] for _i in range(9))
-	result = list(sample_fn([argument], state))[0]
-		
-	sample_fsm = Automaton(output_transition=result, state_transition=state)
-	fsm_output = [int(x) for x in sample_fsm([a, b, c, d])]
-	print("plain automaton output:", fsm_output)
-	
-	assert source_output == fsm_output
 
-	print("size of plain automaton:", sample_fsm.output_transition.circuit_size(), sample_fsm.state_transition.circuit_size(), [_c.circuit_size() for _c in sample_fsm.state_transition])
-	
-	if __debug__: print("\n *** WARNING: try running the script with optimization flag `-O` to speed up obfuscated automaton generation ***\n")
-	
-	with parallel():
-		print()
-		print("obfuscating automaton")
-		
-		print("generating FAPKC keys")
-		mixer8, unmixer8 = Automaton.fapkc0(block_size=8, memory_size=4)
-		mixer1, unmixer1 = Automaton.fapkc0(block_size=1, memory_size=4)
-		
-		unmixer8.optimize()
-		mixer1.optimize()
-		
-		sample_homo = mixer1 @ sample_fsm @ unmixer8
-		print("size of raw homomorphic automaton:", sample_homo.output_transition.circuit_size(), sample_homo.state_transition.circuit_size(), [_c.circuit_size() for _c in sample_homo.state_transition])
-		sample_homo.optimize()
-		print("after optimization:", sample_homo.output_transition.circuit_size(), sample_homo.state_transition.circuit_size(), [_c.circuit_size() for _c in sample_homo.state_transition])
-		sample_homo.mix_states()
-		print("size of mixed homomorphic automaton:", sample_homo.output_transition.circuit_size(), sample_homo.state_transition.circuit_size(), [_c.circuit_size() for _c in sample_homo.state_transition])
-		sample_homo.optimize()
-		print("after optimization:", sample_homo.output_transition.circuit_size(), sample_homo.state_transition.circuit_size(), [_c.circuit_size() for _c in sample_homo.state_transition])
-	
-	
-	
-	
+
+

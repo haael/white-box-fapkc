@@ -25,6 +25,8 @@ __all__ = 'Polynomial',
 class Polynomial(Immutable, AlgebraicStructure, Term):
 	"Polynomials over rings and fields."
 	
+	mutable = frozenset(['hash_cache', 'identical_hash_cache', 'canonical_cache', 'cached_algebra', 'cached_circuit_size', 'is_optimized', 'cached_is_jit', 'cached_sort_ordering', 'cached_variables_set'])
+	
 	symbol = Enum('Polynomial.symbol', 'var const add sub neg mul')
 	
 	default_ring = BooleanRing.get_algebra()
@@ -88,13 +90,7 @@ class Polynomial(Immutable, AlgebraicStructure, Term):
 			self.p_operator = operator
 			self.p_operands = operands
 		
-		self.mutable.add('hash_cache')
-		self.mutable.add('identical_hash_cache')
-		self.mutable.add('canonical_cache')
-		self.mutable.add('cached_algebra')
-		self.mutable.add('cached_circuit_size')
-		self.mutable.add('is_optimized')
-		self.mutable.add('cached_has_nonreduced_constants')
+		self.calculate_identical_hash()
 		self.immutable = True
 		
 		assert self.algebra.algebra_name == 'Polynomial'
@@ -102,6 +98,10 @@ class Polynomial(Immutable, AlgebraicStructure, Term):
 		
 		## This is a very expensive check.
 		#assert self.is_valid_polynomial(), repr(self)
+	
+	def __hash__(self):
+		Immutable.__hash__(self)
+		return Term.__hash__(self)
 	
 	def __repr__(self):
 		if self.is_const():
@@ -134,14 +134,14 @@ class Polynomial(Immutable, AlgebraicStructure, Term):
 		if not self.is_const() and not self.is_var():
 			return self.p_operands
 		else:
-			raise ValueError("Variable or constant polynomial doesn't have substructure: " + repr(self))
+			raise ValueError(f"Variable or constant polynomial doesn't have substructure: {repr(self)}", self)
 	
 	def const_value(self):
 		"Return the value of the constant (type: `self.base_ring`)."
 		if self.is_const():
 			return self.p_operands
 		else:
-			raise ValueError("Const value requested from a polynomial that is not a const.")
+			raise ValueError(f"Const value requested from a polynomial that is not a const: {repr(self)}.", self)
 	
 	def var_name(self):
 		"Return the name of the variable (type: `str`)."
@@ -216,7 +216,7 @@ class Polynomial(Immutable, AlgebraicStructure, Term):
 			return cls(cls.symbol.mul, factors, base_ring=base_ring)
 	
 	@classmethod
-	def random(cls, variables=None, order=0, base_ring=default_ring):
+	def random(cls, variables=None, degree=0, base_ring=default_ring):
 		algebra = cls.get_algebra(base_ring=base_ring)
 		
 		if variables == None:
@@ -229,34 +229,43 @@ class Polynomial(Immutable, AlgebraicStructure, Term):
 					variables[n] = algebra.var(v)
 		
 		ds = []
-		for n in range(order + 1):
-			for m in range(min(n, order - n) + 1): # TODO: factorial
-				vs = list(random_sample(iter(variables), len(variables), n)) # FIXME: sometimes fails with `empty range for randrange()`
-				vs.append(algebra.const(base_ring.random()))
-				monomial = algebra(cls.symbol.mul, vs)
-				ds.append(monomial)
+		for n in range(degree + 1):
+			for m in range(min(n, degree - n) + 1):
+				vs = []
+				for v in random_sample(iter(variables), len(variables), n):
+					vs.append(v + algebra.const(base_ring.random()))
+				vs.append(algebra.const(base_ring.random_nonzero()))
+				ds.append(algebra.product(vs))
+
+		ds.append(algebra.const(base_ring.random()))
 		
-		return algebra(cls.symbol.add, ds)
+		return algebra.sum(ds)
 	
 	@classmethod
-	def random_nonzero(cls, variables=None, order=0, base_ring=default_ring):
+	def random_nonzero(cls, variables=None, degree=0, base_ring=default_ring):
 		algebra = cls.get_algebra(base_ring=base_ring)
 		
 		if variables == None:
 			variables = []
 		
+		if any(not hasattr(_var, 'is_var') for _var in variables):
+			variables = list(variables)
+			for n, v in enumerate(variables):
+				if not hasattr(v, 'is_var'):
+					variables[n] = algebra.var(v)
+		
 		ds = []
-		for n in range(order + 1):
-			for m in range(min(n, order - n) + 1): # TODO: factorial
-				vs = list(random_sample(iter(variables), len(variables), n))
-				vs.append(algebra.const(base_ring.random()))
-				monomial = algebra(cls.symbol.mul, vs)
-				ds.append(monomial)
+		for n in range(degree + 1):
+			for m in range(min(n, degree - n) + 1):
+				vs = []
+				for v in random_sample(iter(variables), len(variables), n):
+					vs.append(v + algebra.const(base_ring.random()))
+				vs.append(algebra.const(base_ring.random_nonzero()))
+				ds.append(algebra.product(vs))
+
+		ds.append(algebra.const(base_ring.random_nonzero()))
 		
-		result = algebra(cls.symbol.add, ds)
-		if not result: result += base_ring.random_nonzero()
-		
-		return result
+		return algebra.sum(ds)
 	
 	def is_valid_polynomial(self):
 		algebra = self.algebra
@@ -360,16 +369,19 @@ class Polynomial(Immutable, AlgebraicStructure, Term):
 		else:
 			return self.algebra(self.symbol.mul, [other, self])
 	
-	def polynomial_order(self):
+	def degree(self):
 		current = self.canonical()
 		if current.is_const():
 			return 0
 		elif current.is_var():
 			return 1
 		elif self.is_mul():
-			return len(self.subterms())
+			if self.subterms()[-1].is_const():
+				return len(self.subterms()) - 1
+			else:
+				return len(self.subterms())
 		elif self.is_add():
-			return self.subterms()[0].polynomial_order()
+			return self.subterms()[0].degree()
 		else:
 			raise RuntimeError
 	
@@ -396,7 +408,7 @@ class Polynomial(Immutable, AlgebraicStructure, Term):
 			else:
 				return zero, a
 		
-		elif a.is_mul():
+		elif a.is_mul() and not b.is_add():
 			fa = Counter(Identical(_f) for _f in a.subterms() if _f.is_var())
 			ca = self.algebra.product(_f for _f in a.subterms() if _f.is_const()).canonical()
 			
@@ -417,30 +429,59 @@ class Polynomial(Immutable, AlgebraicStructure, Term):
 			else:
 				return zero, a
 		
-		elif a.is_add():
+		elif a.is_add() or b.is_add():
 			if b.is_const():
 				return self.algebra.sum(_op / b for _op in self.subterms()), zero
 			elif b.is_var() or b.is_mul():
 				f, r = list(zip(*[divmod(_op, b) for _op in self.subterms()]))
 				return self.algebra.sum(f).canonical(), self.algebra.sum(r).canonical()
 			else:
-				d = zero
-				t = a
-				for la, lb in product(a.subterms(), b.subterms()):
-					f, r = divmod(la, lb)
-					if not r.is_zero(): continue
-					assert la == f * lb, f"{la} == ({f}) * ({lb})"
-					
-					ra = (a - f * b).canonical()
-					if ra.polynomial_order() >= a.polynomial_order(): continue
-					g, s = divmod(ra, b)
-					assert a == (f + g) * b + s
-					
-					if s.polynomial_order() < t.polynomial_order():
-						d = f + g
-						t = s
+				result = zero
+				remainder = a
+				divisor = b
 				
-				return d.canonical(), t.canonical()
+				while True:
+					#print("div:", result, " ... ", remainder)
+					
+					if remainder.is_add():
+						remainder_subterms = remainder.subterms()
+					else:
+						remainder_subterms = [remainder]
+					
+					for a_monomial, b_monomial in product(remainder_subterms, divisor.subterms()):
+						#print(" ", a_monomial, ":", b_monomial)
+						monomial_factor, monomial_rest = divmod(a_monomial, b_monomial)
+						if not (monomial_rest.is_const() and monomial_rest.is_zero()):
+							continue
+						assert a_monomial == monomial_factor * b_monomial, f"{a_monomial} == ({monomial_factor}) * ({b_monomial})"
+						
+						if (monomial_factor.is_const() and monomial_factor.is_zero()):
+							continue
+						
+						new_remainder = (remainder - monomial_factor * divisor).canonical()
+						#print("  ->", new_remainder, new_remainder.degree(), remainder.degree())
+						if new_remainder.degree() > remainder.degree():
+							continue
+						elif new_remainder.degree() < remainder.degree():
+							pass
+						else:
+							assert new_remainder.degree() == remainder.degree()
+							
+							if new_remainder.is_add() and remainder.is_add():
+								if len(new_remainder.subterms()) >= len(remainder.subterms()):
+									continue
+							elif not remainder.is_add() and new_remainder.is_add():
+								continue
+						
+						remainder = new_remainder
+						result += monomial_factor
+						break
+					else:
+						break # end outer loop
+				
+				assert result * b + remainder == a
+				#print("=", result.canonical(), " ... ", remainder)
+				return result.canonical(), remainder.canonical()
 					
 		
 		raise RuntimeError
@@ -491,12 +532,8 @@ class Polynomial(Immutable, AlgebraicStructure, Term):
 		return other + self - other * self
 	
 	def __pow__(self, exponent):
-		if exponent != 0 and (self.algebra.base_ring.size == 2 or self.is_zero() or self.is_one()):
-			return self
-		elif exponent == 0 and self.is_zero():
-			raise ZeroDivisionError("Zero to the power of zero.")
-		elif exponent < 0 and self.is_zero():
-			raise ZeroDivisionError("Zero to negative power.")
+		if self.is_const():
+			return self.algebra.const(self.const_value() ** exponent)
 		elif exponent == 0:
 			return self.algebra.one()
 		elif exponent == 1:
@@ -521,8 +558,14 @@ class Polynomial(Immutable, AlgebraicStructure, Term):
 		for value in base_ring.domain():
 			yield algebra(value)
 	
+	@cached
 	def is_jit(self):
-		return self.is_const() and self.const_value().is_jit()
+		if self.is_const():
+			return self.const_value().is_jit()
+		elif self.is_var():
+			return False
+		else:
+			return any(_subterm.is_jit() for _subterm in self.subterms())
 	
 	@property
 	def ring_value(self):
@@ -571,13 +614,132 @@ class Polynomial(Immutable, AlgebraicStructure, Term):
 		
 		return wrapped
 	
-	__hash__ = Term.__hash__
+	if __debug__:
+		def __hash__(self):
+			if not self.__dict__:
+				return 0
+			Immutable.__hash__(self)
+			try:
+				return Term.__hash__(self)
+			except AttributeError:
+				print(self.__dict__)
+				raise
+	else:
+		__hash__ = Term.__hash__
+	
+	variables = Term.variables
 	
 	def __bool__(self):
 		return not self.is_zero()
 	
 	def __gt__(self, other):
 		return self.sort_ordering() > other.sort_ordering()
+
+	@classmethod
+	def gcd(cls, p, q, base_ring=default_ring):
+		while True:
+			p = p.canonical()
+			q = q.canonical()
+			
+			if q.is_const() and q.is_zero():
+				return p
+			elif p.is_const() and p.is_zero():
+				return q
+			else:
+				p, q = q, p % q
+	
+	@classmethod
+	def gcd_extended(cls, p, q, base_ring=default_ring):
+		one = cls.one(base_ring=base_ring)
+		zero = cls.zero(base_ring=base_ring)
+		
+		p = p.canonical()
+		q = q.canonical()
+		
+		if q.is_const() and q.is_zero():
+			return p, one, zero
+		elif p.is_const() and p.is_zero():
+			return q, zero, one
+		else:
+			r, a, b = cls.gcd_extended(q, p % q, base_ring=base_ring)
+			return r, b - (q // p) * a, a
+	
+	@classmethod
+	def irreducible_polynomials(cls, degree, base_ring=default_ring):
+		x = cls.var('x', base_ring=base_ring)
+		zero = cls.zero(base_ring=base_ring)
+		one = cls.one(base_ring=base_ring)
+		
+		monomials = list(reversed([x ** _i for _i in range(degree + 1)]))
+		for coefficients in product(*[base_ring.domain() for _i in range(degree)]):
+			p = sum((_c * _m for (_c, _m) in zip((one,) + coefficients, monomials)), zero).canonical()
+			#print("ip:", p)
+			if p.is_irreducible():
+				yield p
+	
+	def is_irreducible(self):
+		"Rabin's irreducibility test" # FIXME: buggy
+		
+		algebra = self.algebra
+		x = algebra.var('x')
+		zero = algebra.zero()
+		one = algebra.one()
+		c = self.canonical()
+		n = c.degree()
+		q = algebra.base_ring.size
+		
+		#print()
+		#print("rit:", str(c))
+		#print("deg =", n)
+		#print("base =", q)
+		
+		for k in range(2, n + 1):
+			if n % k != 0: continue
+			m = n // k
+			g = algebra.gcd(c, (x**(q**m) - x) % c).canonical()
+			#print(" m:", m, ":", str((x**(q**m) - x) % c), "gcd:", str(g))
+			if not g.is_const() or g.is_zero():
+				return False
+		
+		#print(" n:", n, ":", str((x**(q**n) - x) % c))
+		g = ((x**(q**n) - x) % c).canonical()
+		if not g.is_const() or not g.is_zero():
+			return False
+		
+		return True
+	
+	def coefficients(self):
+		if len(frozenset(self.variables())) > 1:
+			raise NotImplementedError("Coefficient calculation not implemented for multivariate polynomials")
+		
+		one = self.algebra.base_ring.one()
+		zero = self.algebra.base_ring.zero()
+		
+		r = {}
+		s = self.canonical()
+		#print(str(s))
+		for k in s.subterms():
+			if k.is_const():
+				r[0] = k.const_value()
+			elif k.is_var():
+				r[1] = one
+			elif k.is_mul():
+				if k.subterms()[-1].is_const():
+					r[len(k.subterms()) - 1] = k.subterms()[-1].const_value()
+				else:
+					r[len(k.subterms())] = one
+		
+		#print("coef r:", r)
+		
+		z = []
+		for n in range(s.degree() + 1):
+			try:
+				z.append(r[n])
+			except KeyError:
+				z.append(zero)
+		#print("coef z:", z)
+		return z
+
 
 
 if __debug__:
@@ -703,7 +865,7 @@ if __debug__:
 		
 		def random_polynomials(n):
 			for i in range(n):
-				yield Polynomial.random(variables=[x, y, z], order=3)
+				yield Polynomial.random(variables=[x, y, z], degree=3)
 		
 		for a in random_polynomials(32):
 			
@@ -746,13 +908,13 @@ if __debug__:
 			except ArithmeticError:
 				assert yes % a
 			
-			if Polynomial.base_ring.size == 2:
-				assert a * a == a, "a = {}".format(a)
-				assert -a == a
-				assert a + a == no
-				assert a * a + a == no
-				assert a | a == a
-				assert a**2 == a
+			#if Polynomial.base_ring.size == 2:
+			#	assert a * a == a, "a = {}".format(a)
+			#	assert -a == a
+			#	assert a + a == no
+			#	assert a * a + a == no
+			#	assert a | a == a
+			#	assert a**2 == a
 		
 		for a, b in product(random_polynomials(8), random_polynomials(8)):
 			assert a + b == b + a
@@ -762,6 +924,7 @@ if __debug__:
 			assert (-a) * (-b) == a * b, f"{a.canonical()}, {b.canonical()} : {((-a) * (-b)).canonical()} == {(a * b).canonical()}"
 			
 			try:
+				#print(a, "?", b)
 				q, r = divmod(a, b)
 				assert q * b + r == a, f"({str(a.canonical())}) / ({str(b.canonical())})"
 				
@@ -781,7 +944,7 @@ if __debug__:
 		v = [algebra.var('v_' + str(_n)) for _n in range(128)]
 		
 		for i in range(10):
-			p = algebra.random(variables=v, order=64).flatten()
+			p = algebra.random(variables=v, degree=64).flatten()
 			po = p.optimized()
 			if verbose:
 				print(" ", p.circuit_size(), p.circuit_depth(), '->', po.circuit_size(), po.circuit_depth(), "\t", str(100 - int(100 * po.circuit_size() / p.circuit_size())) + "%")
@@ -803,7 +966,7 @@ if __debug__:
 		
 		var_list = 'abcdefgh'
 		v = list(map(polynomial.var, var_list))
-		p1 = polynomial.random(variables=v, order=7)
+		p1 = polynomial.random(variables=v, degree=7)
 		p1 = p1.optimized()
 		p1.compile('p1', compiler)
 		code = compiler.compile()
@@ -822,10 +985,10 @@ if __debug__:
 		ring_polynomial = Polynomial.get_algebra(base_ring=ring)
 		if verbose: print(" ring test")
 		test_ring(ring_polynomial)
-		if verbose: print(" field test")
-		test_field(ring_polynomial)
-		#if verbose: print(" polynomial test")
-		#test_polynomial(ring_polynomial)
+		#if verbose: print(" field test")
+		#test_field(ring_polynomial)
+		if verbose: print(" polynomial test")
+		test_polynomial(ring_polynomial)
 		if verbose: print(" optimization test")
 		test_optimization(ring_polynomial, verbose)
 		if verbose: print(" compilation test")
@@ -837,10 +1000,10 @@ if __debug__:
 		field_polynomial = Polynomial.get_algebra(base_ring=field)
 		if verbose: print(" ring test")
 		test_ring(field_polynomial)
-		if verbose: print(" field test")
-		test_field(field_polynomial)
-		#if verbose: print(" polynomial test")
-		#test_polynomial(field_polynomial)
+		#if verbose: print(" field test")
+		#test_field(field_polynomial)
+		if verbose: print(" polynomial test")
+		test_polynomial(field_polynomial)
 		if verbose: print(" optimization test")
 		test_optimization(ring_polynomial, verbose)
 		if verbose: print(" compilation test (long multiplication)")
@@ -855,8 +1018,8 @@ if __debug__:
 			ring_polynomial = Polynomial.get_algebra(base_ring=ring)
 			if verbose: print(" ring test")
 			test_ring(ring_polynomial)
-			#if verbose: print(" polynomial test")
-			#test_polynomial(ring_polynomial)
+			if verbose: print(" polynomial test")
+			test_polynomial(ring_polynomial)
 			if verbose: print(" optimization test")
 			test_optimization(ring_polynomial, verbose)
 			if verbose: print(" compilation test")
@@ -869,10 +1032,10 @@ if __debug__:
 			field_polynomial = Polynomial.get_algebra(base_ring=field)
 			if verbose: print(" ring test")
 			test_ring(field_polynomial)
-			if verbose: print(" field test")
-			test_field(field_polynomial)
-			#if verbose: print(" polynomial test")
-			#test_polynomial(field_polynomial)
+			#if verbose: print(" field test")
+			#test_field(field_polynomial)
+			if verbose: print(" polynomial test")
+			test_polynomial(field_polynomial)
 			if verbose: print(" optimization test")
 			test_optimization(ring_polynomial, verbose)
 			if verbose: print(" compilation test")
@@ -885,10 +1048,10 @@ if __debug__:
 			field_polynomial = Polynomial.get_algebra(base_ring=field)
 			if verbose: print(" ring test")
 			test_ring(field_polynomial)
-			if verbose: print(" field test")
-			test_field(field_polynomial)
-			#if verbose: print(" polynomial test")
-			#test_polynomial(field_polynomial)
+			#if verbose: print(" field test")
+			#test_field(field_polynomial)
+			if verbose: print(" polynomial test")
+			test_polynomial(field_polynomial)
 			if verbose: print(" optimization test")
 			test_optimization(ring_polynomial, verbose)
 			if verbose: print(" compilation test")
@@ -898,7 +1061,11 @@ if __debug__:
 
 
 if __debug__ and __name__ == '__main__':
-	polynomial_test_suite(verbose=True)
+	ring = BooleanRing.get_algebra()
+	ring_polynomial = Polynomial.get_algebra(base_ring=ring)
+	test_optimization(ring_polynomial, True)
+
+	#polynomial_test_suite(verbose=True)
 	
 
 

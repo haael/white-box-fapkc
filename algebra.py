@@ -12,6 +12,8 @@ __all__ = 'Algebra', 'AlgebraicStructure'
 class Algebra(Immutable):
 	"An object representing the algebra, that means the set of values and operations on that values. Makes sense only coupled with the class implementing the neccessary operations."
 	
+	mutable = frozenset(['hash_cache', 'jit_log_table', 'jit_exp_table'])
+	
 	def __init__(self, name, init, params, kwparams):
 		self.algebra_name = name
 		if isinstance(init, str):
@@ -31,14 +33,11 @@ class Algebra(Immutable):
 		#if name not in ('Polynomial', 'Vector', 'Matrix'):
 		#	self.instances_cache = dict()
 		
-		self.mutable.add('hash_cache')
-		self.mutable.add('jit_log_table')
-		self.mutable.add('jit_exp_table')
 		#self.mutable.add('instances_cache')
 		self.immutable = True
 	
 	def __getattr__(self, key):
-		if key.startswith('algebra_'):
+		if key.startswith('algebra_') or key.startswith('_'):
 			return super().__getattribute__(key)
 		
 		try:
@@ -138,4 +137,7 @@ class AlgebraicStructure:
 		except KeyError:
 			algebra = cls.algebras[key] = cls.algebra_class(key[0], cls, key[1], dict(zip(key[2], key[3])))
 		return algebra
+	
+	def variables(self):
+		yield from []
 

@@ -126,6 +126,8 @@ def random_sample(iterable, length, size):
 class Immutable:
 	"Makes the object immutable. You must set `self.immutable = True` after initialization in the constructor."
 	
+	mutable = frozenset()
+	
 	@property
 	def immutable(self):
 		try:
@@ -137,18 +139,18 @@ class Immutable:
 	def immutable(self, value):
 		object.__setattr__(self, '_Immutable__immutable', value)
 	
-	@property
-	def mutable(self):
-		try:
-			return self.__mutable
-		except AttributeError:
-			mutable = set()
-			object.__setattr__(self, '_Immutable__mutable', mutable)
-			return mutable
-	
-	@mutable.setter
-	def mutable(self, value):
-		object.__setattr__(self, '_Immutable__mutable', value)
+	#@property
+	#def mutable(self):
+	#	try:
+	#		return self.__mutable
+	#	except AttributeError:
+	#		mutable = set()
+	#		object.__setattr__(self, '_Immutable__mutable', mutable)
+	#		return mutable
+	#
+	#@mutable.setter
+	#def mutable(self, value):
+	#	object.__setattr__(self, '_Immutable__mutable', value)
 	
 	def __setattr__(self, attr, value):
 		if self.immutable and (attr not in self.mutable):

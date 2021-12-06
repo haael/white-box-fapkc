@@ -2,7 +2,7 @@
 #-*- coding:utf8 -*-
 
 
-from collections import deque
+from collections import deque, Counter
 from itertools import product, chain
 from time import time
 from pathlib import Path
@@ -62,6 +62,7 @@ def automaton_factory(base_ring):
 			
 			self.output_transition = output_transition
 			self.state_transition = state_transition
+			self.history = deque([base_const_vector.zero(self.memory_width)] * self.memory_length) # initial state
 		
 		def transition(self, x, history):
 			"""
@@ -96,20 +97,23 @@ def automaton_factory(base_ring):
 				history.pop()
 			return y
 		
-		def __call__(self, in_stream, initial_state=None):
+		def __call__(self, in_stream, history=None):
 			"Takes the stream of input symbols, yields the stream of output symbols. Starts from the state composed of zero vectors."
 			
-			if initial_state == None:
+			if history is None:
 				history = deque([base_const_vector.zero(self.memory_width)] * self.memory_length) # initial state
+			elif history is Ellipsis:
+				history = self.history
 			else:
-				history = deque(initial_state)
 				if len(history) != self.memory_length:
-					raise ValueError("Invalid initial state length")
+					raise ValueError(f"Invalid initial state length: {history} != {self.memory_length}")
 				if any(_element.dimension != self.memory_width for _element in history):
 					raise ValueError("Invalid vector width in initial state")
 			
 			for x in in_stream:
 				yield self.transition(x, history)
+			
+			self.history = history
 		
 		def __matmul__(self, other):
 			"Automaton composition."
@@ -117,17 +121,34 @@ def automaton_factory(base_ring):
 			shift = other.memory_width
 			
 			substitution = {}
-			for i, yi in enumerate(other.output_transition):
+			for i, yi in enumerate(other.output_transition.optimized()):
 				substitution[str(self.x[i])] = yi
 			for t in range(1, self.memory_length + 1):
 				for i in range(self.memory_width):
 					substitution[str(self.s[t, i])] = self.s[t, i + shift]
-			
-			output_transition = base_vector(_trans(**substitution) for _trans in self.output_transition)
-			state_transition = base_vector(chain(other.state_transition, (_trans(**substitution) for _trans in self.state_transition)))
+
+			optimized_self_output = self.output_transition.optimized()
+			print(optimized_self_output.variables_count())
+			sc = Counter()
+			for v, c in substitution.items():
+				sc[v] += c.circuit_size()
+			print(sc)
+						
+			for n, cp in enumerate(optimized_self_output):
+				s = cp.circuit_size()
+				for vn, v in cp.variables_count().items():
+					k = substitution[vn].circuit_size()
+					print(v, " > ",  s / (2 * k) + 1)
+					if v > s / (2 * k) + 1:
+						print("fold", vn, s, k, optimized_self_output[n].circuit_size())
+						optimized_self_output[n] = cp.fold(base_polynomial.var(vn))
+						break
+
+			output_transition = base_vector(_trans(**substitution) for _trans in optimized_self_output).optimized()
+			state_transition = base_vector(chain(other.state_transition.optimized(), (_trans(**substitution) for _trans in self.state_transition.optimized()))).optimized()
 			
 			return self.__class__(output_transition, state_transition)
-		
+				
 		@property
 		def input_size(self):
 			v = frozenset().union(*[_c.variables() for _c in self.state_transition.values()]) | frozenset().union(*[_c.variables() for _c in self.output_transition.values()])
@@ -147,16 +168,19 @@ def automaton_factory(base_ring):
 		@property
 		@memoize
 		def memory_length(self):
-			v = frozenset(str(_v) for _v in frozenset().union(*[_c.variables() for _c in self.state_transition.values()]) | frozenset().union(*[_c.variables() for _c in self.output_transition.values()]))
-			if not v:
-				return 0
+			#a = self.state_transition.variables_set()
+			#b = self.output_transition.variables_set()
+			#if (not a) and (not b):
+			#	return 0
 			
+			print("memory length...", self.state_transition.circuit_size(), self.output_transition.circuit_size())
 			m = 0
-			for va in v:
+			for va in chain(self.state_transition.variables(), self.output_transition.variables()):
 				vs = str(va).split('_')
 				if vs[0] != 's': continue # FIXME: assumes variable naming
 				m = max(m, int(vs[1]))
 			
+			print(" finished")
 			#m = 0
 			#for i in range(1, 64): # FIXME: remove hard limits
 			#	for j in range(256):
@@ -542,12 +566,9 @@ def automaton_factory(base_ring):
 						x0 -= base_matrix(coefficients_Q[n]) @ x[-n]
 						x0 += base_matrix(coefficients_P[n]) @ y[n]
 					x0 = x0.optimized()
-					
-					#print(" linear_delay_wifa_pair", 19)
-					s = x0 | y[memory_size]
-					
+										
 					#print(" linear_delay_wifa_pair", 20)
-					automaton_B = cls(output_transition=x0, state_transition=s)
+					automaton_B = cls(output_transition=x0, state_transition=x0 | y[memory_size])
 					
 					#print(" linear_delay_wifa_pair", "end")
 					return automaton_A, automaton_B
@@ -641,10 +662,15 @@ def automaton_factory(base_ring):
 					history.pop()
 				return y
 			
-			def fn(in_stream):
-				history = deque([base_vector.zero(self.memory_width)] * self.memory_length)
+			def fn(in_stream, history=None):
+				if history is None:
+					history = deque([base_vector.zero(self.memory_width)] * self.memory_length)
+				elif history is Ellipsis:
+					history = fn.history
 				for x in in_stream:
 					yield t(x, history)
+				fn.history = history
+			fn.history = deque([base_vector.zero(self.memory_width)] * self.memory_length)
 			
 			return fn	
 	
@@ -1126,7 +1152,39 @@ if True or __debug__:
 
 
 if __name__ == '__main__':
-	with parallel():
-		#test_fapkc_encryption(BooleanRing.get_algebra(), 8, 64, print_data=True)
-		test_homomorphic_encryption(BooleanRing.get_algebra(), 8, 8, 128)
+	Automaton = automaton_factory(BooleanRing.get_algebra())
+	
+	ls, li = Automaton.linear_delay_wifa_pair(block_size=8, memory_size=5)
+	
+	print()
+	print(ls.output_transition.circuit_size(), [_x.circuit_size() for _x in ls.output_transition])
+	print(ls.state_transition.circuit_size(), [_x.circuit_size() for _x in ls.state_transition])
+	print()
+	print(li.output_transition.circuit_size(), [_x.circuit_size() for _x in li.output_transition])
+	print(li.state_transition.circuit_size(), [_x.circuit_size() for _x in li.state_transition])
+	
+	ns, ni = Automaton.nonlinear_nodelay_wifa_pair(block_size=8, memory_size=5)
+	
+	print()
+	print(ns.output_transition.circuit_size(), [_x.circuit_size() for _x in ns.output_transition])
+	print(ns.state_transition.circuit_size(), [_x.circuit_size() for _x in ns.state_transition])
+	print()
+	print(ni.output_transition.circuit_size(), [_x.circuit_size() for _x in ni.output_transition])
+	print(ni.state_transition.circuit_size(), [_x.circuit_size() for _x in ni.state_transition])
+	
+	straight = ns @ ls
+	inverse = li @ ni
+	
+	print()
+	print(straight.output_transition.circuit_size(), [_x.circuit_size() for _x in straight.output_transition])
+	print(straight.state_transition.circuit_size(), [_x.circuit_size() for _x in straight.state_transition])
+	print()
+	print(inverse.output_transition.circuit_size(), [_x.circuit_size() for _x in inverse.output_transition])
+	print(inverse.state_transition.circuit_size(), [_x.circuit_size() for _x in inverse.state_transition])
+
+
+
+#	with parallel():
+#		#test_fapkc_encryption(BooleanRing.get_algebra(), 8, 64, print_data=True)
+#		test_homomorphic_encryption(BooleanRing.get_algebra(), 8, 8, 128)
 

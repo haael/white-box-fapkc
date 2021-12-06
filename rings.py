@@ -440,7 +440,7 @@ class GaloisField(AbstractRing):
 				good = False
 			
 			if not good:
-				raise ValueError("Leading term of the reducing polynomial must not be 0.")
+				raise ValueError("Leading term of the reducing polynomial must be 1.")
 		
 		if exponent == None and reducing_polynomial != None:
 			exponent = len(reducing_polynomial) - 1
@@ -488,16 +488,33 @@ class GaloisField(AbstractRing):
 			raise ValueError("`size` must be greater or equal to 2. (got {})".format(size))
 		
 		if reducing_polynomial == None:
-			reducing_polynomial = [0] * (exponent + 1)
-			reducing_polynomial[-1] = 1
-			if size == 2:
-				reducing_polynomial[0] = 1
+			if exponent == 1:
+				reducing_polynomial = [1, 1]
 			else:
-				raise NotImplementedError("Implement calculation of reducing polynomial.") # TODO
+				from polynomial import Polynomial
+				
+				for ir in Polynomial.get_algebra(base_ring=ModularRing.get_algebra(size=base)).irreducible_polynomials(exponent):
+					reducing_polynomial = [int(_i) for _i in ir.coefficients()]
+					#print("ir", str(ir), reducing_polynomial)
+					break
+				else:
+					raise ValueError("Irreducible polynomial not found")
+				
+				if __debug__:
+					#print(reducing_polynomial)
+					
+					al = Polynomial.get_algebra(base_ring=ModularRing.get_algebra(size=base))
+					x = al.var('x')
+					monomials = [x**_i for _i in range(exponent + 1)]
+					p = sum(((al.base_ring(_c) * _m) for (_c, _m) in zip(reducing_polynomial, monomials)), al.zero()).canonical()
+					#print(reducing_polynomial)
+					#print(str(p), ", deg:", p.degree())
+					assert p.is_irreducible()
+					assert p.degree() == exponent
 		
 		if len(reducing_polynomial) != exponent + 1:
-			raise ValueError("Reducing polynomial ({}) must have the degree `exponent = {}`.".format(reducing_polynomial, exponent))
-		
+			raise ValueError(f"Reducing polynomial ({str(reducing_polynomial)}) must have the degree `exponent = {exponent}`.")
+				
 		field_value = None
 		
 		if value != None:
@@ -658,6 +675,7 @@ class GaloisField(AbstractRing):
 	def long_multiplication(this, other):
 		"Long multiplication algorithm (slow)."
 		
+		#print(" lm:", str(this), str(other))
 		try:
 			if this.algebra != other.algebra:
 				return NotImplemented
@@ -680,10 +698,13 @@ class GaloisField(AbstractRing):
 				result[m + n] %= base
 		
 		for m in reversed(range(exponent)):
-			if result[m + exponent]:
-				for n in reversed(range(exponent)):
-					result[m + n] = (base + result[m + n] - reducing_polynomial[n]) % base
+			v = result[m + exponent]
+			#print(m + exponent, result, v)
+			if v:
+				for n in reversed(range(exponent + 1)):
+					result[m + n] = (v * base + result[m + n] - v * reducing_polynomial[n]) % base
 		
+		#print(result, reducing_polynomial)
 		assert all((_v == 0) for _v in result[exponent:])
 		assert all((0 <= _v < base) for _v in result[:exponent])
 		
@@ -739,7 +760,9 @@ class GaloisField(AbstractRing):
 		raise ArithmeticError("No multiplicative generator found.")
 	
 	def __pow__(self, exponent, modulus=None):
+		#print("__pow__", self, exponent, modulus)
 		if self == self.algebra.smallest_multiplicative_generator() and modulus == None:
+			#print(" smg", self, exponent)
 			return self.algebra.exp(exponent)
 		else:
 			result = self.algebra.one()
@@ -758,6 +781,8 @@ class GaloisField(AbstractRing):
 	def exp(cls, ee, *args, **kwargs):
 		"Exponent relative to the smallest multiplicative generator."
 		
+		#print("exp", ee);
+		
 		result = cls.one(*args, **kwargs)
 		
 		if ee >= 0:
@@ -765,9 +790,11 @@ class GaloisField(AbstractRing):
 		else:
 			base = cls.one(*args, **kwargs) / cls.smallest_multiplicative_generator(*args, **kwargs)
 		
-		for n in range(ee):
+		#print(" base =", base)
+		for n in range(abs(ee)):
 			result = cls.long_multiplication(result, base)
 		
+		#print(" result =", result)
 		return result
 	
 	@memoize
@@ -1081,6 +1108,10 @@ if __debug__:
 	def test_ring(Ring):
 		"Test suite for rings."
 		
+		for r in Ring.domain():
+			#print(r, int(r))
+			assert Ring(int(r)) == r
+		
 		yes = Ring.one()
 		no = Ring.zero()
 		
@@ -1198,7 +1229,8 @@ if __debug__:
 	def test_field(Field):
 		for x in Field.domain():
 			try:
-				x**-1 * x == Field.one()
+				assert x**-1 * x == Field.one(), f"{str(x**-1 * x)} != 1; x = {str(x)}; x**-1 = {str(x**-1)}; type(x) = {str(type(x))}"
+				assert x * x**-1 == Field.one(), f"{str(x * x**-1)} != 1; x = {str(x)}; x**-1 = {str(x**-1)}; type(x) = {str(type(x))} "
 			except ZeroDivisionError:
 				assert not x
 			except ArithmeticError:
@@ -1237,7 +1269,7 @@ if __debug__:
 		if verbose: print(" ring test")
 		test_ring(ring)
 		
-		for i in (2,): #(3, 4, 5, 7, 8, 9, 11, 13, 16, 17, 18, 19, 23, 25, 32, 49, 64, 81, 121, 128, 256, 52, 1024):
+		for i in (2, 3, 4, 5, 7, 8, 9, 11, 13, 16, 17, 19, 23, 25, 32, 49, 64, 81, 121, 128):
 			if verbose: print()
 			if verbose: print("test GaloisField(size={})".format(i))
 			field = GaloisField.get_algebra(size=i)
@@ -1246,7 +1278,7 @@ if __debug__:
 			if verbose: print(" field test")
 			test_field(field)
 		
-		for i in (1,): #(2, 3, 4, 5, 6, 7, 8, 16, 32, 64):
+		for i in (1, 2, 3, 4, 5, 6, 7):
 			if verbose: print()
 			if verbose: print("test BinaryField(exponent={})".format(i))
 			field = BinaryField.get_algebra(exponent=i)
@@ -1268,6 +1300,13 @@ if __debug__:
 
 
 if __debug__ and __name__ == '__main__':
+	from polynomial import Polynomial
+	
+	mfield3 = ModularRing.get_algebra(size=3)
+	pf = Polynomial.get_algebra(base_ring=mfield3)	
+	x = pf.var('x')
+	assert (x**2 + mfield3(1)).is_irreducible()
+	
 	rings_test_suite(verbose=True)
 
 

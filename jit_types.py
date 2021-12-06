@@ -217,10 +217,6 @@ class Code:
 		self.engine.run_static_destructors()
 
 
-
-
-
-
 class Compiler:
 	"The compiler, allowing compiling Python function to C and declaring C constants."
 	
@@ -456,8 +452,6 @@ class Null:
 	def __init__(self, value=None):
 		assert value == None
 		self.jit_value = llvmlite.ir.VoidType()()
-
-
 
 
 if __debug__ and __name__ == '__main__':

@@ -11,6 +11,7 @@ import operator
 from utils import randbelow, random_permutation, random_sample, parallel_map, parallel_starmap, canonical, optimized, evaluate, substitute
 from algebra import AlgebraicStructure
 from rings import BooleanRing
+from term import Identical
 
 
 __all__ = 'Vector', 'Matrix'
@@ -122,7 +123,7 @@ class Vector(AlgebraicStructure):
 			except TypeError:
 				if i.start != None and (i.start >= self.dimension or i.start < -self.dimension):
 					raise IndexError("Vector slice start out of range (start={}; dimension={})".format(i.start, self.dimension))
-				if i.stop != None and (i.stop >= self.dimension or i.stop < -self.dimension):
+				if i.stop != None and (i.stop > self.dimension or i.stop < -self.dimension):
 					raise IndexError("Vector slice stop out of range (stop={}; dimension={})".format(i.stop, self.dimension))
 			return self.algebra(self.value[i])
 		else:
@@ -146,11 +147,15 @@ class Vector(AlgebraicStructure):
 			except TypeError:
 				if i.start >= self.dimension or i.start < -self.dimension:
 					raise IndexError("Vector slice start out of range (start={}; dimension={})".format(i.start, self.dimension))
-				if i.stop >= self.dimension or i.stop < -self.dimension:
+				if i.stop > self.dimension or i.stop < -self.dimension:
 					raise IndexError("Vector slice stop out of range (stop={}; dimension={})".format(i.stop, self.dimension))
 				
-				if len(value) != len(list(range((len(self) + (i.start or 0)) % len(self), ((len(self) + i.stop) % len(self)) if (i.stop is not None) else len(self), i.step or 1))):
-					raise ValueError("Assigned sequence must have the same length as the slice provided (expected {}, got {}).".format((len(list(range((len(self) + (i.start or 0)) % len(self), ((len(self) + i.stop) % len(self)) if (i.stop is not None) else len(self), i.step or 1)))), len(value)))
+				start = (len(self) + (i.start or 0)) % len(self)
+				stop = ((len(self) + i.stop) % len(self) if i.stop != len(self) else len(self)) if (i.stop is not None) else len(self)
+				step = i.step or 1
+				
+				if len(value) != len(list(range(start, stop, step))):
+					raise ValueError("Assigned sequence must have the same length as the slice provided (expected {}, got {} : {} {} {}).".format(len(list(range(start, stop, step))), len(value), start, stop, step))
 				
 				if any(_v.algebra != self.algebra.base_ring for _v in value):
 					raise ValueError("The assigned sequence must consist of elements of the same ring as the original vector (base_ring={}).".format(self.algebra.base_ring))
@@ -377,6 +382,18 @@ class Vector(AlgebraicStructure):
 	
 	def is_zero(self):
 		return all(_element.is_zero() for _element in self)
+	
+	def variables(self):
+		yield from chain(*[_element.variables() for _element in self])
+	
+	def variables_set(self):
+		return frozenset(_v.term for _v in frozenset(Identical(_u) for _u in self.variables()))
+	
+	def variables_count(self):
+		vc = Counter()
+		for c in self:
+			vc.update(c.variables_count())
+		return vc
 
 
 class Matrix(AlgebraicStructure):
@@ -1245,7 +1262,12 @@ class Matrix(AlgebraicStructure):
 	
 	def circuit_size(self):
 		return sum(_value.circuit_size() for _value in self.values())
-
+	
+	def variables(self):
+		yield from chain(*[_value.variables() for _value in self.values()])
+	
+	def variables_set(self):
+		return frozenset(_v.term for _v in frozenset(Identical(_u) for _u in self.variables()))
 
 
 if __debug__:
@@ -1266,7 +1288,7 @@ if __debug__:
 			print("test size =", m * 10 + 1)
 			v = Vector.zero(m * 100 + 1)
 			for n in range(v.dimension):
-				v[n] = Polynomial.random(variables=variables, order=8)
+				v[n] = Polynomial.random(variables=variables, degree=8)
 			
 			print("optimizing...")
 			print(v.circuit_size())
