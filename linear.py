@@ -72,7 +72,7 @@ class Vector(AlgebraicStructure):
 	def random(cls, dimension, variables=None, order=0, base_ring=default_ring):
 		"Return random vector of the specified length. If `variables` are specified, generates random polynomial vector."
 		if variables:
-			return cls((base_ring.random(variables=variables, order=order) for _i in range(dimension)), base_ring=base_ring)
+			return cls((base_ring.random(variables=variables, degree=order) for _i in range(dimension)), base_ring=base_ring)
 		else:
 			return cls((base_ring.random() for _i in range(dimension)), base_ring=base_ring)
 	
@@ -80,7 +80,7 @@ class Vector(AlgebraicStructure):
 	def random_nonzero(cls, dimension, base_ring=default_ring): # FIXME: at least one component should be nonzero
 		"Return random vector of the specified length. If `variables` are specified, generates random polynomial vector."
 		if variables:
-			return cls((base_ring.random_nonzero(variables=variables, order=order) for _i in range(dimension)), base_ring=base_ring)
+			return cls((base_ring.random_nonzero(variables=variables, degree=order) for _i in range(dimension)), base_ring=base_ring)
 		else:
 			return cls((base_ring.random_nonzero() for _i in range(dimension)), base_ring=base_ring)
 	

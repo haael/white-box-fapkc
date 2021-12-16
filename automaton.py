@@ -128,21 +128,21 @@ def automaton_factory(base_ring):
 					substitution[str(self.s[t, i])] = self.s[t, i + shift]
 
 			optimized_self_output = self.output_transition.optimized()
-			print(optimized_self_output.variables_count())
-			sc = Counter()
-			for v, c in substitution.items():
-				sc[v] += c.circuit_size()
-			print(sc)
+			#print(optimized_self_output.variables_count())
+			#sc = Counter()
+			#for v, c in substitution.items():
+			#	sc[v] += c.circuit_size()
+			#print(sc)
 						
-			for n, cp in enumerate(optimized_self_output):
-				s = cp.circuit_size()
-				for vn, v in cp.variables_count().items():
-					k = substitution[vn].circuit_size()
-					print(v, " > ",  s / (2 * k) + 1)
-					if v > s / (2 * k) + 1:
-						print("fold", vn, s, k, optimized_self_output[n].circuit_size())
-						optimized_self_output[n] = cp.fold(base_polynomial.var(vn))
-						break
+			#for n, cp in enumerate(optimized_self_output):
+			#	s = cp.circuit_size()
+			#	for vn, v in cp.variables_count().items():
+			#		k = substitution[vn].circuit_size()
+			#		print(v, " > ",  s / (2 * k) + 1)
+			#		if v > s / (2 * k) + 1:
+			#			print("fold", vn, s, k, optimized_self_output[n].circuit_size())
+			#			optimized_self_output[n] = cp.fold(base_polynomial.var(vn))
+			#			break
 
 			output_transition = base_vector(_trans(**substitution) for _trans in optimized_self_output).optimized()
 			state_transition = base_vector(chain(other.state_transition.optimized(), (_trans(**substitution) for _trans in self.state_transition.optimized()))).optimized()
@@ -173,14 +173,14 @@ def automaton_factory(base_ring):
 			#if (not a) and (not b):
 			#	return 0
 			
-			print("memory length...", self.state_transition.circuit_size(), self.output_transition.circuit_size())
+			#print("memory length...", self.state_transition.circuit_size(), self.output_transition.circuit_size())
 			m = 0
 			for va in chain(self.state_transition.variables(), self.output_transition.variables()):
 				vs = str(va).split('_')
 				if vs[0] != 's': continue # FIXME: assumes variable naming
 				m = max(m, int(vs[1]))
 			
-			print(" finished")
+			#print(" finished")
 			#m = 0
 			#for i in range(1, 64): # FIXME: remove hard limits
 			#	for j in range(256):
@@ -1152,6 +1152,7 @@ if True or __debug__:
 
 
 if __name__ == '__main__':
+	'''
 	Automaton = automaton_factory(BooleanRing.get_algebra())
 	
 	ls, li = Automaton.linear_delay_wifa_pair(block_size=8, memory_size=5)
@@ -1181,10 +1182,10 @@ if __name__ == '__main__':
 	print()
 	print(inverse.output_transition.circuit_size(), [_x.circuit_size() for _x in inverse.output_transition])
 	print(inverse.state_transition.circuit_size(), [_x.circuit_size() for _x in inverse.state_transition])
+	'''
 
 
-
-#	with parallel():
-#		#test_fapkc_encryption(BooleanRing.get_algebra(), 8, 64, print_data=True)
-#		test_homomorphic_encryption(BooleanRing.get_algebra(), 8, 8, 128)
+	with parallel():
+		#test_fapkc_encryption(BooleanRing.get_algebra(), 8, 64, print_data=True)
+		test_homomorphic_encryption(BooleanRing.get_algebra(), 8, 8, 128)
 

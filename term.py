@@ -179,23 +179,6 @@ def sorted_and_unique(old_gen):
 	return new_gen
 
 
-'''
-def cached(old_method):
-	name = old_method.__qualname__
-	
-	def new_method(self):
-		try:
-			return self.__class__.cache[name][Identical(self)]
-		except KeyError:
-			result = old_method(self)
-			self.__class__.cache[name][Identical(self)] = result
-			return result
-	
-	new_method.__qualname__ = name
-	return new_method
-'''
-
-
 def cached(old_method):
 	name = old_method.__name__
 	
@@ -211,6 +194,7 @@ def cached(old_method):
 	return new_method
 
 
+'''
 def cached_broad(old_method):
 	name = old_method.__name__
 	
@@ -226,6 +210,11 @@ def cached_broad(old_method):
 	
 	new_method.__name__ = name
 	return new_method
+'''
+
+
+def cached_broad(old_method):
+	return old_method
 
 
 class Term:
@@ -835,7 +824,7 @@ class Term:
 			return candidate
 	'''
 	
-	@cached_broad
+	@cached
 	def has_nonreduced_constants(self):
 		if self.is_const() or self.is_var():
 			return False
@@ -1520,7 +1509,10 @@ class Term:
 	def optimized(self):		
 		def inner_step(term):
 			orig_term = term
-			term = term.additive_form()
+			if len(term.variables_set()) <= 8:
+				term = term.canonical()
+			else:
+				term = term.additive_form()
 			term = term.extract()
 			if term.circuit_size() < orig_term.circuit_size():
 				return term
@@ -1542,7 +1534,33 @@ class Term:
 		except AttributeError:
 			pass
 		
-		result = self.algebra.sum(_monomial.flatten().evaluate_constants() for _monomial in self.monomials()).flatten().evaluate_constants()
+		variables = list(self.variables_set())
+
+		if len(variables) <= 8 and self.base_ring.size == 2:
+			variable_names = list(str(_v) for _v in variables)
+			ranges = list(self.base_ring.domain() for _n in range(len(variables)))
+			
+			one = self.one()
+			addends = []			
+			
+			for substitution in product(*ranges):
+				value = self.evaluate(**dict(zip(variable_names, substitution)))
+				if value.is_zero():
+					pass
+				elif value.is_one():
+					addend = self.algebra.product((_var + one if _val.is_zero() else _var) for (_var, _val) in zip(variables, substitution))
+					addends.append(addend)
+			
+			if len(addends) == 0:
+				result = self.zero()
+			elif len(addends) == 1:
+				result = addends[0]
+			else:
+				result = self.algebra.sum(addends)
+		
+		else:
+			result = self.algebra.sum(_monomial.flatten().evaluate_constants() for _monomial in self.monomials()).flatten().evaluate_constants()
+		
 		self.canonical_cache = result
 		return result
 	
