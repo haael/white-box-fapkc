@@ -1,11 +1,27 @@
 #!/usr/bin/python3
 
 
+__all__ = 'LinearCircuit', 'QuadraticCircuit', 'Automaton'
+
 from itertools import product
 from collections import defaultdict
 
 from linear import *
 from utils import superscript, cached
+
+
+#def array_fallback(Array):
+#	try:
+#		return Array.Array
+#	except AttributeError:
+#		return lambda values, sizes, types: Array(values)
+
+
+def table_fallback(Table):
+	try:
+		return Table.Table
+	except AttributeError:
+		return lambda items, ksize, sizes, types, Array: Table(items)
 
 
 class LinearCircuit:
@@ -17,14 +33,37 @@ class LinearCircuit:
 	def Linear(self):
 		return self[0, 0].Linear
 	
-	@classmethod
-	def random(cls, output_size, input_size, Linear, Field, randbelow):
-		return cls(((_m, _n), Linear.random(Field, randbelow)) for (_m, _n) in product(range(output_size), range(input_size)))
+	@property
+	def Array(self):
+		return self[0, 0].Array
 	
-	def __init__(self, functions):
-		self.l_functions = dict(functions)
-		self.input_size = max(_b for (_a, _b) in self.l_functions.keys()) + 1
-		self.output_size = max(_a for (_a, _b) in self.l_functions.keys()) + 1
+	@property
+	def Table(self):
+		return table_fallback(self.__functions.__class__)
+	
+	@classmethod
+	def random(cls, output_size, input_size, Table, Array, Linear, Field, randbelow):
+		nTable = table_fallback(Table)
+		return cls(nTable((((_m, _n), Linear.random(Array, Field, randbelow)) for (_m, _n) in product(range(output_size), range(input_size))), [output_size, input_size], [Field.field_power, None], [Linear, Field], Array=Array))
+	
+	def __init__(self, functions, output_size=None, input_size=None):
+		if output_size is not None:
+			self.output_size = output_size
+		else:
+			self.output_size = len(set(_a for (_a, _b) in functions.keys()))
+		
+		if input_size is not None:
+			self.input_size = input_size
+		else:
+			self.input_size = len(set(_b for (_a, _b) in functions.keys()))
+		
+		self.__functions = functions
+	
+	def serialize(self):
+		try:
+			return self.__functions.serialize()
+		except AttributeError:
+			return chain.from_iterable(_v.serialize() for _v in self.__functions)
 	
 	def __getitem__(self, index):
 		try:
@@ -32,13 +71,13 @@ class LinearCircuit:
 		except ValueError:
 			raise TypeError("LinearCircuit.__getitem__ expects 2 numeric indices.")
 		
-		return self.l_functions[m, n]
+		return self.__functions[m, n]
 	
 	def __call__(self, args):
 		if len(args) != self.input_size:
 			raise ValueError("Input size does not match circuit requirements.")
 		
-		return args.__class__(sum((self[m, k](args[k]) for k in range(self.input_size)), self.Field(0)) for m in range(self.output_size))
+		return args.__class__(args.Array((sum((self[m, k](args[k]) for k in range(self.input_size)), self.Field(0)) for m in range(self.output_size)), [None], [self.Field]))
 	
 	def __add__(self, other):
 		"Sum of two linear circuits: `(a + b)(x) = a(x) + b(x)`."
@@ -50,7 +89,7 @@ class LinearCircuit:
 			raise ValueError("Output sizes of linear circuits to add should be the same.")
 		
 		try:
-			return self.__class__(((m, n), self[m, n] + other[m, n]) for n in range(self.input_size) for m in range(self.output_size))
+			return self.__class__(self.Table((((m, n), self[m, n] + other[m, n]) for n in range(self.input_size) for m in range(self.output_size)), [self.output_size, self.input_size], [self.Field.field_power, None], [self.Linear, self.Field], Array=self.Array))
 		except TypeError:
 			return NotImplemented
 	
@@ -64,13 +103,13 @@ class LinearCircuit:
 			raise ValueError("Output sizes of linear circuits to subtract should be the same.")
 		
 		try:
-			return self.__class__(((m, n), self[m, n] - other[m, n]) for n in range(self.input_size) for m in range(self.output_size))
+			return self.__class__(self.Table((((m, n), self[m, n] - other[m, n]) for n in range(self.input_size) for m in range(self.output_size)), [self.output_size, self.input_size], [self.Field.field_power, None], [self.Linear, self.Field], Array=self.Array))
 		except TypeError:
 			return NotImplemented
 	
 	def __neg__(self):
 		try:
-			return self.__class__(((m, n), -self[m, n]) for n in range(self.input_size) for m in range(self.output_size))
+			return self.__class__(self.Table((((m, n), -self[m, n]) for n in range(self.input_size) for m in range(self.output_size)), [self.output_size, self.input_size], [self.Field.field_power, None], [self.Linear, self.Field], Array=self.Array))
 		except TypeError:
 			return NotImplemented
 	
@@ -81,7 +120,7 @@ class LinearCircuit:
 			raise ValueError(f"Input size of the left circuit (got {self.input_size}) should match output size of the right circuit (got {other.output_size}).")
 		
 		try:
-			return self.__class__(((m, n), sum((self[m, k] @ other[k, n] for k in range(self.input_size)), self.Linear.zero(self.Field))) for n in range(other.input_size) for m in range(self.output_size))
+			return self.__class__(self.Table((((m, n), sum((self[m, k] @ other[k, n] for k in range(self.input_size)), self.Linear.zero(self.Array, self.Field))) for n in range(other.input_size) for m in range(self.output_size)), [self.output_size, other.input_size], [self.Field.field_power, None], [self.Linear, self.Field], Array=self.Array))
 		except TypeError:
 			return NotImplemented
 	
@@ -108,14 +147,37 @@ class QuadraticCircuit:
 	def Quadratic(self):
 		return self[0, 0, 0].Quadratic
 	
-	@classmethod
-	def random(cls, output_size, input_size, Quadratic, Linear, Field, randbelow):
-		return cls(((_m, _n, _o), Quadratic.random(Linear, Field, randbelow)) for (_m, _n, _o) in product(range(output_size), range(input_size), range(input_size)))
+	@property
+	def Array(self):
+		return self[0, 0, 0].Array
 	
-	def __init__(self, functions):
-		self.q_functions = dict(functions)		
-		self.input_size = len(set(_b for (_a, _b, _c) in self.q_functions.keys()))
-		self.output_size = len(set(_a for (_a, _b, _c) in self.q_functions.keys()))
+	@property
+	def Table(self):
+		return table_fallback(self.__functions.__class__)
+	
+	@classmethod
+	def random(cls, output_size, input_size, Table, Array, Quadratic, Linear, Field, randbelow):
+		nTable = table_fallback(Table)
+		return cls(nTable((((_m, _n, _o), Quadratic.random(Array, Linear, Field, randbelow)) for (_m, _n, _o) in product(range(output_size), range(input_size), range(input_size))), [output_size, input_size, input_size], [Field.field_power, Field.field_power, None], [Quadratic, Linear, Field], Array=Array))
+	
+	def __init__(self, functions, output_size=None, input_size=None):
+		if output_size is not None:
+			self.output_size = output_size
+		else:
+			self.output_size = len(set(_a for (_a, _b, _c) in functions.keys()))
+		
+		if input_size is not None:
+			self.input_size = input_size
+		else:
+			self.input_size = len(set(_b for (_a, _b, _c) in functions.keys()))
+		
+		self.__functions = functions
+	
+	def serialize(self):
+		try:
+			return self.__functions.serialize()
+		except AttributeError:
+			return chain.from_iterable(_v.serialize() for _v in self.__functions)
 	
 	def __getitem__(self, index):
 		try:
@@ -123,64 +185,71 @@ class QuadraticCircuit:
 		except ValueError:
 			raise TypeError("QuadraticCircuit.__getitem__ expects 3 numeric indices.")
 		
-		return self.q_functions[m, n, o]
+		return self.__functions[m, n, o]
 	
 	def __call__(self, args):
-		return args.__class__(sum((self[m, k, l](args[k], args[l]) for k in range(self.input_size) for l in range(self.input_size)), self.Field(0)) for m in range(self.output_size))
+		return args.__class__(args.Array((sum((self[m, k, l](args[k], args[l]) for k in range(self.input_size) for l in range(self.input_size)), self.Field(0)) for m in range(self.output_size)), [None], [self.Field]))
 	
 	def __add__(self, other):
 		"Sum of two quadratic circuits: `(a + b)(x) = a(x) + b(x)`."
 		if self.input_size != other.input_size: raise ValueError(f"Input sizes of quadratic circuits to add should be the same (got {self.input_size} vs. {other.input_size}).")
 		if self.output_size != other.output_size: raise ValueError(f"Output sizes of quadratic circuits to add should be the same (got {self.output_size} vs. {other.output_size}).")
-		return self.__class__(((m, n, o), self[m, n, o] + other[m, n, o]) for (m, n, o) in product(range(self.output_size), range(self.input_size), range(self.input_size)))
+		return self.__class__(self.Table((((m, n, o), self[m, n, o] + other[m, n, o]) for (m, n, o) in product(range(self.output_size), range(self.input_size), range(self.input_size))), [self.output_size, self.input_size, self.input_size], [self.Field.field_power, self.Field.field_power, None], [self.Quadratic, self.Linear, self.Field], Array=self.Array))
 	
 	def __sub__(self, other):
 		"Difference of two quadratic circuits: `(a - b)(x) = a(x) - b(x)`"
 		if self.input_size != other.input_size: raise ValueError(f"Input sizes of quadratic circuits to subtract should be the same (got {self.input_size} vs. {other.input_size}).")
 		if self.output_size != other.output_size: raise ValueError(f"Output sizes of quadratic circuits to subtract should be the same (got {self.output_size} vs. {other.output_size}).")
-		return self.__class__(((m, n, o), self[m, n, o] - other[m, n, o]) for (m, n, o) in product(range(self.output_size), range(self.input_size), range(self.input_size)))
+		return self.__class__(self.Table((((m, n, o), self[m, n, o] - other[m, n, o]) for (m, n, o) in product(range(self.output_size), range(self.input_size), range(self.input_size))), [self.output_size, self.input_size, self.input_size], [self.Field.field_power, self.Field.field_power, None], [self.Quadratic, self.Linear, self.Field], Array=self.Array))
 	
 	def __neg__(self):
-		return self.__class__(((m, n, o), -self[m, n, o]) for (m, n, o) in product(range(self.output_size), range(self.input_size), range(self.input_size)))
+		return self.__class__(self.Table((((m, n, o), -self[m, n, o]) for (m, n, o) in product(range(self.output_size), range(self.input_size), range(self.input_size))), [self.output_size, self.input_size, self.input_size], [self.Field.field_power, self.Field.field_power, None], [self.Quadratic, self.Linear, self.Field], Array=self.Array))
 	
 	def __matmul__(self, other):
 		"Composition of a quadratic circuit with a linear one. Linear is applied first, quadratic next: `(q @ l)(x) = q(l(x))`. Result is a quadratic circuit."
-		if self.input_size != other.output_size: raise ValueError(f"Input size of left automaton (got {self.input_size}) must match output size of the right automaton (got {other.output_size}).")		
-		return self.__class__(((q, i, j), sum((self[q, o, p] @ (other[o, i], other[p, j]) for o in range(self.input_size) for p in range(self.input_size)), self.Quadratic.zero(self.Linear, self.Field))) for q in range(self.output_size) for i in range(other.input_size) for j in range(other.input_size))
+		if self.input_size != other.output_size: raise ValueError(f"Input size of left automaton (got {self.input_size}) must match output size of the right automaton (got {other.output_size}).")
+		return self.__class__(self.Table((((q, i, j), sum((self[q, o, p] @ (other[o, i], other[p, j]) for o in range(self.input_size) for p in range(self.input_size)), self.Quadratic.zero(self.Array, self.Linear, self.Field))) for q in range(self.output_size) for i in range(other.input_size) for j in range(other.input_size)), [self.output_size, other.input_size, other.input_size], [self.Field.field_power, self.Field.field_power, None], [self.Quadratic, self.Linear, self.Field], Array=self.Array))
 	
 	def __rmatmul__(self, other):
 		"Composition of a linear circuit with a quadratic one. Quadratic is applied first, linear next: `(l @ q)(x) = l(q(x))`. Result is a quadratic circuit."
 		if self.output_size != other.input_size: raise ValueError(f"Output size of right automaton (got {self.output_size}) must match input size of the left automaton (got {other.input_size}).")
-		return self.__class__(((a, c, d), sum((other[a, b] @ self[b, c, d] for b in range(self.output_size)), self.Quadratic.zero(self.Linear, self.Field))) for a in range(other.output_size) for c in range(self.input_size) for d in range(self.input_size))
+		return self.__class__(self.Table((((a, c, d), sum((other[a, b] @ self[b, c, d] for b in range(self.output_size)), self.Quadratic.zero(self.Array, self.Linear, self.Field))) for a in range(other.output_size) for c in range(self.input_size) for d in range(self.input_size)), [other.output_size, self.input_size, self.input_size], [self.Field.field_power, self.Field.field_power, None], [self.Quadratic, self.Linear, self.Field], Array=self.Array))
 
 
 class Automaton:
 	@classmethod
-	def random_linear_linear(cls, output_size, input_size, state_size, Vector, LinearCircuit, Linear, Field, randbelow):
-		out_transition = LinearCircuit.random(output_size, input_size + state_size, Linear, Field, randbelow)
-		state_transition = LinearCircuit.random(state_size, input_size + state_size, Linear, Field, randbelow)
-		init_state = Vector.random(state_size, Field, randbelow)
+	def random_linear_linear(cls, output_size, input_size, state_size, Dictionary, Array, Vector, LinearCircuit, Linear, Field, randbelow):
+		out_transition = LinearCircuit.random(output_size, input_size + state_size, Dictionary, Array, Linear, Field, randbelow)
+		state_transition = LinearCircuit.random(state_size, input_size + state_size, Dictionary, Array, Linear, Field, randbelow)
+		init_state = Vector.random(state_size, Array, Field, randbelow)
 		return cls(out_transition, state_transition, init_state)
 	
 	@classmethod
-	def random_linear_quadratic(cls, output_size, input_size, state_size, Vector, QuadraticCircuit, LinearCircuit, Quadratic, Linear, Field, randbelow):
-		out_transition = LinearCircuit.random(output_size, input_size + state_size, Linear, Field, randbelow)
-		state_transition = QuadraticCircuit.random(state_size, input_size + state_size, Quadratic, Linear, Field, randbelow)
-		init_state = Vector.random(state_size, Field, randbelow)
+	def random_linear_quadratic(cls, output_size, input_size, state_size, Dictionary, Array, Vector, QuadraticCircuit, LinearCircuit, Quadratic, Linear, Field, randbelow):
+		out_transition = LinearCircuit.random(output_size, input_size + state_size, Dictionary, Array, Linear, Field, randbelow)
+		state_transition = QuadraticCircuit.random(state_size, input_size + state_size, Dictionary, Array, Quadratic, Linear, Field, randbelow)
+		init_state = Vector.random(state_size, Array, Field, randbelow)
 		return cls(out_transition, state_transition, init_state)
 	
 	@classmethod
-	def random_quadratic_linear(cls, output_size, input_size, state_size, Vector, QuadraticCircuit, LinearCircuit, Quadratic, Linear, Field, randbelow):
-		out_transition = QuadraticCircuit.random(output_size, input_size + state_size, Quadratic, Linear, Field, randbelow)
-		state_transition = LinearCircuit.random(state_size, input_size + state_size, Linear, Field, randbelow)
-		init_state = Vector.random(state_size, Field, randbelow)
+	def random_quadratic_linear(cls, output_size, input_size, state_size, Dictionary, Array, Vector, QuadraticCircuit, LinearCircuit, Quadratic, Linear, Field, randbelow):
+		out_transition = QuadraticCircuit.random(output_size, input_size + state_size, Dictionary, Array, Quadratic, Linear, Field, randbelow)
+		state_transition = LinearCircuit.random(state_size, input_size + state_size, Dictionary, Array, Linear, Field, randbelow)
+		init_state = Vector.random(state_size, Array, Field, randbelow)
 		return cls(out_transition, state_transition, init_state)
 	
 	@classmethod
-	def random_quadratic_quadratic(cls, output_size, input_size, state_size, Vector, QuadraticCircuit, Quadratic, Linear, Field, randbelow):
-		out_transition = QuadraticCircuit.random(output_size, input_size + state_size, Quadratic, Linear, Field, randbelow)
-		state_transition = QuadraticCircuit.random(state_size, input_size + state_size, Quadratic, Linear, Field, randbelow)
-		init_state = Vector.random(state_size, Field, randbelow)
+	def random_quadratic_quadratic(cls, output_size, input_size, state_size, Dictionary, Array, Vector, QuadraticCircuit, Quadratic, Linear, Field, randbelow):
+		out_transition = QuadraticCircuit.random(output_size, input_size + state_size, Dictionary, Array, Quadratic, Linear, Field, randbelow)
+		state_transition = QuadraticCircuit.random(state_size, input_size + state_size, Dictionary, Array, Quadratic, Linear, Field, randbelow)
+		init_state = Vector.random(state_size, Array, Field, randbelow)
+		return cls(out_transition, state_transition, init_state)
+	
+	@classmethod
+	def buffer_linear_linear(cls, output_size, input_size, state_size, Dictionary, Array, Vector, LinearCircuit, Linear, Field, array):
+		out_transition = LinearCircuit.random(output_size, input_size + state_size, Dictionary, Array, Linear, Field, randbelow)
+		state_transition = LinearCircuit.random(state_size, input_size + state_size, Dictionary, Array, Linear, Field, randbelow)
+		init_state = Vector.random(state_size, Array, Field, randbelow)
 		return cls(out_transition, state_transition, init_state)
 	
 	def __init__(self, out_transition, state_transition, init_state):
@@ -207,21 +276,21 @@ if __debug__ and __name__ == '__main__':
 	from fields import Galois
 	from random import randrange
 	
-	F = Galois('F', 3, [1, 0, 2, 1])
-	#F = Galois('Rijndael', 2, [1, 0, 0, 0, 1, 1, 0, 1, 1])
+	#F = Galois('F', 3, [1, 0, 2, 1])
+	F = Galois('Rijndael', 2, [1, 0, 0, 0, 1, 1, 0, 1, 1])
 	
 	
 	#profiler = PyCallGraph(output=GraphvizOutput(output_file='linear_circuit.png'))
 	#profiler.start()
 	
-	for n in range(2):
-		a1 = LinearCircuit.random(randrange(1, 10), randrange(1, 10), Linear, F, randrange)
-		a2 = LinearCircuit.random(a1.output_size, a1.input_size, Linear, F, randrange)
-		b = LinearCircuit.random(randrange(1, 10), a1.output_size, Linear, F, randrange)
+	for n in range(1):
+		a1 = LinearCircuit.random(randrange(1, 4), randrange(1, 4), dict, list, Linear, F, randrange)
+		a2 = LinearCircuit.random(a1.output_size, a1.input_size, dict, list, Linear, F, randrange)
+		b = LinearCircuit.random(randrange(1, 4), a1.output_size, dict, list, Linear, F, randrange)
 		
-		for m in range(6):
-			x = Vector.random(a1.input_size, F, randrange)
-			y = Vector.random(a1.input_size, F, randrange)
+		for m in range(1):
+			x = Vector.random(a1.input_size, list, F, randrange)
+			y = Vector.random(a1.input_size, list, F, randrange)
 			
 			assert len(a1(x)) == a1.output_size
 			assert b(a1(x)) == (b @ a1)(x)
@@ -241,15 +310,15 @@ if __debug__ and __name__ == '__main__':
 	#profiler = PyCallGraph(output=GraphvizOutput(output_file='quadratic_circuit.png'))
 	#profiler.start()
 	
-	for n in range(2):		
-		a1 = QuadraticCircuit.random(randrange(2, 10), randrange(2, 10), Quadratic, Linear, F, randrange)
-		a2 = QuadraticCircuit.random(a1.output_size, a1.input_size, Quadratic, Linear, F, randrange)
-		b = LinearCircuit.random(randrange(2, 10), a1.output_size, Linear, F, randrange)
-		c = LinearCircuit.random(a1.input_size, randrange(2, 10), Linear, F, randrange)
+	for n in range(1):
+		a1 = QuadraticCircuit.random(randrange(2, 4), randrange(2, 4), dict, list, Quadratic, Linear, F, randrange)
+		a2 = QuadraticCircuit.random(a1.output_size, a1.input_size, dict, list, Quadratic, Linear, F, randrange)
+		b = LinearCircuit.random(randrange(2, 4), a1.output_size, dict, list, Linear, F, randrange)
+		c = LinearCircuit.random(a1.input_size, randrange(2, 4), dict, list, Linear, F, randrange)
 		
-		for m in range(6):
-			x = Vector(F.random(randrange) for _n in range(a1.input_size))
-			y = Vector(F.random(randrange) for _n in range(c.input_size))
+		for m in range(1):
+			x = Vector([F.random(randrange) for _n in range(a1.input_size)])
+			y = Vector([F.random(randrange) for _n in range(c.input_size)])
 			
 			assert len(a1(x)) == a1.output_size
 			assert (a1 + a2)(x) == a1(x) + a2(x)
@@ -268,17 +337,17 @@ if __debug__ and __name__ == '__main__':
 	#profiler.done()
 	
 	
-	def random_stream(n, size, F, randbelow):
+	def random_stream(n, size, Array, Field, randbelow):
 		while n > 0:
 			n -= 1
-			yield Vector.random(size, F, randbelow)
+			yield Vector.random(size, Array, Field, randbelow)
 	
 	
-	def ascending_stream(n, size, F):
+	def ascending_stream(n, size, Array, Field):
 		v = [0] * size
 		while n > 0:
 			n -= 1
-			yield Vector(map(F, v))
+			yield Vector(Array(map(Field, v)))
 			
 			carry = True
 			for m in range(size):
@@ -293,23 +362,23 @@ if __debug__ and __name__ == '__main__':
 	
 	
 	print()
-	a = Automaton.random_linear_linear(4, 3, 4, Vector, LinearCircuit, Linear, F, randrange)
-	for x in enumerate(a(random_stream(512, 3, F, randrange))):
+	a = Automaton.random_linear_linear(4, 3, 4, dict, list, Vector, LinearCircuit, Linear, F, randrange)
+	for n, x in enumerate(a(random_stream(32, 3, list, F, randrange))):
 		print(n, x)
 	
 	print()
-	b = Automaton.random_linear_quadratic(4, 3, 4, Vector, QuadraticCircuit, LinearCircuit, Quadratic, Linear, F, randrange)
-	for x in enumerate(b(random_stream(512, 3, F, randrange))):
+	b = Automaton.random_linear_quadratic(4, 3, 4, dict, list, Vector, QuadraticCircuit, LinearCircuit, Quadratic, Linear, F, randrange)
+	for n, x in enumerate(b(random_stream(32, 3, list, F, randrange))):
 		print(n, x)
 	
 	print()
-	c = Automaton.random_quadratic_linear(4, 3, 4, Vector, QuadraticCircuit, LinearCircuit, Quadratic, Linear, F, randrange)
-	for x in enumerate(c(random_stream(512, 3, F, randrange))):
+	c = Automaton.random_quadratic_linear(4, 3, 4, dict, list, Vector, QuadraticCircuit, LinearCircuit, Quadratic, Linear, F, randrange)
+	for n, x in enumerate(c(random_stream(32, 3, list, F, randrange))):
 		print(n, x)
 	
 	print()
-	d = Automaton.random_quadratic_quadratic(4, 3, 4, Vector, QuadraticCircuit, Quadratic, Linear, F, randrange)
-	for x in enumerate(d(random_stream(512, 3, F, randrange))):
+	d = Automaton.random_quadratic_quadratic(4, 3, 4, dict, list, Vector, QuadraticCircuit, Quadratic, Linear, F, randrange)
+	for n, x in enumerate(d(random_stream(32, 3, list, F, randrange))):
 		print(n, x)
 	
 	
@@ -333,14 +402,15 @@ if __debug__ and __name__ == '__main__':
 			self.__stop = False
 	
 	
-	a = Automaton.random_quadratic_quadratic(4, 4, 0, Vector, QuadraticCircuit, Quadratic, Linear, F, randrange)
+	a = Automaton.random_quadratic_quadratic(4, 4, 1, dict, list, Vector, QuadraticCircuit, Quadratic, Linear, F, randrange)
 	
 	
+	print()
 	loopback = Loopback()
-	loopback.push(Vector.random(4, F, randrange))
+	loopback.push(Vector.random(4, list, F, randrange))
 	for n, x in enumerate(a(loopback)):
-		print(x)
-		if n < 50:
+		print(n, x)
+		if n < 32:
 			loopback.push(x)
 
 

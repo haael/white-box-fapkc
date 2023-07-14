@@ -58,6 +58,7 @@ class Field:
 		return cls(randbelow(cls.field_size - 1) + 1)
 	
 	def __init__(self, *values):
+		#print(f'Field.__init__({values})')
 		if len(values) == 1:
 			value = values[0]			
 			try:
@@ -70,6 +71,9 @@ class Field:
 		
 		if __debug__ and not 0 <= int(self) < self.field_size:
 			raise ValueError(f"Value out of bounds: 0 <= {int(self)} < {self.field_size} (class `{self.__class__.__name__}`).")
+	
+	def serialize(self):
+		yield int(self)
 	
 	@cached
 	def __str__(self):
@@ -223,8 +227,14 @@ class BinaryGalois:
 		return cls(randbelow(cls.field_size - 1) + 1)
 	
 	def __init__(self, value):
-		self.__value = value
+		try:
+			self.__value = value.__value
+		except AttributeError:
+			self.__value = value
 		assert 0 <= int(self) < self.field_size
+	
+	def serialize(self):
+		yield int(self)
 	
 	@cached
 	def __str__(self):
@@ -357,16 +367,21 @@ class Polynomial:
 			
 			try:
 				r, m = divmod(value, self.Field.field_size)
+				#print(value, r, m)
 				v = [m]
 				while r:
 					r, m = divmod(r, self.Field.field_size)
 					v.append(m)
-				self.__values = {_n:self.Field(_v) for (_n, _v) in enumerate(reversed(v)) if _v}
+				#print(v)
+				self.__values = {_n:self.Field(_v) for (_n, _v) in enumerate(v) if _v}
 				return
 			except (AttributeError, TypeError):
 				pass
 		
 		self.__values = {_n:self.Field(_v) for (_n, _v) in enumerate(reversed(values)) if _v}
+	
+	def serialize(self):
+		yield int(self)
 	
 	def __getitem__(self, n):
 		values = self.__values
@@ -677,13 +692,17 @@ if __debug__:
 
 
 if __debug__ and __name__ == '__main__':
-	from pycallgraph2 import PyCallGraph
-	from pycallgraph2.output.graphviz import GraphvizOutput
+	#from pycallgraph2 import PyCallGraph
+	#from pycallgraph2.output.graphviz import GraphvizOutput
 	
-	print("running tests...")
+	#print("running tests...")
+
+	F = Galois('F', 3, [1, 0, 2, 1])
+	for n in range(F.field_size):
+		assert int(F(n)) == n, str(n)
 	
-	profiler = PyCallGraph(output=GraphvizOutput(output_file='polynomial.png'))
-	profiler.start()
+	#profiler = PyCallGraph(output=GraphvizOutput(output_file='polynomial.png'))
+	#profiler.start()
 	
 	class PolynomialRational(Polynomial):
 		Field = Fraction
@@ -691,10 +710,10 @@ if __debug__ and __name__ == '__main__':
 	for x, y, z in product(PolynomialRational.domain(2, 3), PolynomialRational.domain(2, 3), PolynomialRational.domain(2, 3)):
 		polynomial_axioms(x, y, z)
 	
-	profiler.done()
+	#profiler.done()
 	
-	profiler = PyCallGraph(output=GraphvizOutput(output_file='modulo.png'))
-	profiler.start()
+	#profiler = PyCallGraph(output=GraphvizOutput(output_file='modulo.png'))
+	#profiler.start()
 	
 	for m in [2, 3, 5, 7, 11, 13, 17]:
 		print(m)
@@ -705,10 +724,10 @@ if __debug__ and __name__ == '__main__':
 		for x, y, z in product(Modulo.domain(), Modulo.domain(), Modulo.domain()):
 			field_axioms(x, y, z)
 	
-	profiler.done()
+	#profiler.done()
 	
-	profiler = PyCallGraph(output=GraphvizOutput(output_file='polynomial_modulo.png'))
-	profiler.start()
+	#profiler = PyCallGraph(output=GraphvizOutput(output_file='polynomial_modulo.png'))
+	#profiler.start()
 	
 	for m in [2, 3, 5]:
 		print(m)
@@ -722,7 +741,7 @@ if __debug__ and __name__ == '__main__':
 		for x, y, z in product(PolynomialModulo.domain(5 // m), PolynomialModulo.domain(5 // m), PolynomialModulo.domain(5 // m)):
 			polynomial_axioms(x, y, z)
 	
-	profiler.done()
+	#profiler.done()
 	
 	class Modulo_7(Field):
 		modulus = 7
@@ -735,6 +754,4 @@ if __debug__ and __name__ == '__main__':
 	
 	#for x, y, z in product(Galois_7_3.domain(), Galois_7_3.domain(), Galois_7_3.domain()):
 	#	field_axioms(x, y, z)
-	
-	profiler.done()
 
