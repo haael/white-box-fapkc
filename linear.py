@@ -21,8 +21,15 @@ def array_fallback(Array):
 			return Array
 
 
+def table_fallback(Table):
+	try:
+		return Table.Table
+	except AttributeError:
+		return lambda items, ksize, sizes, types, Array: Table(items)
+
+
 class Linear:
-	"Linear (uniform) function of single argument. `F(x + y) = F(x) + F(y); F(0) = 0`."
+	"Additive (uniform) function of single argument. `F(x + y) = F(x) + F(y); F(0) = 0`. The name 'linear' comes from analogy to matrices."
 	
 	@property
 	def Field(self):
@@ -304,15 +311,16 @@ class Vector:
 		return cls(nArray((Field(0) for _n in range(length)), [None], [Field]))
 	
 	def __init__(self, values):
-		if len(values) == 1:
-			try:
-				self.__values = values[0].__values
-			except AttributeError:
-				pass
-			else:
-				return
+		try:
+			self.__values = values.__values
+			self.vector_length = values.vector_length
+		except AttributeError:
+			pass
+		else:
+			return
 		
 		self.__values = values
+		self.vector_length = len(values)
 	
 	def serialize(self):
 		try:
@@ -393,8 +401,8 @@ class Vector:
 			return NotImplemented
 	
 	def __matmul__(self, other):
-		if hasattr(other, '_Vector__values'):
-			if len(self) != len(other):
+		if hasattr(other, 'vector_length'):
+			if self.vector_length != other.vector_length:
 				raise ValueError("Vector lengths don't match.")
 			return sum((self[_n] @ other[_n] for _n in self.keys()), self.zero_element())
 		elif hasattr(other, 'field_power') and hasattr(other, 'field_base'):
@@ -405,8 +413,8 @@ class Vector:
 			return NotImplemented
 	
 	def __rmatmul__(self, other):
-		if hasattr(other, '_Vector__values'):
-			if len(self) != len(other):
+		if hasattr(other, 'vector_length'):
+			if self.vector_length != other.vector_length:
 				raise ValueError("Vector lengths don't match.")
 			return sum((other[_n] @ self[_n] for _n in self.keys()), self.zero_element())
 		elif hasattr(other, 'field_power') and hasattr(other, 'field_base'):
@@ -422,30 +430,65 @@ class Matrix:
 	def Field(self):
 		return self[0, 0].Field
 	
+	#@property
+	#def Linear(self):
+	#	return self[0, 0].Linear
+	
 	@property
-	def Linear(self):
-		return self[0, 0].Linear
+	def Array(self):
+		return array_fallback(self.__values.__class__)
+	
+	@property
+	def Table(self):
+		return table_fallback(self.__values.__class__)
 	
 	def zero_element(self):
-		try:
-			return self.Linear.zero()
-		except AttributeError:
-			return self.Field(0)
+		#try:
+		#	return self.Linear.zero()
+		#except AttributeError:
+		return self.Field(0)
 	
-	def __init__(self):
-		self.width = 0
-		self.height = 0
-		self.__values = {}
-		for (m, n), v in values:
-			if m > self.width: self.width = m + 1
-			if n > self.height: self.height = n + 1
-			self.__values[m, n] = v
+	@classmethod
+	def random(cls, height, width, Table, Array, Field, randbelow):
+		nTable = table_fallback(Table)
+		return cls(nTable((((_m, _n), Field.random(randbelow)) for (_m, _n) in product(range(height), range(width))), [height, width], [None], [Field], Array=Array))
+	
+	@classmethod
+	def zero(cls, height, width, Table, Array, Field):
+		nTable = table_fallback(Table)
+		return cls(nTable((((_m, _n), Field(0)) for (_m, _n) in product(range(height), range(width))), [height, width], [None], [Field], Array=Array))
+	
+	@classmethod
+	def one(cls, height, width, Table, Array, Field):
+		if height != width:
+			raise ValueError("Unit matrix height must be equal to width.")
+		nTable = table_fallback(Table)
+		return cls(nTable((((_m, _n), Field(1 if _m == _n else 0)) for (_m, _n) in product(range(height), range(width))), [height, width], [None], [Field], Array=Array))
+	
+	def __init__(self, values):
+		try:
+			self.__values = values.__values
+			self.matrix_height = values.matrix_height
+			self.matrix_width = values.matrix_width
+		except AttributeError:
+			pass
+		else:
+			return
 		
-		if __debug__ and ((_m, _n) not in self.__values for (_m, _n) in self.keys()):
-			raise ValueError("Matrix initializer non-contigous.")
+		width = 0
+		height = 0
+		for m, n in values.keys():
+			if m >= height:
+				height = m + 1
+			if n >= width:
+				width = n + 1
+		
+		self.__values = values
+		self.matrix_height = height
+		self.matrix_width = width
 	
 	def keys(self):
-		yield from product(range(self.width), range(self.height))
+		yield from product(range(self.matrix_height), range(self.matrix_width))
 	
 	def values(self):
 		yield from self.__values.values()
@@ -469,81 +512,59 @@ class Matrix:
 	
 	def __eq__(self, other):
 		try:
-			return self.width == other.width and self.height == other.height and all(self[_m, _n] == other[_m, _n] for (_m, _n) in self.keys())
+			return self.matrix_width == other.matrix_width and self.matrix_height == other.matrix_height and all(self[_m, _n] == other[_m, _n] for (_m, _n) in self.keys())
 		except (IndexError, AttributeError):
 			return NotImplemented
 	
 	def __add__(self, other):
-		if hasattr(other, 'width') and hasattr(other, 'height'):
-			if not (self.width == other.width and self.height == other.height):
+		if hasattr(other, 'matrix_width') and hasattr(other, 'matrix_height'):
+			if not (self.matrix_width == other.matrix_width and self.matrix_height == other.matrix_height):
 				raise ValueError("Matrix dimensions don't match.")
-			return self.__class__(((_m, _n), self[_m, _n] + other[_m, _n]) for (_m, _n) in self.keys())
+			return self.__class__(self.Table((((_m, _n), self[_m, _n] + other[_m, _n]) for (_m, _n) in self.keys()), [self.matrix_height, self.matrix_width], [None], [self.Field], Array=self.Array))
 		else:
 			return NotImplemented
 	
 	def __sub__(self, other):
-		if hasattr(other, 'width') and hasattr(other, 'height'):
-			if not (self.width == other.width and self.height == other.height):
+		if hasattr(other, 'matrix_width') and hasattr(other, 'matrix_height'):
+			if not (self.matrix_width == other.matrix_width and self.matrix_height == other.matrix_height):
 				raise ValueError("Matrix dimensions don't match.")
-			return self.__class__(((_m, _n), self[_m, _n] - other[_m, _n]) for (_m, _n) in self.keys())
+			return self.__class__(self.Table((((_m, _n), self[_m, _n] - other[_m, _n]) for (_m, _n) in self.keys()), [self.matrix_height, self.matrix_width], [None], [self.Field], Array=self.Array))
 		else:
 			return NotImplemented
 	
 	def __matmul__(self, other):
 		if hasattr(other, 'field_power') and hasattr(other, 'field_base'):
 			if not (self.Field.field_power == other.field_power and self.Field.field_base == other.field_base):
-				raise ValueError("Multiplying vector by a scalar from a different field.")
-			return self.__class__(((_m, _n), self[_m, _n] @ other) for (_m, _n) in self.keys())
-		elif hasattr(other, 'length'):
-			if self.height != other.length:
-				raise ValueError("Matrix height does not equal vector length.")
-			return other.__class__((_m, sum((self[_m, _n] @ other[_n] for _n in range(self.height)), self.zero_element())) for _m in range(self.width))
-		elif hasattr(other, 'width') and hasattr(other, 'height'):
-			if self.height != other.width:
+				raise ValueError("Multiplying matrix by a scalar from a different field.")
+			return self.__class__(self.Table((((_m, _n), self[_m, _n] @ other) for (_m, _n) in self.keys()), [self.matrix_height, self.matrix_width], [None], [self.Field], Array=self.Array))
+		elif hasattr(other, 'vector_length'):
+			if self.matrix_width != other.vector_length:
+				raise ValueError("Matrix width does not equal vector length.")
+			return other.__class__(other.Array((sum((self[_m, _n] @ other[_n] for _n in range(self.matrix_width)), self.zero_element()) for _m in range(self.matrix_height)), [None], [self.Field]))
+		elif hasattr(other, 'matrix_width') and hasattr(other, 'matrix_height'):
+			if self.matrix_width != other.matrix_height:
 				raise ValueError("Left matrix height does not equal right matrix width.")
-			return self.__class__(((_m, _n), sum((self[_m, _k] @ other[_k, _n] for _k in range(self.height)), self.zero_element())) for (_m, _n) in product(range(self.width), range(other.height)))
+			return self.__class__(self.Table((((_m, _n), sum((self[_m, _k] @ other[_k, _n] for _k in range(self.matrix_width)), self.zero_element())) for (_m, _n) in product(range(self.matrix_height), range(other.matrix_width))), [self.matrix_height, other.matrix_width], [None], [self.Field], Array=self.Array))
 		else:
 			return NotImplemented
 	
 	def __rmatmul__(self, other):
+		"When math-multiplying a vector on the left by a matrix on the right, the result is an action of a transposed matrix on the vector. Element multiplications are taken in reverse order."
+		
 		if hasattr(other, 'field_power') and hasattr(other, 'field_base'):
 			if not (self.Field.field_power == other.field_power and self.Field.field_base == other.field_base):
-				raise ValueError("Multiplying vector by a scalar from a different field.")
-			return self.__class__(((_m, _n), other @ self[_m, _n]) for (_m, _n) in self.keys())
-		elif hasattr(other, 'length'):
-			if self.width != other.length:
+				raise ValueError("Multiplying matrix by a scalar from a different field.")
+			return self.__class__(self.Table((((_m, _n), other @ self[_m, _n]) for (_m, _n) in self.keys()), [self.matrix_height, self.matrix_width], [None], [self.Field], Array=self.Array))
+		elif hasattr(other, 'vector_length'):
+			if self.matrix_height != other.vector_length:
 				raise ValueError("Matrix height does not equal vector length.")
-			return other.__class__((_m, sum((other[_m] @ self[_m, _n] for _m in range(self.width)), self.zero_element())) for _n in range(self.height))
-		elif hasattr(other, 'width') and hasattr(other, 'height'):
-			if other.height != self.width:
-				raise ValueError("Right matrix height does not equal left matrix width.")
-			return self.__class__(((_m, _n), sum((other[_m, _k] @ self[_k, _n] for _k in range(other.height)), self.zero_element())) for (_m, _n) in product(range(other.width), range(self.height)))
+			return other.__class__(other.Array((sum((other[_m] @ self[_m, _n] for _m in range(self.matrix_height)), self.zero_element()) for _n in range(self.matrix_width)), [None], [self.Field]))
+		elif hasattr(other, 'matrix_width') and hasattr(other, 'matrix_height'):
+			if self.matrix_height != other.matrix_width:
+				raise ValueError("Left matrix height does not equal right matrix width.")
+			return self.__class__(self.Table((((_m, _n), sum((other[_m, _k] @ self[_k, _n] for _k in range(other.matrix_width)), self.zero_element())) for (_m, _n) in product(range(other.matrix_height), range(self.matrix_width))), [other.matrix_height, self.matrix_width], [None], [self.Field], Array=self.Array))
 		else:
 			return NotImplemented
-
-
-'''
-def random_series(block, delay):
-	v = Matrix.random_vector(block)
-	for k in range(delay):
-		v[k] += Field.random_nonzero()
-		while not v: v[k] += Field.random_nonzero()
-		yield Matrix.random_invertible(block) @ Matrix(v[n] if m == k % block else 0 for (m, n) in product(range(block), repeat=2)) @ Matrix.random_invertible(block)
-
-
-def RaRb(A):
-	Q = {(m, n):A[m - n] for (m, n) in product(range(delay), range(delay)) if m <= n else Z()}
-	P = {(m, n):I() for (m, n) in product(range(delay), range(delay))}
-	
-	for d in range(delay, 0, -1):
-		U = find_upper(Q[0, 0])
-		for m, n in product(range(d), repeat=2):
-			Q[m, n] *= U
-			P[m, n] *= U
-		S = swap_rows(rank(Q[0, 0]))
-	
-	return P
-'''
 
 
 if __debug__ and __name__ == '__main__':
@@ -634,8 +655,54 @@ if __debug__ and __name__ == '__main__':
 			#print(type(e * a2))
 			assert isinstance(e * a2, Quadratic)
 			assert (e * a2)(x, y) == e * a2(x, y)
+	
+	for h in range(1, 10):
+		for w in range(1, 10):
+			f1 = F.random(randrange)
+			f2 = F.random(randrange)
+			
+			vw1 = Vector.random(w, list, F, randrange)
+			vw2 = Vector.random(w, list, F, randrange)
+			vh1 = Vector.random(h, list, F, randrange)
+			vh2 = Vector.random(h, list, F, randrange)
+			
+			m1 = Matrix.random(h, w, dict, list, F, randrange)
+			m2 = Matrix.random(h, w, dict, list, F, randrange)
+			n1 = Matrix.random(w, h, dict, list, F, randrange)
+			n2 = Matrix.random(w, h, dict, list, F, randrange)
+			
+			assert m1 @ (f1 + f2) == m1 @ f1 + m1 @ f2
+			assert (f1 + f2) @ m2 == f1 @ m2 + f2 @ m2
+			assert (m1 + m2) @ f1 == m1 @ f1 + m2 @ f1
+			assert f2 @ (m1 + m2) == f2 @ m1 + f2 @ m2
+			
+			assert m1 @ (vw1 + vw2) == m1 @ vw1 + m1 @ vw2
+			assert (vh1 + vh2) @ m2 == vh1 @ m2 + vh2 @ m2
+			assert (m1 + m2) @ vw1 == m1 @ vw1 + m2 @ vw1
+			assert vh2 @ (m1 + m2) == vh2 @ m1 + vh2 @ m2
 
-
+			assert m1 @ (f1 - f2) == m1 @ f1 - m1 @ f2
+			assert (f1 - f2) @ m2 == f1 @ m2 - f2 @ m2
+			assert (m1 - m2) @ f1 == m1 @ f1 - m2 @ f1
+			assert f2 @ (m1 - m2) == f2 @ m1 - f2 @ m2
+			
+			assert m1 @ (vw1 - vw2) == m1 @ vw1 - m1 @ vw2
+			assert (vh1 - vh2) @ m2 == vh1 @ m2 - vh2 @ m2
+			assert (m1 - m2) @ vw1 == m1 @ vw1 - m2 @ vw1
+			assert vh2 @ (m1 - m2) == vh2 @ m1 - vh2 @ m2
+			
+			assert (m1 + m2) @ n1 == m1 @ n1 + m2 @ n1
+			assert m1 @ (n1 + n2) == m1 @ n1 + m1 @ n2
+			assert n2 @ (m1 + m2) == n2 @ m1 + n2 @ m2
+			assert (n1 + n2) @ m2 == n1 @ m2 + n2 @ m2
+			
+			assert (m1 - m2) @ n1 == m1 @ n1 - m2 @ n1
+			assert m1 @ (n1 - n2) == m1 @ n1 - m1 @ n2
+			assert n2 @ (m1 - m2) == n2 @ m1 - n2 @ m2
+			assert (n1 - n2) @ m2 == n1 @ m2 - n2 @ m2
+			
+			assert (m1 @ n1) @ vh1 == m1 @ (n1 @ vh1)
+			assert (n2 @ m2) @ vw1 == n2 @ (m2 @ vw1)
 
 
 

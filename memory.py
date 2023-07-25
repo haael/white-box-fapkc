@@ -77,7 +77,7 @@ class Array:
 				self.__step = step
 			else:
 				self.__step = 1
-
+		
 		if self.__step != 1:
 			print(self.__step)
 			raise NotImplementedError

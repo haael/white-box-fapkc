@@ -22,6 +22,7 @@ try:
 		point_polynomial = load(fd)
 except (IOError, EOFError):
 	def point_polynomials():
+		"Return a list of 256 polynomials, each evaluating to Rijndael(1) for a single element in Rijndael field and Rijndael(0) foe every other element."
 		pp = []
 		x = RijndaelPolynomial(1, 0)
 		for n in range(Rijndael.field_size):
@@ -43,6 +44,7 @@ except (IOError, EOFError):
 
 
 def polynomial_fn(f):
+	"Transform a function of 1 variable over Rijndael field into a polynomial."
 	p = RijndaelPolynomial()
 	for n in range(Rijndael.field_size):
 		p += point_polynomial[n] * RijndaelPolynomial(f(Rijndael(n)))

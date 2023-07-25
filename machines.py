@@ -10,13 +10,6 @@ from linear import *
 from utils import superscript, cached
 
 
-#def array_fallback(Array):
-#	try:
-#		return Array.Array
-#	except AttributeError:
-#		return lambda values, sizes, types: Array(values)
-
-
 def table_fallback(Table):
 	try:
 		return Table.Table
@@ -25,6 +18,8 @@ def table_fallback(Table):
 
 
 class LinearCircuit:
+	"Circuit performing only linear operations on its arguments. Takes a vector of elements of Galois field, returns a vector. Can be added, subtracted and composed with another linear circuit."
+	
 	@property
 	def Field(self):
 		return self[0, 0].Field
@@ -135,6 +130,8 @@ class LinearCircuit:
 
 
 class QuadraticCircuit:
+	"Circuit performing quadratic operations on pairs its arguments. Takes a vector of elements of Galois field, returns a vector. Can be added, subtracted and composed with linear circuit."
+	
 	@property
 	def Field(self):
 		return self[0, 0, 0].Field	
@@ -276,8 +273,8 @@ if __debug__ and __name__ == '__main__':
 	from fields import Galois
 	from random import randrange
 	
-	#F = Galois('F', 3, [1, 0, 2, 1])
-	F = Galois('Rijndael', 2, [1, 0, 0, 0, 1, 1, 0, 1, 1])
+	F = Galois('F', 3, [1, 0, 2, 1])
+	#F = Galois('Rijndael', 2, [1, 0, 0, 0, 1, 1, 0, 1, 1])
 	
 	
 	#profiler = PyCallGraph(output=GraphvizOutput(output_file='linear_circuit.png'))

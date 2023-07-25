@@ -1,7 +1,7 @@
 #!/usr/bin/python3
 
 
-__all__ = 'Field', 'Polynomial', 'gcd', 'Galois'
+__all__ = 'Field', 'Binary', 'Polynomial', 'gcd', 'Galois'
 
 
 from itertools import zip_longest, product
@@ -58,7 +58,6 @@ class Field:
 		return cls(randbelow(cls.field_size - 1) + 1)
 	
 	def __init__(self, *values):
-		#print(f'Field.__init__({values})')
 		if len(values) == 1:
 			value = values[0]			
 			try:
@@ -156,6 +155,53 @@ class Field:
 			for m in range(-n):
 				r *= b
 			return r
+
+
+class Binary(Field):
+	"Binary field (modulo 2)."
+	
+	modulus = 2
+	
+	@classmethod
+	def random_nonzero(cls, randbelow):
+		return cls(1)
+	
+	@property
+	def __value(self):
+		return self._Field__value
+	
+	def __neg__(self):
+		return self
+	
+	def __add__(self, other):
+		try:
+			return self.__class__(self.__value ^ other.__value)
+		except AttributeError:
+			return NotImplemented
+	
+	__sub__ = __add__
+	
+	def __mul__(self, other):
+		try:
+			return self.__class__(self.__value & other.__value)
+		except AttributeError:
+			return NotImplemented
+	
+	__matmul__ = __mul__
+	
+	def __truediv__(self, other):
+		if not other:
+			raise ZeroDivisionError(f"Division by zero field element modulo {self.modulus}.")
+		else:
+			return self
+	
+	def __pow__(self, n):
+		if n == 0 and not self:
+			raise ArithmeticError("Field zero to zero power.")
+		elif n < 0 and not self:
+			raise ArithmeticError("Field zero to negative power.")
+		
+		return self
 
 
 class FastGalois(Field):
@@ -696,7 +742,7 @@ if __debug__ and __name__ == '__main__':
 	#from pycallgraph2.output.graphviz import GraphvizOutput
 	
 	#print("running tests...")
-
+	
 	F = Galois('F', 3, [1, 0, 2, 1])
 	for n in range(F.field_size):
 		assert int(F(n)) == n, str(n)
