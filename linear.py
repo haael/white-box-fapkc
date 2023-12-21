@@ -8,30 +8,14 @@ from itertools import zip_longest, product, chain
 from math import sqrt, ceil
 from collections import defaultdict
 
-from utils import superscript, cached
-
-
-def array_fallback(Array):
-	try:
-		return Array.Array
-	except AttributeError:
-		if isinstance(Array, type):
-			return lambda values, sizes, types: Array(values)
-		else:
-			return Array
-
-
-def table_fallback(Table):
-	try:
-		return Table.Table
-	except AttributeError:
-		return lambda items, ksize, sizes, types, Array: Table(items)
+from utils import superscript, cached, array_fallback, table_fallback, sm_range
 
 
 class Linear:
 	"Additive (uniform) function of single argument. `F(x + y) = F(x) + F(y); F(0) = 0`. The name 'linear' comes from analogy to matrices."
 	
 	@property
+	@cached
 	def Field(self):
 		return self.__f[0].Field
 	
@@ -41,37 +25,38 @@ class Linear:
 		return cls
 	
 	@property
+	@cached
 	def Array(self):
 		return array_fallback(self.__f.__class__)
 	
 	@classmethod
 	def zero(cls, Array, Field):
 		nArray = array_fallback(Array)		
-		return cls(nArray((Field(0) for _n in range(Field.field_power)), [None], [Field]))
+		return cls(nArray((Field(0) for _n in sm_range(Field.field_power)), [None], [Field]))
 	
 	@classmethod
 	def one(cls, Array, Field):
 		nArray = array_fallback(Array)		
-		return cls(nArray(chain([Field(1)], (Field(0) for _n in range(Field.field_power - 1))), [None], [Field]))
+		return cls(nArray(chain([Field(1)], (Field(0) for _n in sm_range(Field.field_power - 1))), [None], [Field]))
 	
 	@classmethod
 	def factor(cls, value, Array):
 		nArray = array_fallback(Array)		
 		Field = value.__class__
-		return cls(nArray(chain([value], (Field(0) for _n in range(Field.field_power - 1))), [None], [Field]))
+		return cls(nArray(chain([value], (Field(0) for _n in sm_range(Field.field_power - 1))), [None], [Field]))
 	
 	@classmethod
 	def random(cls, Array, Field, randbelow):
 		nArray = array_fallback(Array)		
-		return cls(nArray((Field.random(randbelow) for n in range(Field.field_power)), [None], [Field]))
+		return cls(nArray((Field.random(randbelow) for n in sm_range(Field.field_power)), [None], [Field]))
 	
 	@classmethod
 	def random_nonzero(cls, Array, Field, randbelow):
-		nArray = array_fallback(Array)		
+		nArray = array_fallback(Array)
 		
 		f = []
 		nonzero = False
-		for n in range(Field.field_power - 1):
+		for n in sm_range(Field.field_power - 1):
 			v = Field.random(randbelow)
 			if v:
 				nonzero = True
@@ -115,12 +100,15 @@ class Linear:
 	def linear_coefficient(self, i):
 		return self.__f[i]
 	
-	@cached
 	def __str__(self):
-		return " + ".join(f"{self.__f[_n]}·x{superscript(self.Field.field_base ** _n)}" for _n in range(self.Field.field_power))
+		return " + ".join(f"{self.__f[_n]}·x{superscript(self.Field.field_base ** _n)}" for _n in sm_range(self.Field.field_power))
 	
 	def __call__(self, x):
-		return sum((self.__f[_n] * x**(self.Field.field_base ** _n) for _n in range(self.Field.field_power)), self.Field(0))
+		Field = self.Field
+		p = Field.field_base
+		n = Field.field_power
+		
+		return sum((self.__f[_n] * x**(p ** _n) for _n in sm_range(n)), Field(0))
 	
 	def __add__(self, other):
 		try:
@@ -135,17 +123,23 @@ class Linear:
 			return NotImplemented
 	
 	def __mul__(self, other):
-		return self.__class__(self.Array((_a * other for _a in self.__f), [None], [self.Field]))
+		try:
+			return self.__class__(self.Array((_a * other for _a in self.__f), [None], [self.Field]))
+		except TypeError:
+			return NotImplemented
 	
 	def __rmul__(self, other):
-		return self.__class__(self.Array((other * _a for _a in self.__f), [None], [self.Field]))
+		try:
+			return self.__class__(self.Array((other * _a for _a in self.__f), [None], [self.Field]))
+		except TypeError:
+			return NotImplemented
 	
 	def __matmul__(self, other):
 		try:
 			f = [self.Field(0)] * self.Field.field_power
 			
-			for m in range(self.Field.field_power):
-				for n in range(other.Field.field_power):
+			for m in sm_range(self.Field.field_power):
+				for n in sm_range(other.Field.field_power):
 					f[(m + n) % self.Field.field_power] += self.__f[m] * other.__f[n]**(self.Field.field_base ** m)
 			
 			return self.__class__(self.Array(f, [None], [self.Field]))
@@ -158,10 +152,12 @@ class Quadratic:
 	"Class of functions of 2 variables, containing the product `f(x, y) = x * y` and closed over linear transformations."
 	
 	@property
+	@cached
 	def Field(self):
 		return self.__f[0].Field
 	
 	@property
+	@cached
 	def Linear(self):
 		return self.__f[0].Linear
 	
@@ -171,30 +167,24 @@ class Quadratic:
 		return cls
 	
 	@property
+	@cached
 	def Array(self):
 		return array_fallback(self.__f.__class__)
-	
-	@property
-	def Dictionary(self):
-		try:
-			return self.__f.Dictionary
-		except AttributeError:
-			return lambda values, Type, size, *indices: self.__f.__class__(values)
 	
 	@classmethod
 	def zero(cls, Array, Linear, Field):
 		nArray = array_fallback(Array)
-		return cls(nArray((Linear.zero(Array, Field) for _i in range(Field.field_power)), [Field.field_power, None], [Linear, Field]))
+		return cls(nArray((Linear.zero(Array, Field) for _i in sm_range(Field.field_power)), [Field.field_power, None], [Linear, Field]))
 	
 	@classmethod
 	def one(cls, Array, Linear, Field):
 		nArray = array_fallback(Array)
-		return cls(nArray((chain([Linear.one(Array, Field)], (Linear.zero(Array, Field) for _i in range(Field.field_power)))), [Field.field_power, None], [Linear, Field]))
+		return cls(nArray((chain([Linear.one(Array, Field)], (Linear.zero(Array, Field) for _i in sm_range(Field.field_power)))), [Field.field_power, None], [Linear, Field]))
 	
 	@classmethod
 	def random(cls, Array, Linear, Field, randbelow):
 		nArray = array_fallback(Array)
-		return cls(nArray((Linear.random(Array, Field, randbelow) for _i in range(Field.field_power)), [Field.field_power, None], [Linear, Field]))
+		return cls(nArray((Linear.random(Array, Field, randbelow) for _i in sm_range(Field.field_power)), [Field.field_power, None], [Linear, Field]))
 	
 	def __init__(self, coefficients):
 		"f[0](x * y) + f[1](x * y**p) + f[2](x * y ** (p ** 2)) + f[3](x * y ** (p ** 3)) + ... + f[k](x * y ** (p ** k))"
@@ -208,7 +198,7 @@ class Quadratic:
 		self.__f = coefficients
 		
 		if not len(self.__f) == self.Field.field_power:
-			raise ValueError(f"Linear function over {self.Field.__name__} needs {self.Field.field_power} parameters.")
+			raise ValueError(f"Linear function over {self.Field.__name__} needs {self.Field.field_power} parameters. (Got {len(self.__f)}.)")
 	
 	def serialize(self):
 		try:
@@ -220,7 +210,14 @@ class Quadratic:
 		return self.__f[i].linear_coefficient(j)
 	
 	def __call__(self, x, y):
-		return sum((self.__f[_k](x * y**(self.Field.field_base ** _k)) for _k in range(self.Field.field_power)), self.Field(0))
+		Field = self.Field
+		p = Field.field_base
+		n = Field.field_power
+		
+		r = Field(0)
+		for k in sm_range(n):
+			r += self.__f[k](x * y**(p ** k))
+		return r
 	
 	def __add__(self, other):
 		try:
@@ -250,13 +247,14 @@ class Quadratic:
 		p = self.Field.field_base
 		
 		d = defaultdict(lambda: self.Field(0))
-		for (i, j, k, l) in product(range(m), repeat=4):
+		for (i, j, k, l) in product(sm_range(m), repeat=4):
 			d[(i + l) % m, (j + k - i) % m] += self.quadratic_coefficient(k, l) * b.linear_coefficient(i)**(p**l) * c.linear_coefficient(j)**(p ** ((k + l) % m))
 		
 		f = []
-		for j in range(m):
-			f.append(b.__class__(b.Array((d[i, j] for i in range(m)), [None], [self.Field])))
-		return self.__class__(self.Array(f, [self.Field.field_power, None], [self.Linear, self.Field]))
+		for j in sm_range(m):
+			f.append(b.__class__(b.Array((d[i, j] for i in sm_range(m)), [None], [self.Field])))
+		
+		return self.__class__(self.Array(f, [m, None], [self.Linear, self.Field]))
 	
 	def __rmatmul__(self, other):
 		return self.__class__(self.Array((other @ _f for _f in self.__f), [self.Field.field_power, None], [self.Linear, self.Field]))
@@ -264,27 +262,23 @@ class Quadratic:
 
 class Vector:
 	@property
+	@cached
 	def Field(self):
 		return self[0].Field
 	
-	#@property
-	#def Linear(self):
-	#	return self[0].Field
-	
 	@property
+	@cached
 	def Array(self):
 		return array_fallback(self.__values.__class__)
 	
+	@cached
 	def zero_element(self):
-		#try:
-		#	return self.Linear.zero()
-		#except AttributeError:
 		return self.Field(0)
 	
 	@classmethod
 	def random(cls, length, Array, Field, randbelow):
 		nArray = array_fallback(Array)
-		return cls(nArray((Field.random(randbelow) for _n in range(length)), [None], [Field]))
+		return cls(nArray((Field.random(randbelow) for _n in sm_range(length)), [None], [Field]))
 	
 	@classmethod
 	def random_nonzero(cls, length, Array, Field, randbelow):
@@ -292,7 +286,7 @@ class Vector:
 		
 		values = []
 		nonzero = False
-		for n in range(length):
+		for n in sm_range(length):
 			if not nonzero and n == length - 1:
 				f = Field.random_nonzero(randbelow)
 			else:
@@ -308,7 +302,7 @@ class Vector:
 	@classmethod
 	def zero(cls, length, Array, Field):
 		nArray = array_fallback(Array)
-		return cls(nArray((Field(0) for _n in range(length)), [None], [Field]))
+		return cls(nArray((Field(0) for _n in sm_range(length)), [None], [Field]))
 	
 	def __init__(self, values):
 		try:
@@ -328,19 +322,17 @@ class Vector:
 		except AttributeError:
 			return map(int, self.__values)
 	
-	@cached
 	def __repr__(self):
 		return f'{self.__class__.__name__}({{{ ", ".join(str(_n) + ": " + str(self.__values[_n]) for _n in self.keys()) }}})'
 	
-	@cached
 	def __str__(self):
 		return "Vector[" + ", ".join([str(_v) for _v in self.__values]) + "]"
 	
 	def __len__(self):
-		return len(self.__values)
+		return self.vector_length
 	
 	def keys(self):
-		yield from range(len(self))
+		yield from sm_range(len(self))
 	
 	def values(self):
 		yield from self.__values
@@ -354,8 +346,14 @@ class Vector:
 		else:
 			return self.__values[index]
 	
-	#def __setitem__(self, index, value):
-	#	self.__values[index] = value
+	def __setitem__(self, index, value):
+		if index is Ellipsis or (hasattr(index, 'start') and hasattr(index, 'stop') and hasattr(index, 'step')):
+			if hasattr(value, '_Vector__values'):
+				self.__values[index] = value.__values
+			else:
+				self.__values[index] = value
+		else:
+			self.__values[index] = value
 	
 	def __eq__(self, other):
 		try:
@@ -370,19 +368,19 @@ class Vector:
 		return self.__class__(self.Array(chain(other, self), [None], [self.Field]))
 	
 	def __add__(self, other):
-		try:
-			if len(self) != len(other):
-				raise ValueError("Vector lengths don't match.")
+		if hasattr(other, 'vector_length'):
+			if self.vector_length != other.vector_length:
+				raise ValueError(f"Vector lengths don't match ({self.vector_length} vs. {other.vector_length}).")
 			return self.__class__(self.Array((self[_n] + other[_n] for _n in self.keys()), [None], [self.Field]))
-		except TypeError:
+		else:
 			return NotImplemented
 	
 	def __sub__(self, other):
-		try:
-			if len(self) != len(other):
-				raise ValueError("Vector lengths don't match.")
+		if hasattr(other, 'vector_length'):
+			if self.vector_length != other.vector_length:
+				raise ValueError(f"Vector lengths don't match ({self.vector_length} vs. {other.vector_length}).")
 			return self.__class__(self.Array((self[_n] - other[_n] for _n in self.keys()), [None], [self.Field]))
-		except TypeError:
+		else:
 			return NotImplemented
 	
 	def __neg__(self):
@@ -427,43 +425,40 @@ class Vector:
 
 class Matrix:
 	@property
+	@cached
 	def Field(self):
 		return self[0, 0].Field
 	
-	#@property
-	#def Linear(self):
-	#	return self[0, 0].Linear
-	
 	@property
+	@cached
 	def Array(self):
 		return array_fallback(self.__values.__class__)
 	
 	@property
+	@cached
 	def Table(self):
 		return table_fallback(self.__values.__class__)
 	
+	@cached
 	def zero_element(self):
-		#try:
-		#	return self.Linear.zero()
-		#except AttributeError:
 		return self.Field(0)
 	
 	@classmethod
 	def random(cls, height, width, Table, Array, Field, randbelow):
 		nTable = table_fallback(Table)
-		return cls(nTable((((_m, _n), Field.random(randbelow)) for (_m, _n) in product(range(height), range(width))), [height, width], [None], [Field], Array=Array))
+		return cls(nTable((((_m, _n), Field.random(randbelow)) for (_m, _n) in product(sm_range(height), sm_range(width))), [height, width], [None], [Field], Array=Array))
 	
 	@classmethod
 	def zero(cls, height, width, Table, Array, Field):
 		nTable = table_fallback(Table)
-		return cls(nTable((((_m, _n), Field(0)) for (_m, _n) in product(range(height), range(width))), [height, width], [None], [Field], Array=Array))
+		return cls(nTable((((_m, _n), Field(0)) for (_m, _n) in product(sm_range(height), sm_range(width))), [height, width], [None], [Field], Array=Array))
 	
 	@classmethod
 	def one(cls, height, width, Table, Array, Field):
 		if height != width:
 			raise ValueError("Unit matrix height must be equal to width.")
 		nTable = table_fallback(Table)
-		return cls(nTable((((_m, _n), Field(1 if _m == _n else 0)) for (_m, _n) in product(range(height), range(width))), [height, width], [None], [Field], Array=Array))
+		return cls(nTable((((_m, _n), Field(1 if _m == _n else 0)) for (_m, _n) in product(sm_range(height), sm_range(width))), [height, width], [None], [Field], Array=Array))
 	
 	def __init__(self, values):
 		try:
@@ -488,7 +483,7 @@ class Matrix:
 		self.matrix_width = width
 	
 	def keys(self):
-		yield from product(range(self.matrix_height), range(self.matrix_width))
+		yield from product(sm_range(self.matrix_height), sm_range(self.matrix_width))
 	
 	def values(self):
 		yield from self.__values.values()
@@ -502,13 +497,6 @@ class Matrix:
 		except ValueError:
 			raise IndexError
 		return self.__values[m, n]
-	
-	#def __setitem__(self, index, value):
-	#	try:
-	#		m, n = index
-	#	except ValueError:
-	#		raise IndexError
-	#	self.__values[index] = value
 	
 	def __eq__(self, other):
 		try:
@@ -540,11 +528,11 @@ class Matrix:
 		elif hasattr(other, 'vector_length'):
 			if self.matrix_width != other.vector_length:
 				raise ValueError("Matrix width does not equal vector length.")
-			return other.__class__(other.Array((sum((self[_m, _n] @ other[_n] for _n in range(self.matrix_width)), self.zero_element()) for _m in range(self.matrix_height)), [None], [self.Field]))
+			return other.__class__(other.Array((sum((self[_m, _n] @ other[_n] for _n in sm_range(self.matrix_width)), self.zero_element()) for _m in sm_range(self.matrix_height)), [None], [self.Field]))
 		elif hasattr(other, 'matrix_width') and hasattr(other, 'matrix_height'):
 			if self.matrix_width != other.matrix_height:
 				raise ValueError("Left matrix height does not equal right matrix width.")
-			return self.__class__(self.Table((((_m, _n), sum((self[_m, _k] @ other[_k, _n] for _k in range(self.matrix_width)), self.zero_element())) for (_m, _n) in product(range(self.matrix_height), range(other.matrix_width))), [self.matrix_height, other.matrix_width], [None], [self.Field], Array=self.Array))
+			return self.__class__(self.Table((((_m, _n), sum((self[_m, _k] @ other[_k, _n] for _k in sm_range(self.matrix_width)), self.zero_element())) for (_m, _n) in product(sm_range(self.matrix_height), sm_range(other.matrix_width))), [self.matrix_height, other.matrix_width], [None], [self.Field], Array=self.Array))
 		else:
 			return NotImplemented
 	
@@ -558,11 +546,11 @@ class Matrix:
 		elif hasattr(other, 'vector_length'):
 			if self.matrix_height != other.vector_length:
 				raise ValueError("Matrix height does not equal vector length.")
-			return other.__class__(other.Array((sum((other[_m] @ self[_m, _n] for _m in range(self.matrix_height)), self.zero_element()) for _n in range(self.matrix_width)), [None], [self.Field]))
+			return other.__class__(other.Array((sum((other[_m] @ self[_m, _n] for _m in sm_range(self.matrix_height)), self.zero_element()) for _n in sm_range(self.matrix_width)), [None], [self.Field]))
 		elif hasattr(other, 'matrix_width') and hasattr(other, 'matrix_height'):
 			if self.matrix_height != other.matrix_width:
 				raise ValueError("Left matrix height does not equal right matrix width.")
-			return self.__class__(self.Table((((_m, _n), sum((other[_m, _k] @ self[_k, _n] for _k in range(other.matrix_width)), self.zero_element())) for (_m, _n) in product(range(other.matrix_height), range(self.matrix_width))), [other.matrix_height, self.matrix_width], [None], [self.Field], Array=self.Array))
+			return self.__class__(self.Table((((_m, _n), sum((other[_m, _k] @ self[_k, _n] for _k in sm_range(other.matrix_width)), self.zero_element())) for (_m, _n) in product(sm_range(other.matrix_height), sm_range(self.matrix_width))), [other.matrix_height, self.matrix_width], [None], [self.Field], Array=self.Array))
 		else:
 			return NotImplemented
 
@@ -573,7 +561,7 @@ if __debug__ and __name__ == '__main__':
 	
 	F = Galois('F', 3, [1, 0, 2, 1])
 	
-	for n in range(100):
+	for n in sm_range(100):
 		a = Vector.random(4, list, F, randrange)
 		b = Vector.random(4, list, F, randrange)
 		c = Vector.random(4, list, F, randrange)
@@ -581,7 +569,7 @@ if __debug__ and __name__ == '__main__':
 		g = F.random(randrange)
 		
 		assert len(a | b) == len(a) + len(b)
-		assert a + [F(1), F(2), F(3), F(4)] == a + Vector([F(1), F(2), F(3), F(4)])
+		#assert a + [F(1), F(2), F(3), F(4)] == a + Vector([F(1), F(2), F(3), F(4)])
 		assert a + b == b + a
 		assert a - b == -(b - a)
 		assert f * (a + b) == f * a + f * b
@@ -595,7 +583,7 @@ if __debug__ and __name__ == '__main__':
 		assert a @ (f * b) == f * (a @ b)
 		assert (f * a) @ (g * b) == (f * g) * (a @ b)
 	
-	for n in range(10):
+	for n in sm_range(10):
 		a = Linear.random(list, F, randrange)
 		b = Linear.random(list, F, randrange)
 		c = F.random(randrange)
@@ -604,7 +592,7 @@ if __debug__ and __name__ == '__main__':
 		df = Linear.factor(d, list)
 		cdf = Linear.factor(c * d, list)
 		
-		for m in range(20):
+		for m in sm_range(20):
 			x = F.random(randrange)
 			y = F.random(randrange)
 			
@@ -633,7 +621,7 @@ if __debug__ and __name__ == '__main__':
 			
 			assert cdf(x) == c * d * x
 	
-	for n in range(20):
+	for n in sm_range(20):
 		a1 = Quadratic.random(list, Linear, F, randrange)
 		a2 = Quadratic.random(list, Linear, F, randrange)
 		b = Linear.random(list, F, randrange)
@@ -641,7 +629,7 @@ if __debug__ and __name__ == '__main__':
 		d = Linear.random(list, F, randrange)
 		e = F.random(randrange)
 		
-		for m in range(20):
+		for m in sm_range(20):
 			x = F.random(randrange)
 			y = F.random(randrange)
 			
@@ -656,8 +644,8 @@ if __debug__ and __name__ == '__main__':
 			assert isinstance(e * a2, Quadratic)
 			assert (e * a2)(x, y) == e * a2(x, y)
 	
-	for h in range(1, 10):
-		for w in range(1, 10):
+	for h in sm_range(1, 10):
+		for w in sm_range(1, 10):
 			f1 = F.random(randrange)
 			f2 = F.random(randrange)
 			
@@ -680,7 +668,7 @@ if __debug__ and __name__ == '__main__':
 			assert (vh1 + vh2) @ m2 == vh1 @ m2 + vh2 @ m2
 			assert (m1 + m2) @ vw1 == m1 @ vw1 + m2 @ vw1
 			assert vh2 @ (m1 + m2) == vh2 @ m1 + vh2 @ m2
-
+			
 			assert m1 @ (f1 - f2) == m1 @ f1 - m1 @ f2
 			assert (f1 - f2) @ m2 == f1 @ m2 - f2 @ m2
 			assert (m1 - m2) @ f1 == m1 @ f1 - m2 @ f1

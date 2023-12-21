@@ -74,7 +74,6 @@ class Field:
 	def serialize(self):
 		yield int(self)
 	
-	@cached
 	def __str__(self):
 		try:
 			ss = subscript(self.modulus)
@@ -82,7 +81,6 @@ class Field:
 			ss = ""
 		return str(self.__value) + ss
 	
-	@cached
 	def __repr__(self):
 		return f'{self.__class__.__name__}({repr(self.__value)})'
 	
@@ -92,9 +90,8 @@ class Field:
 	def __int__(self):
 		return int(self.__value)
 	
-	@cached
 	def __hash__(self):
-		return hash((self.__class__.__name__, self.modulus, self.__value))
+		return hash((self.__value, self.field_power, self.field_base))
 	
 	def __eq__(self, other):
 		try:
@@ -218,7 +215,6 @@ class FastGalois(Field):
 		
 		return self.exponent[(self.logarithm[self] + self.logarithm[other]) % (self.field_size - 1)]
 	
-	@cached
 	def __str__(self):
 		if self.field_power == 1:
 			return "#" + super().__str__() + subscript(self.field_base)
@@ -255,7 +251,6 @@ class BinaryGalois:
 	
 	@classmethod
 	@property
-	@cached
 	def field_size(cls):
 		return 1 << cls.field_power
 	
@@ -273,34 +268,29 @@ class BinaryGalois:
 		return cls(randbelow(cls.field_size - 1) + 1)
 	
 	def __init__(self, value):
-		try:
+		if hasattr(value, '_BinaryGalois__value'):
 			self.__value = value.__value
-		except AttributeError:
+		else:
 			self.__value = value
 		assert 0 <= int(self) < self.field_size
 	
 	def serialize(self):
 		yield int(self)
 	
-	@cached
 	def __str__(self):
 		return f"#{self.__value:02x}"
 	
-	@cached
 	def __repr__(self):
 		return f'{self.__class__.__name__}({repr(self.__value)})'
 	
-	@cached
 	def __bool__(self):
 		return bool(self.__value)
 	
-	@cached
 	def __int__(self):
 		return int(self.__value)
 	
-	@cached
 	def __hash__(self):
-		return hash((self.__class__.__name__, self.field_power, self.__value))
+		return hash((self.__value, self.field_power, self.field_base))
 	
 	def __eq__(self, other):
 		try:
@@ -317,18 +307,16 @@ class BinaryGalois:
 		except AttributeError:
 			return NotImplemented
 	
-	def __sub__(self, other):
-		try:
-			return self.__class__(self.__value ^ other.__value)
-		except AttributeError:
-			return NotImplemented
+	__sub__ = __add__
 	
 	def __mul__(self, other):
 		if not self:
 			return self
 		if not other:
 			return other
-		return self.__class__(self.exponent[(self.logarithm[int(self)] + self.logarithm[int(other)]) % (self.field_size - 1)])
+		
+		field_size = self.field_size
+		return self.__class__(self.exponent[(self.logarithm[int(self)] + self.logarithm[int(other)]) % (field_size - 1)])
 	
 	__matmul__ = __mul__
 	
@@ -337,7 +325,9 @@ class BinaryGalois:
 			raise ZeroDivisionError
 		if not self:
 			return self
-		return self.__class__(self.exponent[(self.logarithm[int(self)] - self.logarithm[int(other)]) % (self.field_size - 1)])
+		
+		field_size = self.field_size
+		return self.__class__(self.exponent[(self.logarithm[int(self)] - self.logarithm[int(other)]) % (field_size - 1)])
 	
 	def __pow__(self, n):
 		if not self:
@@ -347,7 +337,9 @@ class BinaryGalois:
 				raise ArithmeticError("Field zero to zero negative power.")
 			else:
 				return self
-		return self.__class__(self.exponent[(self.logarithm[int(self)] * n) % (self.field_size - 1)])
+		
+		field_size = self.field_size
+		return self.__class__(self.exponent[(self.logarithm[int(self)] * n) % (field_size - 1)])
 
 
 class Polynomial:
@@ -457,7 +449,7 @@ class Polynomial:
 		if self.__values:
 			return max(self.__values.keys())
 		else:
-			raise ValueError(f"Zero polynomial does not have a degree.")
+			raise ValueError("Zero polynomial does not have a degree.")
 	
 	@cached
 	def __str__(self):
@@ -470,11 +462,9 @@ class Polynomial:
 	def __repr__(self):
 		return f'{self.__class__.__name__}({", ".join(repr(_value) for _value in self)})'
 	
-	@cached
 	def __bool__(self):
 		return bool(self.__values)
 	
-	@cached
 	def __int__(self):
 		r = 0
 		for n, v in self.items():
@@ -539,7 +529,7 @@ class Polynomial:
 	
 	def __divmod__(self, other):
 		if not other:
-			raise ZeroDivisionError(f"Division by zero polynomial.")
+			raise ZeroDivisionError("Division by zero polynomial.")
 		
 		if not self:
 			return self, self
@@ -654,6 +644,7 @@ def Galois(name, prime, coefficients):
 		
 		assert Fast.exponent[0] == Fast(1)
 	
+	Fast.__name__ = name.split('.')[-1]
 	Fast.__qualname__ = name
 	Fast.__module__ = None
 	return Fast
