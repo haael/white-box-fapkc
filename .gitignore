@@ -1,5 +1,8 @@
 __pycache__
 _trash
-*.bc
 *.ll
 *.pickle
+*.o
+*.exe
+*.values.txt
+

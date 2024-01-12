@@ -8,7 +8,7 @@ from itertools import zip_longest, product, chain
 from math import sqrt, ceil
 from collections import defaultdict
 
-from utils import superscript, cached, array_fallback, table_fallback, sm_range
+from utils import superscript, cached, array_fallback, table_fallback, sm_range, sm_len
 
 
 class Linear:
@@ -87,8 +87,8 @@ class Linear:
 			pass
 		
 		self.__f = coefficients
-		
-		if not len(self.__f) == self.Field.field_power:
+		#print("coef", coefficients, self.Field.field_power)
+		if not sm_len(self.__f) == self.Field.field_power:
 			raise ValueError(f"Linear function over {self.Field.__name__} needs {self.Field.field_power} parameters.")
 	
 	def serialize(self):
@@ -102,6 +102,9 @@ class Linear:
 	
 	def __str__(self):
 		return " + ".join(f"{self.__f[_n]}·x{superscript(self.Field.field_base ** _n)}" for _n in sm_range(self.Field.field_power))
+	
+	def __repr__(self):
+		return self.__class__.__name__ + '(' + ", ".join([repr(_f) for _f in self.__f]) + ')'
 	
 	def __call__(self, x):
 		Field = self.Field

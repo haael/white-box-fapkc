@@ -272,7 +272,9 @@ class BinaryGalois:
 			self.__value = value.__value
 		else:
 			self.__value = value
-		assert 0 <= int(self) < self.field_size
+		
+		if isinstance(value, int):
+			assert 0 <= int(self) < self.field_size
 	
 	def serialize(self):
 		yield int(self)
@@ -304,7 +306,7 @@ class BinaryGalois:
 	def __add__(self, other):
 		try:
 			return self.__class__(self.__value ^ other.__value)
-		except AttributeError:
+		except AttributeError as error:
 			return NotImplemented
 	
 	__sub__ = __add__
@@ -316,30 +318,30 @@ class BinaryGalois:
 			return other
 		
 		field_size = self.field_size
-		return self.__class__(self.exponent[(self.logarithm[int(self)] + self.logarithm[int(other)]) % (field_size - 1)])
+		return self.__class__(self.exponent[(self.logarithm[list(self.serialize())[0]] + self.logarithm[list(other.serialize())[0]]) % (field_size - 1)])
 	
 	__matmul__ = __mul__
 	
 	def __truediv__(self, other):
 		if not other:
-			raise ZeroDivisionError
+			raise ZeroDivisionError("Division by zero in field.")
 		if not self:
 			return self
 		
 		field_size = self.field_size
-		return self.__class__(self.exponent[(self.logarithm[int(self)] - self.logarithm[int(other)]) % (field_size - 1)])
+		return self.__class__(self.exponent[(self.logarithm[list(self.serialize())[0]] - self.logarithm[list(other.serialize())[0]]) % (field_size - 1)])
 	
 	def __pow__(self, n):
 		if not self:
 			if n == 0:
 				raise ArithmeticError("Field zero to zero power.")
 			elif n < 0:
-				raise ArithmeticError("Field zero to zero negative power.")
+				raise ArithmeticError("Field zero to negative power.")
 			else:
 				return self
 		
 		field_size = self.field_size
-		return self.__class__(self.exponent[(self.logarithm[int(self)] * n) % (field_size - 1)])
+		return self.__class__(self.exponent[(self.logarithm[list(self.serialize())[0]] * n) % (field_size - 1)])
 
 
 class Polynomial:
@@ -469,7 +471,7 @@ class Polynomial:
 		r = 0
 		for n, v in self.items():
 			r += int(v) * self.Field.field_size ** n
-		return r
+		return int(r)
 	
 	@cached
 	def __hash__(self):
@@ -575,7 +577,7 @@ def gcd(p, q):
 def Galois(name, prime, coefficients):
 	"Construct Galois field with the specified `prime` base and polynomial specified in `coefficients` (starting from the highest power)."
 	
-	for n in range(2, ceil(sqrt(prime))):
+	for n in range(2, ceil(sqrt(int(prime)))):
 		if prime % n == 0:
 			raise ValueError(f"Provided number {prime} is not a prime.")
 	
@@ -636,7 +638,7 @@ def Galois(name, prime, coefficients):
 			generator = Slow(gg)
 			
 			element = Slow(1)
-			for n in range(Slow.field_size - 1):
+			for n in sm_range(Slow.field_size - 1):
 				g = Fast(element)
 				Fast.exponent[n] = g
 				Fast.logarithm[g] = n

@@ -8,7 +8,7 @@ __all__ = 'Array', 'Table'
 
 
 from itertools import chain, product
-from utils import sm_range
+from utils import sm_range, sm_len
 
 
 class Array:
@@ -35,7 +35,7 @@ class Array:
 			else:
 				self.__types = values.__types
 			
-			self.__storage = values.__storage			
+			self.__storage = values.__storage
 			
 			if start is not None:
 				self.__start = start
@@ -78,7 +78,7 @@ class Array:
 			if stop is not None:
 				self.__stop = stop
 			else:
-				self.__stop = len(self.__storage)
+				self.__stop = sm_len(self.__storage)
 			
 			if step is not None:
 				self.__step = step
@@ -86,10 +86,10 @@ class Array:
 				self.__step = 1
 		
 		if self.__step != 1:
-			print(self.__step)
+			#print(self.__step)
 			raise NotImplementedError
 		
-		assert len(self.__storage) % self.__element_size() == 0
+		assert sm_len(self.__storage) % self.__element_size() == 0
 		assert (self.__stop - self.__start) % self.__element_size() == 0
 	
 	def __element_size(self):	
@@ -139,7 +139,7 @@ class Array:
 						raise NotImplementedError
 					index = self.__stop - self.__start + index
 					if index < 0:
-						raise IndexError("Index too low.")
+						raise IndexError(f"Index too low ({str(index)}).")
 				if self.__start + index >= self.__stop:
 					raise IndexError(f"Index {index} exceeds array length {self.__stop - self.__start}")
 				return self.__types[0](self.__storage[self.__start + index * self.__step])

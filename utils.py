@@ -66,3 +66,9 @@ def sm_range(*args):
 	else:
 		return range(*args)
 
+def sm_len(a):
+	if hasattr(a, 'sm_length'):
+		return a.sm_length()
+	else:
+		return len(a)
+
