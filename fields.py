@@ -280,10 +280,16 @@ class BinaryGalois:
 		yield int(self)
 	
 	def __str__(self):
-		return f"#{self.__value:02x}"
+		if not isinstance(self.__value, int):
+			return f"#({self.__value})"
+		else:
+			return f"#{self.__value:02x}"
 	
 	def __repr__(self):
-		return f'{self.__class__.__name__}({repr(self.__value)})'
+		try:
+			return f'{self.__class__.__name__}({repr(self.__value)})'
+		except AttributeError:
+			return '<' + self.__class__.__name__ + ': ' + repr(self.__dict__) + '>'
 	
 	def __bool__(self):
 		return bool(self.__value)

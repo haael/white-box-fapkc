@@ -18,7 +18,7 @@ class NonConstantExpression(Exception):
 
 
 class SymbolicValue:
-	Mnemonic = Enum('SymbolicValue.Mnemonic', 'CONST LIST ARG FOR IF LOOP CALL INDEX ADD SUB MUL FLOORDIV MOD NEG POW SHL XOR AND EQ NE GT GE LT LE')
+	Mnemonic = Enum('SymbolicValue.Mnemonic', 'CONST LIST ARG FOR GLOB IF LOOP CALL INDEX ADD SUB MUL FLOORDIV MOD NEG POW SHL XOR AND EQ NE GT GE LT LE')
 	
 	def __init__(self, value, *operands):
 		if not operands:
@@ -42,7 +42,7 @@ class SymbolicValue:
 		if not isinstance(self.__operands, (list, tuple)):
 			raise TypeError(f"Operands type is {type(self.__operands).__name__}")
 		
-		if self.__mnemonic not in [self.Mnemonic.CONST, self.Mnemonic.ARG, self.Mnemonic.FOR]:
+		if self.__mnemonic not in [self.Mnemonic.CONST, self.Mnemonic.ARG, self.Mnemonic.FOR, self.Mnemonic.GLOB]:
 			if any(not isinstance(_operand, self.__class__) for _operand in self.__operands):
 				raise TypeError("All operands must be SymbolicValue.")
 	
@@ -74,8 +74,12 @@ class SymbolicValue:
 	def make_loop(cls, args, result, init, count):
 		return cls(cls.Mnemonic.LOOP, *[cls(_el) for _el in [args, result, init, count]])
 	
+	@classmethod
+	def make_global(cls, g):
+		return cls(cls.Mnemonic.GLOB, g)
+	
 	def __traverse(self, action):
-		if self.__mnemonic in [self.Mnemonic.CONST, self.Mnemonic.ARG, self.Mnemonic.FOR]:
+		if self.__mnemonic in [self.Mnemonic.CONST, self.Mnemonic.ARG, self.Mnemonic.FOR, self.Mnemonic.GLOB]:
 			return action(self)
 		else:
 			return action(self, *[_op.__traverse(action) for _op in self.__operands])
@@ -278,6 +282,15 @@ class SymbolicValue:
 			elif node.__mnemonic == self.Mnemonic.CONST:
 				return long_t(int(node.__operands[0])), block, builder, number
 			
+			elif node.__mnemonic == self.Mnemonic.GLOB:
+				return symbols[node.__operands[0]], block, builder, number
+				#s = symbols[node.__operands[0]]
+				##print(s.type.pointee, dir(s.type.pointee))
+				#if hasattr(s.type.pointee, 'count'):
+				#	return s, block, builder, number
+				#else:
+				#	return builder.sext(builder.load(builder.gep(s, [long_t(0)])), long_t), block, builder, number
+			
 			elif node.__mnemonic == self.Mnemonic.LIST:
 				result = []
 				builders = []
@@ -306,6 +319,10 @@ class SymbolicValue:
 					builder.comment(f"end index (const: {index.constant}) {hex(hash(node))}")
 					end_index[index_serial].append((block, builder, number))
 					return list_[index.constant] if (0 <= index.constant < len(list_)) else long_t(0), block, builder, number
+				
+				elif isinstance(list_, GlobalVariable):
+					block, builder, number = last_builder((list_block, list_builder, list_number), (index_block, index_builder, index_number))
+					return builder.sext(builder.load(builder.gep(list_, [long_t(0), index])), long_t), block, builder, number
 				
 				else:
 					block, builder, number = last_builder((list_block, list_builder, list_number), (index_block, index_builder, index_number))
@@ -402,7 +419,7 @@ class SymbolicValue:
 				x, block1, builder1, number1 = build(node.__operands[0], block, builder, number)
 				y, block2, builder2, number2 = build(node.__operands[1], block1, builder1, number1)
 				block, builder, number = last_builder((block1, builder1, number1), (block2, builder2, number2))
-				return builder.urem(x, y), block, builder, number
+				return builder.srem(x, y), block, builder, number
 			elif node.__mnemonic == self.Mnemonic.GT:
 				x, block1, builder1, number1 = build(node.__operands[0], block, builder, number)
 				y, block2, builder2, number2 = build(node.__operands[1], block1, builder1, number1)
@@ -582,7 +599,7 @@ class SymbolicValue:
 	
 	def optimize_loops(self):
 		def action(node, *args):
-			if node.__mnemonic in [self.Mnemonic.CONST, self.Mnemonic.ARG, self.Mnemonic.FOR]:
+			if node.__mnemonic in [self.Mnemonic.CONST, self.Mnemonic.ARG, self.Mnemonic.FOR, self.Mnemonic.GLOB]:
 				return node
 			elif node.__mnemonic == self.Mnemonic.INDEX:
 				list_, index = args
@@ -662,6 +679,8 @@ class SymbolicValue:
 				return '$' + str(node.__operands[0])
 			elif node.__mnemonic == self.Mnemonic.FOR:
 				return '£' + str(node.__operands[0])
+			elif node.__mnemonic == self.Mnemonic.GLOB:
+				return '@' + str(node.__operands[0])
 			elif node.__mnemonic == self.Mnemonic.CALL:
 				x, *r = args
 				return x + '(' + ', '.join(r) +  ')'
@@ -721,7 +740,11 @@ class SymbolicValue:
 				return x + ' << ' + y
 			elif node.__mnemonic == self.Mnemonic.XOR:
 				x, y = args
-				return x ^ y
+				if node.__operands[0].__mnemonic not in [self.Mnemonic.CONST, self.Mnemonic.ARG, self.Mnemonic.FOR, self.Mnemonic.CALL, self.Mnemonic.INDEX]:
+					x = '(' + x + ')'
+				if node.__operands[1].__mnemonic not in [self.Mnemonic.CONST, self.Mnemonic.ARG, self.Mnemonic.FOR, self.Mnemonic.NEG, self.Mnemonic.CALL, self.Mnemonic.INDEX]:
+					y = '(' + y + ')'
+				return x + ' ^ ' + y
 			elif node.__mnemonic == self.Mnemonic.MOD:
 				x, y = args
 				if node.__operands[0].__mnemonic not in [self.Mnemonic.CONST, self.Mnemonic.ARG, self.Mnemonic.FOR, self.Mnemonic.CALL, self.Mnemonic.INDEX]:
@@ -966,7 +989,7 @@ def sm_range(limit):
 	
 	frame = inspect.stack()[1].frame
 	new_locals = dict(frame.f_locals)
-		
+	
 	loop_vars = frozenset(new_locals.keys()) - frozenset(orig_locals.keys())
 	dynamic_vars = (frozenset(orig_locals.keys()) | frozenset(new_locals.keys())) - loop_vars
 	
@@ -982,21 +1005,25 @@ def sm_range(limit):
 	pythonapi.PyFrame_LocalsToFast(py_object(frame), c_int(0))
 
 
-def transform(fn):	
+def transform(fn, module, short_t, long_t, fname, arg_len=None, symbols={}, compiled={}):
 	source = 'if True:\n' + inspect.getsource(fn)
 	orig_tree = ast.parse(source)
 	mod_tree = Transformer().visit(orig_tree)
 	code = compile(mod_tree, '<string>', 'exec')
 	globals_ = {'range':sm_range, 'SymbolicValue':SymbolicValue}
+	globals_.update(symbols)
 	locals_ = {}
 	exec(code, globals_, locals_)
-	ft = locals_[fn.__name__]
-	arg_len = len(inspect.getfullargspec(fn).args)
+	#print(locals_)
+	ft = list(locals_.values())[0]
+	if arg_len is None:
+		arg_len = len(inspect.getfullargspec(fn).args)
 	args = [SymbolicValue.make_arg(_n) for _n in range(arg_len)]
 	
 	def run():
 		try:
 			for_no = SymbolicValue.for_no
+			#print("call", ft, args)
 			return ft(*args)
 		
 		except MissingCondition as error:
@@ -1014,7 +1041,18 @@ def transform(fn):
 			no_result = run()
 			SymbolicValue.conditions = dict(conditions)
 			
-			return SymbolicValue.merge_trees(SymbolicValue.make_if, condition, yes_result, no_result)
+			if isinstance(yes_result, SymbolicValue) and isinstance(no_result, SymbolicValue):
+				return SymbolicValue.merge_trees(SymbolicValue.make_if, condition, yes_result, no_result)
+			
+			else:
+				if isinstance(yes_result, SymbolicValue):
+					yes_result = no_result.__class__(yes_result)
+				elif isinstance(no_result, SymbolicValue):
+					no_result = yes_result.__class__(no_result)
+				
+				result = object.__new__(yes_result.__class__)
+				result.__dict__ = {_name:SymbolicValue.merge_trees(SymbolicValue.make_if, condition, yes_result.__dict__[_name], no_result.__dict__[_name]) for _name in yes_result.__dict__.keys()}
+				return result
 		
 		except AssertionError:
 			pass
@@ -1024,20 +1062,26 @@ def transform(fn):
 	
 	SymbolicValue.for_no = 0
 	SymbolicValue.conditions = {}
-
+	
 	circuit = run()
 	
 	del SymbolicValue.for_no
 	del SymbolicValue.conditions
 	
-	circuit = circuit.optimize_loops()
+	if isinstance(circuit, SymbolicValue):
+		circuit = circuit.optimize_loops()
+	else:
+		ncircuit = object.__new__(circuit.__class__)
+		ncircuit.__dict__ = {_name:(_value.optimize_loops() if isinstance(_value, SymbolicValue) else _value) for (_name, _value) in circuit.__dict__.items()}
+		circuit = ncircuit
 	
-	#print(fn.__name__, ":", circuit)
+	lfn = Function(module, FunctionType(short_t, [short_t] * arg_len), fname)
 	
-	short_t = IntType(8)
-	long_t = IntType(16)
-	lfn = Function(module, FunctionType(short_t, [short_t] * arg_len), fn.__name__)
-	circuit.compile(lfn, long_t, {})
+	if isinstance(circuit, SymbolicValue):
+		circuit.compile(lfn, long_t, compiled)
+	else:
+		for scircuit in circuit.__dict__.values():
+			scircuit.compile(lfn, long_t, compiled)
 	
 	def new_fn(*args):
 		if len(args) != arg_len:
@@ -1046,15 +1090,21 @@ def transform(fn):
 		k = [SymbolicValue.make_arg(_n) for _n in range(arg_len)]
 		v = [SymbolicValue(_arg) for _arg in args]
 		
-		return circuit.substitute(k, v).evaluate()
+		if isinstance(circuit, SymbolicValue):
+			rcircuit = circuit.substitute(k, v).evaluate()
+		else:
+			rcircuit = object.__new__(circuit.__class__)
+			rcircuit.__dict__ = {_name:(_value.circuit.substitute(k, v).evaluate() if isinstance(_value, SymbolicValue) else _value) for (_name, _value) in circuit.__dict__.items()}
+		
+		return rcircuit
 	
-	new_fn.__name__ = fn.__name__
-	new_fn.__qualname__ = fn.__qualname__
+	new_fn.__name__ = fname.split('.')[-1]
+	new_fn.__qualname__ = fname
 	
-	return new_fn
+	return new_fn, lfn
 
 
-if __name__ == '__main__':
+if __debug__ and __name__ == '__main__':
 	from random import randrange
 	from pathlib import Path
 	from itertools import product
@@ -1220,20 +1270,22 @@ if __name__ == '__main__':
 		return q
 	
 	
-	module = Module()
+	result_module = Module()
+	
+	short_t = IntType(8)
+	long_t = IntType(16)
 	
 	values_a = Path('a.values.txt').open('w')
 	values_b = Path('b.values.txt').open('w')
 	
 	for fn in [fn_const, fn_ignore, fn_identity, fn_project, fn_inc, fn_add, fn_cond, fn_conds, fn_loop, fn_simple_loop, fn_double_loop, fn_inner_loop, fn_cond_loop, fn_ifn_for, fn_for_if, fn_loop_opt, fn_multi]:
-		ft = transform(fn)
+		ft, _ = transform(fn, result_module, short_t, long_t, fn.__name__)
 		arg_len = len(inspect.getfullargspec(fn).args)
 		
 		for n in range(10):
 			r = [randrange(-20, 20) for _r in range(arg_len)]
 			a = fn(*r)
 			b = ft(*r)
-			#print(ft.__name__, r, a, b)
 			assert not isinstance(a, SymbolicValue)
 			assert not isinstance(b, SymbolicValue)
 			assert a == b, f"{ft.__name__}({', '.join([str(_r) for _r in r])}): {a} = {b}"
@@ -1259,7 +1311,7 @@ if __name__ == '__main__':
 	values_a.close()
 	values_b.close()
 	
-	Path('test.ll').write_text(str(module), 'utf-8')
+	Path('test.ll').write_text(str(result_module), 'utf-8')
 	Popen('clang -o test.exe main.c test.ll -Wno-override-module -O3', shell=True).wait()
 	Popen('./test.exe >c.values.txt', shell=True).wait()
 	Popen('sha256sum a.values.txt b.values.txt c.values.txt', shell=True).wait()
