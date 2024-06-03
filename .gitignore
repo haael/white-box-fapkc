@@ -5,4 +5,5 @@ _trash
 *.o
 *.exe
 *.values.txt
+*.png
 

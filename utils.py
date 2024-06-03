@@ -1,7 +1,7 @@
 #!/usr/bin/python3
 
 
-__all__ = 'subscript', 'superscript', 'cached', 'array_fallback', 'table_fallback', 'sm_range'
+__all__ = 'subscript', 'superscript', 'cached', 'array_fallback', 'table_fallback'
 
 
 subscripts = str.maketrans("0123456789", "₀₁₂₃₄₅₆₇₈₉")
@@ -60,15 +60,18 @@ def table_fallback(Table):
 		return lambda items, ksize, sizes, types, Array: Table(items)
 
 
+'''
 def sm_range(*args):
 	if len(args) == 1 and hasattr(args[0], 'sm_range'):
 		return args[0].sm_range()
 	else:
 		return range(*args)
 
+
 def sm_len(a):
 	if hasattr(a, 'sm_length'):
 		return a.sm_length()
 	else:
 		return len(a)
+'''
 

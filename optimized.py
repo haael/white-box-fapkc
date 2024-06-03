@@ -3,107 +3,89 @@
 
 import fields
 import linear
-import machines
-from tracing import SymbolicValue, transform
+from tracing import SymbolicValue, trace, build_array
 from llvmlite.ir import VoidType, IntType, ArrayType, FunctionType, Constant, GlobalVariable, Function, Module, IRBuilder
 import inspect
 
 
-def compile_constant(module, int_t, const):
-	return int_t(const)
-
-
-def compile_array(module, int_t, name, table):
-	array_t = ArrayType(int_t, len(table))
-	result = GlobalVariable(module, array_t, name)
-	result.initializer = array_t([int_t(int(_n)) for _n in table])
-	result.global_constant = True
-	return result
-
-
-def compile_function(module, short_t, long_t, symcls, name, func, compiled):
-	arg_len = len(inspect.getfullargspec(func).args)
-	
-	def fn(*args):
-		return func(*[symcls(_arg) for _arg in args])
-	
-	symbols = {'func':func, 'symcls':symcls}
-	_, lfn = transform(fn, module, short_t, long_t, name, arg_len, symbols, compiled)
-	
-	return lfn
-
-
-arithmetic_methods = frozenset([
-	'__neg__', '__add__', '__sub__', '__mul__', '__matmul__', '__truediv__', '__floordiv__', '__mod__', '__divmod__', #'__pow__',
-	'__radd__', '__rsub__', '__rmul__', '__rmatmul__', '__rtruediv__', '__rfloordiv__', '__rmod__', '__rdivmod__'#, '__rpow__'
-])
-
-
-def compile_class(module, short_t, long_t, classname, cls):
-	compiled = {}
-	symbolic = {}
-	
-	for name in dir(cls):
-		symbol = getattr(cls, name)
+def compile_field(module, symbols, short_t, long_t):
+	class Field(fields.Galois('Field', 2, [1, 0, 0, 0, 1, 1, 0, 1, 1])):
+		def serialize(self):
+			yield self._BinaryGalois__value
 		
-		if symbol is None or isinstance(symbol, property | classmethod | type):
-			pass
-		elif name.startswith('__') and name not in arithmetic_methods:
-			pass
-		elif callable(symbol):
-			pass
-		elif isinstance(symbol, tuple | list):
-			compiled[classname + '.' + name] = compile_array(module, short_t, classname + '.' + name, symbol)
-			symbolic[name] = SymbolicValue.make_global(classname + '.' + name)
-		elif isinstance(symbol, int):
-			compiled[classname + '.' + name] = compile_constant(module, long_t, symbol)
-			symbolic[name] = SymbolicValue.make_global(classname + '.' + name)
-		else:
-			raise NotImplementedError(name + " / " + symbol.__class__.__name__)
+		def _to_symbolic(self):
+			return SymbolicValue(self._BinaryGalois__value)
 	
-	symcls = type(classname, (cls,), symbolic)
+	symbols['Field.exponent'] = build_array(Field.exponent, module, 'Field.exponent', short_t)
+	symbols['Field.logarithm'] = build_array(Field.logarithm, module, 'Field.logarithm', short_t)
+	Field.logarithm = SymbolicValue.make_global('Field.logarithm')
+	Field.exponent = SymbolicValue.make_global('Field.exponent')
 	
-	for name in dir(cls):
-		symbol = getattr(cls, name)
+	trace(Field.__add__, module, symbols, {int:long_t, Field:short_t}, Field, 'Field.__add__')
+	trace(Field.__sub__, module, symbols, {int:long_t, Field:short_t}, Field, 'Field.__sub__')
+	trace(Field.__neg__, module, symbols, {int:long_t, Field:short_t}, Field, 'Field.__neg__')
+	trace(Field.__mul__, module, symbols, {int:long_t, Field:short_t}, Field, 'Field.__mul__')
+	trace(Field.__truediv__, module, symbols, {int:long_t, Field:short_t}, Field, 'Field.__truediv__')
+	trace(Field.__pow__, module, symbols, {int:long_t, Field:short_t}, Field, 'Field.__pow__')
+	
+	return Field
+
+
+def compile_linear(module, symbols, short_t, long_t, oField):
+	class Linear(linear.Linear):
+		class Field(oField):
+			def __init__(self, value):
+				self.value = value
+			
+			def serialize(self):
+				yield self.value
+			
+			def _to_symbolic(self):
+				return SymbolicValue(self.value)
+			
+			__add__ = SymbolicValue.make_global('Field.__add__')
+			__sub__ = SymbolicValue.make_global('Field.__sub__')
+			__neg__ = SymbolicValue.make_global('Field.__neg__')
+			__mul__ = SymbolicValue.make_global('Field.__mul__')
+			__truediv__ = SymbolicValue.make_global('Field.__truediv__')
+			__pow__ = SymbolicValue.make_global('Field.__pow__')
 		
-		if symbol is None or isinstance(symbol, property | classmethod | type):
-			pass
-		elif name not in arithmetic_methods:
-			pass
-		elif callable(symbol):
-			compiled[classname + '.' + name] = compile_function(module, short_t, long_t, symcls, classname + '.' + name, symbol, compiled)
-			symbolic[name] = SymbolicValue.make_global(classname + '.' + name)
-		else:
-			pass
+		@staticmethod
+		def Array(a, b, c):
+			print("Array:", type(a))
+			l = []
+			for e in a:
+				print("el:", e)
+				l.append(e)
+			return l
+		
+		def _to_symbolic(self):
+			return SymbolicValue.make_list([_v for _v in self._Linear__f])
 	
-	return type(classname, (), symbolic)
-
-
-def compile_field(module, short_t, long_t):
-	def serialize(val):
-		#print("serialize:", repr(val.__dict__))
-		yield val._BinaryGalois__value
+	array_t = ArrayType(short_t, Field.field_power).as_pointer()
 	
-	ofield = fields.Galois('Field', 2, [1, 0, 0, 0, 1, 1, 0, 1, 1])
-	ofield = type('Field', (ofield,), {'serialize':serialize})
-	
-	return compile_class(module, short_t, long_t, 'Field', ofield)
-
-
-def compile_linear(module, short_t, long_t, Field):
-	return compile_class(module, short_t, long_t, 'Linear', linear.Linear)
+	trace(Linear.__add__, module, symbols, {int:long_t, Linear:array_t}, Linear, 'Linear.__add__')
 
 
 if __debug__ and __name__ == '__main__':
-	module = Module()
+	from pathlib import Path
 	
 	short_t = IntType(8)
 	long_t = IntType(16)
 	
-	Field = compile_field(module, short_t, long_t)
-	#Linear = compile_linear(module, short_t, long_t, Field)
+	Path('compiled').mkdir(exist_ok=True)
 	
+	symbols = {}
+	
+	module = Module()
+	Field = compile_field(module, symbols, short_t, long_t)
+	#Path('compiled/fields.ll').write_text(str(module), encoding='utf-8')
+	
+	module = Module()
+	compile_linear(module, symbols, short_t, long_t, Field)
+	#Path('compiled/linear.ll').write_text(str(module), encoding='utf-8')
 	print(module)
+	
 
 
 

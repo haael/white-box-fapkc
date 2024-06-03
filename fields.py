@@ -57,9 +57,13 @@ class Field:
 	def random_nonzero(cls, randbelow):
 		return cls(randbelow(cls.field_size - 1) + 1)
 	
+	@classmethod
+	def sum(cls, values):
+		return sum(values, cls(0))
+	
 	def __init__(self, *values):
 		if len(values) == 1:
-			value = values[0]			
+			value = values[0]
 			try:
 				self.__value = value.__value
 				return
@@ -71,8 +75,11 @@ class Field:
 		if __debug__ and not 0 <= int(self) < self.field_size:
 			raise ValueError(f"Value out of bounds: 0 <= {int(self)} < {self.field_size} (class `{self.__class__.__name__}`).")
 	
+	def __getnewargs__(self):
+		return (self.__value,)
+	
 	def serialize(self):
-		yield int(self)
+		yield self.__value
 	
 	def __str__(self):
 		try:
@@ -136,7 +143,7 @@ class Field:
 		else:
 			raise ArithmeticError(f"Could not divide field element {str(self)} by {str(other)}.")
 	
-	def __pow__(self, n):
+	def __pow__(self, n:int):
 		if n >= 0:
 			if n == 0 and not self:
 				raise ArithmeticError("Field zero to zero power.")
@@ -166,6 +173,13 @@ class Binary(Field):
 	@property
 	def __value(self):
 		return self._Field__value
+	
+	@classmethod
+	def sum(cls, values):
+		r = 0
+		for v in values:
+			r ^= v.__value
+		return cls(r)
 	
 	def __neg__(self):
 		return self
@@ -243,6 +257,13 @@ class BinaryGalois:
 	"Fast binary Galois field. Needs `field_power` attribute determining its size and irreducible polynomial `modulus` of the right degree."
 	
 	@classmethod
+	def sum(cls, values):
+		r = 0
+		for v in values:
+			r ^= v.__value
+		return cls(r)
+	
+	@classmethod
 	@property
 	def Field(cls):
 		return cls
@@ -268,16 +289,19 @@ class BinaryGalois:
 		return cls(randbelow(cls.field_size - 1) + 1)
 	
 	def __init__(self, value):
-		if hasattr(value, '_BinaryGalois__value'):
+		try:
 			self.__value = value.__value
-		else:
+		except AttributeError:
 			self.__value = value
 		
 		if isinstance(value, int):
 			assert 0 <= int(self) < self.field_size
 	
+	def __getnewargs__(self):
+		return (self.__value,)
+	
 	def serialize(self):
-		yield int(self)
+		yield self.__value
 	
 	def __str__(self):
 		if not isinstance(self.__value, int):
@@ -312,32 +336,46 @@ class BinaryGalois:
 	def __add__(self, other):
 		try:
 			return self.__class__(self.__value ^ other.__value)
-		except AttributeError as error:
+		except AttributeError:
 			return NotImplemented
 	
 	__sub__ = __add__
 	
 	def __mul__(self, other):
+		try:
+			other.__value
+			if self.Field != other.Field:
+				return NotImplemented
+		except AttributeError:
+			return NotImplemented
+		
 		if not self:
 			return self
 		if not other:
 			return other
 		
 		field_size = self.field_size
-		return self.__class__(self.exponent[(self.logarithm[list(self.serialize())[0]] + self.logarithm[list(other.serialize())[0]]) % (field_size - 1)])
+		return self.__class__(self.exponent[(self.logarithm[self.__value] + self.logarithm[other.__value]) % (field_size - 1)])
 	
 	__matmul__ = __mul__
 	
 	def __truediv__(self, other):
+		try:
+			other.__value
+			if self.Field != other.Field:
+				return NotImplemented
+		except AttributeError:
+			return NotImplemented
+		
 		if not other:
 			raise ZeroDivisionError("Division by zero in field.")
 		if not self:
 			return self
 		
 		field_size = self.field_size
-		return self.__class__(self.exponent[(self.logarithm[list(self.serialize())[0]] - self.logarithm[list(other.serialize())[0]]) % (field_size - 1)])
+		return self.__class__(self.exponent[(self.logarithm[self.__value] - self.logarithm[other.__value]) % (field_size - 1)])
 	
-	def __pow__(self, n):
+	def __pow__(self, n:int):
 		if not self:
 			if n == 0:
 				raise ArithmeticError("Field zero to zero power.")
@@ -347,7 +385,7 @@ class BinaryGalois:
 				return self
 		
 		field_size = self.field_size
-		return self.__class__(self.exponent[(self.logarithm[list(self.serialize())[0]] * n) % (field_size - 1)])
+		return self.__class__(self.exponent[(self.logarithm[self.__value] * abs(n)) % (field_size - 1)])
 
 
 class Polynomial:
@@ -523,7 +561,7 @@ class Polynomial:
 		if not other:
 			return other
 		
-		rvalues = defaultdict(lambda:self.Field(0))
+		rvalues = defaultdict(lambda: self.Field(0))
 		for m, v in self.items():
 			for n, w in other.items():
 				rvalues[m + n] += v * w
@@ -590,6 +628,12 @@ def Galois(name, prime, coefficients):
 	class Modulo(Field):
 		modulus = prime
 	
+	if list(coefficients) == [1, 1]:
+		Modulo.__name__ = name.split('.')[-1]
+		Modulo.__qualname__ = name
+		Modulo.__module__ = None
+		return Modulo
+	
 	class PolynomialModulo(Polynomial):
 		Field = Modulo
 	
@@ -606,7 +650,7 @@ def Galois(name, prime, coefficients):
 		Fast.logarithm = [0] * Slow.field_size
 		
 		gg = 0
-		while not len(set(Fast.exponent[:-1])) == Slow.field_size - 1:
+		while True:
 			Fast.exponent = [0] * Slow.field_size
 			Fast.logarithm = [0] * Slow.field_size
 			
@@ -621,9 +665,12 @@ def Galois(name, prime, coefficients):
 				Fast.exponent[n] = g
 				Fast.logarithm[g] = n
 				element *= generator
+			
+			if len(set(Fast.exponent[:-1])) == Slow.field_size - 1:
+				break
 		
 		assert Fast.exponent[-1] == 0
-		assert Fast.exponent[0] == 1
+		assert Fast.exponent[0] == 1, str(Fast.exponent)
 		assert Fast.logarithm[0] == 0
 	
 	else:
@@ -644,7 +691,7 @@ def Galois(name, prime, coefficients):
 			generator = Slow(gg)
 			
 			element = Slow(1)
-			for n in sm_range(Slow.field_size - 1):
+			for n in range(Slow.field_size - 1):
 				g = Fast(element)
 				Fast.exponent[n] = g
 				Fast.logarithm[g] = n

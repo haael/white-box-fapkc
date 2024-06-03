@@ -8,7 +8,7 @@ from itertools import zip_longest, product, chain
 from math import sqrt, ceil
 from collections import defaultdict
 
-from utils import superscript, cached, array_fallback, table_fallback, sm_range, sm_len
+from utils import superscript, cached, array_fallback, table_fallback
 
 
 class Linear:
@@ -32,23 +32,23 @@ class Linear:
 	@classmethod
 	def zero(cls, Array, Field):
 		nArray = array_fallback(Array)		
-		return cls(nArray((Field(0) for _n in sm_range(Field.field_power)), [None], [Field]))
+		return cls(nArray((Field(0) for _n in range(Field.field_power)), [None], [Field]))
 	
 	@classmethod
 	def one(cls, Array, Field):
 		nArray = array_fallback(Array)		
-		return cls(nArray(chain([Field(1)], (Field(0) for _n in sm_range(Field.field_power - 1))), [None], [Field]))
+		return cls(nArray(chain([Field(1)], (Field(0) for _n in range(Field.field_power - 1))), [None], [Field]))
 	
 	@classmethod
 	def factor(cls, value, Array):
 		nArray = array_fallback(Array)		
 		Field = value.__class__
-		return cls(nArray(chain([value], (Field(0) for _n in sm_range(Field.field_power - 1))), [None], [Field]))
+		return cls(nArray(chain([value], (Field(0) for _n in range(Field.field_power - 1))), [None], [Field]))
 	
 	@classmethod
 	def random(cls, Array, Field, randbelow):
 		nArray = array_fallback(Array)		
-		return cls(nArray((Field.random(randbelow) for n in sm_range(Field.field_power)), [None], [Field]))
+		return cls(nArray((Field.random(randbelow) for n in range(Field.field_power)), [None], [Field]))
 	
 	@classmethod
 	def random_nonzero(cls, Array, Field, randbelow):
@@ -56,7 +56,7 @@ class Linear:
 		
 		f = []
 		nonzero = False
-		for n in sm_range(Field.field_power - 1):
+		for n in range(Field.field_power - 1):
 			v = Field.random(randbelow)
 			if v:
 				nonzero = True
@@ -82,14 +82,14 @@ class Linear:
 		
 		try:
 			self.__f = coefficients.__f
-			return
 		except (AttributeError, TypeError):
-			pass
+			self.__f = coefficients
 		
-		self.__f = coefficients
-		#print("coef", coefficients, self.Field.field_power)
-		if not sm_len(self.__f) == self.Field.field_power:
+		if not len(self.__f) == self.Field.field_power:
 			raise ValueError(f"Linear function over {self.Field.__name__} needs {self.Field.field_power} parameters.")
+	
+	def __getnewargs__(self):
+		return (self.__f,)
 	
 	def serialize(self):
 		try:
@@ -101,7 +101,7 @@ class Linear:
 		return self.__f[i]
 	
 	def __str__(self):
-		return " + ".join(f"{self.__f[_n]}·x{superscript(self.Field.field_base ** _n)}" for _n in sm_range(self.Field.field_power))
+		return " + ".join(f"{self.__f[_n]}·x{superscript(self.Field.field_base ** _n)}" for _n in range(self.Field.field_power))
 	
 	def __repr__(self):
 		return self.__class__.__name__ + '(' + ", ".join([repr(_f) for _f in self.__f]) + ')'
@@ -110,13 +110,31 @@ class Linear:
 		Field = self.Field
 		p = Field.field_base
 		n = Field.field_power
-		
-		return sum((self.__f[_n] * x**(p ** _n) for _n in sm_range(n)), Field(0))
+		f = self.__f
+		return Field.sum(f[_n] * x**(p ** _n) for _n in range(n))
+	
+	#def left_inverse(self):
+	#	'''
+	#	sum(f[n] * x**(p ** n) for n in P) @ sum(g[m] * x**(p ** m) for m in P) = x
+	#	sum(f[n] * sum(g[m] * x**(p ** m))**(p ** n)) = x
+	#	sum(f[n] * sum(g[m]**(p ** n) * x**(p ** m)**(p ** n))) = x
+	#	
+	#	sum(sum(f[n] * g[m]**(p ** n) * x**(p ** (m + n)))) = x
+
+	#	sum(f[0] * g[m]) * x = x
+	#	sum(f[n] * g[0]**(p ** n)) * x = x
+
+
+	#
+	#	sum(f[n] * g[-n]**(p ** n)) = 1
+	#	sum(f[n] * g[k-n]**(p ** n)) = 0
+	#
+	#	'''
 	
 	def __add__(self, other):
 		try:
 			return self.__class__(self.Array((_a + _b for (_a, _b) in zip(self.__f, other.__f)), [None], [self.Field]))
-		except AttributeError:
+		except AttributeError as error:
 			return NotImplemented
 	
 	def __sub__(self, other):
@@ -127,22 +145,32 @@ class Linear:
 	
 	def __mul__(self, other):
 		try:
-			return self.__class__(self.Array((_a * other for _a in self.__f), [None], [self.Field]))
-		except TypeError:
+			if other.Field != self.Field:
+				return NotImplemented
+			if not (hasattr(other, 'field_power') and hasattr(other, 'field_base')):
+				return NotImplemented
+		except AttributeError:
 			return NotImplemented
+		else:
+			return self.__class__(self.Array((_a * other for _a in self.__f), [None], [self.Field]))
 	
 	def __rmul__(self, other):
 		try:
-			return self.__class__(self.Array((other * _a for _a in self.__f), [None], [self.Field]))
-		except TypeError:
+			if other.Field != self.Field:
+				return NotImplemented
+			if not (hasattr(other, 'field_power') and hasattr(other, 'field_base')):
+				return NotImplemented
+		except AttributeError:
 			return NotImplemented
+		else:
+			return self.__class__(self.Array((other * _a for _a in self.__f), [None], [self.Field]))
 	
 	def __matmul__(self, other):
 		try:
 			f = [self.Field(0)] * self.Field.field_power
 			
-			for m in sm_range(self.Field.field_power):
-				for n in sm_range(other.Field.field_power):
+			for m in range(self.Field.field_power):
+				for n in range(other.Field.field_power):
 					f[(m + n) % self.Field.field_power] += self.__f[m] * other.__f[n]**(self.Field.field_base ** m)
 			
 			return self.__class__(self.Array(f, [None], [self.Field]))
@@ -177,17 +205,17 @@ class Quadratic:
 	@classmethod
 	def zero(cls, Array, Linear, Field):
 		nArray = array_fallback(Array)
-		return cls(nArray((Linear.zero(Array, Field) for _i in sm_range(Field.field_power)), [Field.field_power, None], [Linear, Field]))
+		return cls(nArray((Linear.zero(Array, Field) for _i in range(Field.field_power)), [Field.field_power, None], [Linear, Field]))
 	
 	@classmethod
 	def one(cls, Array, Linear, Field):
 		nArray = array_fallback(Array)
-		return cls(nArray((chain([Linear.one(Array, Field)], (Linear.zero(Array, Field) for _i in sm_range(Field.field_power)))), [Field.field_power, None], [Linear, Field]))
+		return cls(nArray((chain([Linear.one(Array, Field)], (Linear.zero(Array, Field) for _i in range(Field.field_power)))), [Field.field_power, None], [Linear, Field]))
 	
 	@classmethod
 	def random(cls, Array, Linear, Field, randbelow):
 		nArray = array_fallback(Array)
-		return cls(nArray((Linear.random(Array, Field, randbelow) for _i in sm_range(Field.field_power)), [Field.field_power, None], [Linear, Field]))
+		return cls(nArray((Linear.random(Array, Field, randbelow) for _i in range(Field.field_power)), [Field.field_power, None], [Linear, Field]))
 	
 	def __init__(self, coefficients):
 		"f[0](x * y) + f[1](x * y**p) + f[2](x * y ** (p ** 2)) + f[3](x * y ** (p ** 3)) + ... + f[k](x * y ** (p ** k))"
@@ -216,11 +244,8 @@ class Quadratic:
 		Field = self.Field
 		p = Field.field_base
 		n = Field.field_power
-		
-		r = Field(0)
-		for k in sm_range(n):
-			r += self.__f[k](x * y**(p ** k))
-		return r
+		f = self.__f
+		return Field.sum(f[_k](x * y**(p ** _k)) for _k in range(n))
 	
 	def __add__(self, other):
 		try:
@@ -241,6 +266,8 @@ class Quadratic:
 		return self.__class__(self.Array((other * _a for _a in self.__f), [self.Field.field_power, None], [self.Linear, self.Field]))
 	
 	def __matmul__(self, other):
+		"Composition of quadratic operation with 2 quasilinear operations. `(q @ (l1, l2))(x, y) = q(l1(x), l2(y))`"
+		
 		try:
 			b, c = other
 		except ValueError:
@@ -250,16 +277,18 @@ class Quadratic:
 		p = self.Field.field_base
 		
 		d = defaultdict(lambda: self.Field(0))
-		for (i, j, k, l) in product(sm_range(m), repeat=4):
+		for (i, j, k, l) in product(range(m), repeat=4):
 			d[(i + l) % m, (j + k - i) % m] += self.quadratic_coefficient(k, l) * b.linear_coefficient(i)**(p**l) * c.linear_coefficient(j)**(p ** ((k + l) % m))
 		
 		f = []
-		for j in sm_range(m):
-			f.append(b.__class__(b.Array((d[i, j] for i in sm_range(m)), [None], [self.Field])))
+		for j in range(m):
+			f.append(b.__class__(b.Array((d[i, j] for i in range(m)), [None], [self.Field])))
 		
 		return self.__class__(self.Array(f, [m, None], [self.Linear, self.Field]))
 	
 	def __rmatmul__(self, other):
+		"Composition of quasilinear operation with quadratic operation. `(l @ q)(x, y) = l(q(x, y))`"
+		
 		return self.__class__(self.Array((other @ _f for _f in self.__f), [self.Field.field_power, None], [self.Linear, self.Field]))
 
 
@@ -281,7 +310,7 @@ class Vector:
 	@classmethod
 	def random(cls, length, Array, Field, randbelow):
 		nArray = array_fallback(Array)
-		return cls(nArray((Field.random(randbelow) for _n in sm_range(length)), [None], [Field]))
+		return cls(nArray((Field.random(randbelow) for _n in range(length)), [None], [Field]))
 	
 	@classmethod
 	def random_nonzero(cls, length, Array, Field, randbelow):
@@ -289,7 +318,7 @@ class Vector:
 		
 		values = []
 		nonzero = False
-		for n in sm_range(length):
+		for n in range(length):
 			if not nonzero and n == length - 1:
 				f = Field.random_nonzero(randbelow)
 			else:
@@ -305,7 +334,7 @@ class Vector:
 	@classmethod
 	def zero(cls, length, Array, Field):
 		nArray = array_fallback(Array)
-		return cls(nArray((Field(0) for _n in sm_range(length)), [None], [Field]))
+		return cls(nArray((Field(0) for _n in range(length)), [None], [Field]))
 	
 	def __init__(self, values):
 		try:
@@ -323,7 +352,7 @@ class Vector:
 		try:
 			return self.__values.serialize()
 		except AttributeError:
-			return map(int, self.__values)
+			return self.__values
 	
 	def __repr__(self):
 		return f'{self.__class__.__name__}({{{ ", ".join(str(_n) + ": " + str(self.__values[_n]) for _n in self.keys()) }}})'
@@ -335,7 +364,7 @@ class Vector:
 		return self.vector_length
 	
 	def keys(self):
-		yield from sm_range(len(self))
+		yield from range(len(self))
 	
 	def values(self):
 		yield from self.__values
@@ -405,7 +434,7 @@ class Vector:
 		if hasattr(other, 'vector_length'):
 			if self.vector_length != other.vector_length:
 				raise ValueError("Vector lengths don't match.")
-			return sum((self[_n] @ other[_n] for _n in self.keys()), self.zero_element())
+			return self.Field.sum(self[_n] @ other[_n] for _n in self.keys())
 		elif hasattr(other, 'field_power') and hasattr(other, 'field_base'):
 			if not (self.Field.field_power == other.field_power and self.Field.field_base == other.field_base):
 				raise ValueError("Multiplying vector by a scalar from a different field.")
@@ -417,7 +446,7 @@ class Vector:
 		if hasattr(other, 'vector_length'):
 			if self.vector_length != other.vector_length:
 				raise ValueError("Vector lengths don't match.")
-			return sum((other[_n] @ self[_n] for _n in self.keys()), self.zero_element())
+			return self.Field.sum(other[_n] @ self[_n] for _n in self.keys())
 		elif hasattr(other, 'field_power') and hasattr(other, 'field_base'):
 			if not (self.Field.field_power == other.field_power and self.Field.field_base == other.field_base):
 				raise ValueError("Multiplying vector by a scalar from a different field.")
@@ -449,21 +478,21 @@ class Matrix:
 	@classmethod
 	def random(cls, height, width, Table, Array, Field, randbelow):
 		nTable = table_fallback(Table)
-		return cls(nTable((((_m, _n), Field.random(randbelow)) for (_m, _n) in product(sm_range(height), sm_range(width))), [height, width], [None], [Field], Array=Array))
+		return cls(nTable((((_m, _n), Field.random(randbelow)) for (_m, _n) in product(range(height), range(width))), [height, width], [None], [Field], Array=Array))
 	
 	@classmethod
 	def zero(cls, height, width, Table, Array, Field):
 		nTable = table_fallback(Table)
-		return cls(nTable((((_m, _n), Field(0)) for (_m, _n) in product(sm_range(height), sm_range(width))), [height, width], [None], [Field], Array=Array))
+		return cls(nTable((((_m, _n), Field(0)) for (_m, _n) in product(range(height), range(width))), [height, width], [None], [Field], Array=Array))
 	
 	@classmethod
 	def one(cls, height, width, Table, Array, Field):
 		if height != width:
 			raise ValueError("Unit matrix height must be equal to width.")
 		nTable = table_fallback(Table)
-		return cls(nTable((((_m, _n), Field(1 if _m == _n else 0)) for (_m, _n) in product(sm_range(height), sm_range(width))), [height, width], [None], [Field], Array=Array))
+		return cls(nTable((((_m, _n), Field(1 if _m == _n else 0)) for (_m, _n) in product(range(height), range(width))), [height, width], [None], [Field], Array=Array))
 	
-	def __init__(self, values):
+	def __init__(self, values):		
 		try:
 			self.__values = values.__values
 			self.matrix_height = values.matrix_height
@@ -485,8 +514,14 @@ class Matrix:
 		self.matrix_height = height
 		self.matrix_width = width
 	
+	def __bool__(self):
+		return any(self.values())
+	
+	def __str__(self):
+		return 'Matrix[' + ', '.join('[' + ', '.join(str(self[_m, _n]) for _n in range(self.matrix_width)) + ']' for _m in range(self.matrix_height)) + ']'
+	
 	def keys(self):
-		yield from product(sm_range(self.matrix_height), sm_range(self.matrix_width))
+		yield from product(range(self.matrix_height), range(self.matrix_width))
 	
 	def values(self):
 		yield from self.__values.values()
@@ -531,11 +566,11 @@ class Matrix:
 		elif hasattr(other, 'vector_length'):
 			if self.matrix_width != other.vector_length:
 				raise ValueError("Matrix width does not equal vector length.")
-			return other.__class__(other.Array((sum((self[_m, _n] @ other[_n] for _n in sm_range(self.matrix_width)), self.zero_element()) for _m in sm_range(self.matrix_height)), [None], [self.Field]))
+			return other.__class__(other.Array((self.Field.sum(self[_m, _n] @ other[_n] for _n in range(self.matrix_width)) for _m in range(self.matrix_height)), [None], [self.Field]))
 		elif hasattr(other, 'matrix_width') and hasattr(other, 'matrix_height'):
 			if self.matrix_width != other.matrix_height:
 				raise ValueError("Left matrix height does not equal right matrix width.")
-			return self.__class__(self.Table((((_m, _n), sum((self[_m, _k] @ other[_k, _n] for _k in sm_range(self.matrix_width)), self.zero_element())) for (_m, _n) in product(sm_range(self.matrix_height), sm_range(other.matrix_width))), [self.matrix_height, other.matrix_width], [None], [self.Field], Array=self.Array))
+			return self.__class__(self.Table((((_m, _n), self.Field.sum(self[_m, _k] @ other[_k, _n] for _k in range(self.matrix_width))) for (_m, _n) in product(range(self.matrix_height), range(other.matrix_width))), [self.matrix_height, other.matrix_width], [None], [self.Field], Array=self.Array))
 		else:
 			return NotImplemented
 	
@@ -549,151 +584,237 @@ class Matrix:
 		elif hasattr(other, 'vector_length'):
 			if self.matrix_height != other.vector_length:
 				raise ValueError("Matrix height does not equal vector length.")
-			return other.__class__(other.Array((sum((other[_m] @ self[_m, _n] for _m in sm_range(self.matrix_height)), self.zero_element()) for _n in sm_range(self.matrix_width)), [None], [self.Field]))
+			return other.__class__(other.Array((self.Field.sum(other[_m] @ self[_m, _n] for _m in range(self.matrix_height)) for _n in range(self.matrix_width)), [None], [self.Field]))
 		elif hasattr(other, 'matrix_width') and hasattr(other, 'matrix_height'):
 			if self.matrix_height != other.matrix_width:
 				raise ValueError("Left matrix height does not equal right matrix width.")
-			return self.__class__(self.Table((((_m, _n), sum((other[_m, _k] @ self[_k, _n] for _k in sm_range(other.matrix_width)), self.zero_element())) for (_m, _n) in product(sm_range(other.matrix_height), sm_range(self.matrix_width))), [other.matrix_height, self.matrix_width], [None], [self.Field], Array=self.Array))
+			return self.__class__(self.Table((((_m, _n), self.Field.sum(other[_m, _k] @ self[_k, _n] for _k in range(other.matrix_width))) for (_m, _n) in product(range(other.matrix_height), range(self.matrix_width))), [other.matrix_height, self.matrix_width], [None], [self.Field], Array=self.Array))
 		else:
 			return NotImplemented
+	
+	def inverse(self):
+		# https://www.geeksforgeeks.org/doolittle-algorithm-lu-decomposition/
+		
+		def cached(f):
+			c = {}
+			def g(i, j):
+				if (i, j) in c:
+					return c[i, j]
+				else:
+					y = f(i, j)
+					c[i, j] = y
+					return y
+			return g
+		
+		@cached
+		def u(i, j):
+			if i > j:
+				return self.zero_element() 
+			elif i == 0:
+				return self[i, j]
+			else:
+				return self[i, j] - self.Field.sum(l(i, k) @ u(k, j) for k in range(i))
+		
+		@cached
+		def l(i, j):
+			if i < j:
+				return self.zero_element() 
+			elif j == 0:
+				return self[i, j] @ u(j, j)**-1
+			else:
+				return (self[i, j] - self.Field.sum(l(i, k) @ u(k, j) for k in range(j))) @ u(j, j)**-1
+		
+		L_less_1 = self.__class__(self.Table((((i, j), self.zero_element() if i == j else l(i, j)) for (i, j) in self.keys()), [self.matrix_height, self.matrix_width], [None], [self.Field], Array=self.Array))
+		D_inv = self.__class__(self.Table((((i, j), u(i, j)**-1 if i == j else self.zero_element()) for (i, j) in self.keys()), [self.matrix_height, self.matrix_width], [None], [self.Field], Array=self.Array))
+		U_less_1 = self.__class__(self.Table((((i, j), self.zero_element() if i == j else u(i, j) @ u(i, i)**-1) for (i, j) in self.keys()), [self.matrix_height, self.matrix_width], [None], [self.Field], Array=self.Array))
+		
+		# https://mobiusfunction.wordpress.com/2010/12/08/the-inverse-of-triangular-matrix-as-a-binomial-series/
+		
+		L_inv = self.zero(self.matrix_height, self.matrix_width, self, self, self.Field)
+		L_pow = self.one(self.matrix_height, self.matrix_width, self, self, self.Field)
+		F_sgn = self.Field(1)
+		while L_pow: # will converge to 0
+			L_inv += F_sgn @ L_pow
+			L_pow @= L_less_1
+			F_sgn = -F_sgn
+				
+		U_inv = self.zero(self.matrix_height, self.matrix_width, self, self, self.Field)
+		U_pow = self.one(self.matrix_height, self.matrix_width, self, self, self.Field)
+		F_sgn = self.Field(1)
+		while U_pow: # will converge to 0
+			U_inv += F_sgn @ U_pow
+			U_pow @= U_less_1
+			F_sgn = -F_sgn
+		
+		return U_inv @ D_inv @ L_inv
+	
+	def __pow__(self, n):
+		result = self.one(self.matrix_height, self.matrix_width, self, self, self.Field)
+		if n > 0:
+			for i in range(n):
+				result @= self
+		elif n < 0:
+			inv = self.inverse()
+			for i in range(abs(n)):
+				result @= inv
+		return result
 
 
 if __debug__ and __name__ == '__main__':
 	from fields import Galois
 	from random import randrange
 	
-	F = Galois('F', 3, [1, 0, 2, 1])
-	
-	for n in sm_range(100):
-		a = Vector.random(4, list, F, randrange)
-		b = Vector.random(4, list, F, randrange)
-		c = Vector.random(4, list, F, randrange)
-		f = F.random(randrange)
-		g = F.random(randrange)
+	fields = Galois('Binary', 2, [1, 1]), Galois('F3', 3, [1, 0, 2, 1]), Galois('Rijndael', 2, [1, 0, 0, 0, 1, 1, 0, 1, 1])
+	for F in fields:
+		print("field", F)
 		
-		assert len(a | b) == len(a) + len(b)
-		#assert a + [F(1), F(2), F(3), F(4)] == a + Vector([F(1), F(2), F(3), F(4)])
-		assert a + b == b + a
-		assert a - b == -(b - a)
-		assert f * (a + b) == f * a + f * b
-		assert f * (a - b) == f * a - f * b
-		assert a @ b == b @ a
-		assert a @ (b + c) == a @ b + a @ c
-		assert (a + b) @ c == a @ c + b @ c
-		assert (a * f) @ b == f * (a @ b)
-		assert (f * a) @ b == f * (a @ b)
-		assert a @ (b * f) == f * (a @ b)
-		assert a @ (f * b) == f * (a @ b)
-		assert (f * a) @ (g * b) == (f * g) * (a @ b)
-	
-	for n in sm_range(10):
-		a = Linear.random(list, F, randrange)
-		b = Linear.random(list, F, randrange)
-		c = F.random(randrange)
-		cf = Linear.factor(c, list)
-		d = F.random(randrange)
-		df = Linear.factor(d, list)
-		cdf = Linear.factor(c * d, list)
+		for w in range(1, 10):
+			i = Matrix.one(w, w, dict, list, F)
+			while True:
+				m = Matrix.random(w, w, dict, list, F, randrange)
+				try:
+					n = m.inverse()
+				except ArithmeticError:
+					continue
+				assert m @ n == i, str(m @ n)
+				assert n @ m == i, str(n @ m)
+				break
 		
-		for m in sm_range(20):
-			x = F.random(randrange)
-			y = F.random(randrange)
+		for n in range(100):
+			a = Vector.random(4, list, F, randrange)
+			b = Vector.random(4, list, F, randrange)
+			c = Vector.random(4, list, F, randrange)
+			f = F.random(randrange)
+			g = F.random(randrange)
 			
-			assert a(x + y) == a(x) + a(y)
-			assert b(x + y) == b(x) + b(y)
-			assert a(x - y) == a(x) - a(y)
-			assert b(x - y) == b(x) - b(y)
-			assert (a + b)(x) == a(x) + b(x)
-			assert (a + b)(y) == a(y) + b(y)
-			assert (a - b)(x) == a(x) - b(x)
-			assert (a - b)(y) == a(y) - b(y)
-			assert cf(x) == c * x
-			assert cf(y) == c * y
-			assert df(x) == d * x
-			assert df(y) == d * y
-			
-			assert (a @ b)(x) == a(b(x))
-			assert (a @ b)(y) == a(b(y))
-			assert (b @ a)(x) == b(a(x))
-			assert (b @ a)(y) == b(a(y))
-			
-			assert (a @ cf)(x) == a(cf(x))
-			assert (a @ cf)(x) == a(c * x)
-			assert (cf @ a)(x) == cf(a(x))
-			assert (cf @ a)(x) == c * a(x)
-			
-			assert cdf(x) == c * d * x
-	
-	for n in sm_range(20):
-		a1 = Quadratic.random(list, Linear, F, randrange)
-		a2 = Quadratic.random(list, Linear, F, randrange)
-		b = Linear.random(list, F, randrange)
-		c = Linear.random(list, F, randrange)
-		d = Linear.random(list, F, randrange)
-		e = F.random(randrange)
+			assert len(a | b) == len(a) + len(b)
+			#assert a + [F(1), F(2), F(3), F(4)] == a + Vector([F(1), F(2), F(3), F(4)])
+			assert a + b == b + a
+			assert a - b == -(b - a)
+			assert f * (a + b) == f * a + f * b
+			assert f * (a - b) == f * a - f * b
+			assert a @ b == b @ a
+			assert a @ (b + c) == a @ b + a @ c
+			assert (a + b) @ c == a @ c + b @ c
+			assert (a * f) @ b == f * (a @ b)
+			assert (f * a) @ b == f * (a @ b)
+			assert a @ (b * f) == f * (a @ b)
+			assert a @ (f * b) == f * (a @ b), f"a={a} f={f} b={b}; {a @ (f * b)} == {f * (a @ b)}"
+			assert (f * a) @ (g * b) == (f * g) * (a @ b), f"a={a} f={f} b={b} g={g}; {(f * a) @ (g * b)} == {(f * g) * (a @ b)}"
 		
-		for m in sm_range(20):
-			x = F.random(randrange)
-			y = F.random(randrange)
+		for n in range(10):
+			a = Linear.random(list, F, randrange)
+			b = Linear.random(list, F, randrange)
+			c = F.random(randrange)
+			cf = Linear.factor(c, list)
+			d = F.random(randrange)
+			df = Linear.factor(d, list)
+			cdf = Linear.factor(c * d, list)
 			
-			assert (d @ a1 @ (b, c))(x, y) == d(a1(b(x), c(y)))
-			assert (d @ a2 @ (b, c))(x, y) == d(a2(b(x), c(y)))
-			assert (a1 + a2)(x, y) == a1(x, y) + a2(x, y)
-			assert (a1 - a2)(x, y) == a1(x, y) - a2(x, y)
-			#print(type(a1 * e))
-			assert isinstance(a1 * e, Quadratic)
-			assert (a1 * e)(x, y) == e * a1(x, y)
-			#print(type(e * a2))
-			assert isinstance(e * a2, Quadratic)
-			assert (e * a2)(x, y) == e * a2(x, y)
-	
-	for h in sm_range(1, 10):
-		for w in sm_range(1, 10):
-			f1 = F.random(randrange)
-			f2 = F.random(randrange)
+			for m in range(20):
+				x = F.random(randrange)
+				y = F.random(randrange)
+				
+				assert a(x + y) == a(x) + a(y)
+				assert b(x + y) == b(x) + b(y)
+				assert a(x - y) == a(x) - a(y)
+				assert b(x - y) == b(x) - b(y)
+				assert (a + b)(x) == a(x) + b(x)
+				assert (a + b)(y) == a(y) + b(y)
+				assert (a - b)(x) == a(x) - b(x)
+				assert (a - b)(y) == a(y) - b(y)
+				assert cf(x) == c * x
+				assert cf(y) == c * y
+				assert df(x) == d * x
+				assert df(y) == d * y
+				
+				assert (a @ b)(x) == a(b(x))
+				assert (a @ b)(y) == a(b(y))
+				assert (b @ a)(x) == b(a(x))
+				assert (b @ a)(y) == b(a(y))
+				
+				assert (a @ cf)(x) == a(cf(x))
+				assert (a @ cf)(x) == a(c * x)
+				assert (cf @ a)(x) == cf(a(x))
+				assert (cf @ a)(x) == c * a(x)
+				
+				assert (a * c)(x) == c * a(x)
+				assert (c * a)(x) == c * a(x)
+				assert (b * c)(x) == c * b(x)
+				assert (c * b)(x) == c * b(x)
+				
+				assert cdf(x) == c * d * x
+		
+		for n in range(20):
+			a1 = Quadratic.random(list, Linear, F, randrange)
+			a2 = Quadratic.random(list, Linear, F, randrange)
+			b = Linear.random(list, F, randrange)
+			c = Linear.random(list, F, randrange)
+			d = Linear.random(list, F, randrange)
+			e = F.random(randrange)
 			
-			vw1 = Vector.random(w, list, F, randrange)
-			vw2 = Vector.random(w, list, F, randrange)
-			vh1 = Vector.random(h, list, F, randrange)
-			vh2 = Vector.random(h, list, F, randrange)
-			
-			m1 = Matrix.random(h, w, dict, list, F, randrange)
-			m2 = Matrix.random(h, w, dict, list, F, randrange)
-			n1 = Matrix.random(w, h, dict, list, F, randrange)
-			n2 = Matrix.random(w, h, dict, list, F, randrange)
-			
-			assert m1 @ (f1 + f2) == m1 @ f1 + m1 @ f2
-			assert (f1 + f2) @ m2 == f1 @ m2 + f2 @ m2
-			assert (m1 + m2) @ f1 == m1 @ f1 + m2 @ f1
-			assert f2 @ (m1 + m2) == f2 @ m1 + f2 @ m2
-			
-			assert m1 @ (vw1 + vw2) == m1 @ vw1 + m1 @ vw2
-			assert (vh1 + vh2) @ m2 == vh1 @ m2 + vh2 @ m2
-			assert (m1 + m2) @ vw1 == m1 @ vw1 + m2 @ vw1
-			assert vh2 @ (m1 + m2) == vh2 @ m1 + vh2 @ m2
-			
-			assert m1 @ (f1 - f2) == m1 @ f1 - m1 @ f2
-			assert (f1 - f2) @ m2 == f1 @ m2 - f2 @ m2
-			assert (m1 - m2) @ f1 == m1 @ f1 - m2 @ f1
-			assert f2 @ (m1 - m2) == f2 @ m1 - f2 @ m2
-			
-			assert m1 @ (vw1 - vw2) == m1 @ vw1 - m1 @ vw2
-			assert (vh1 - vh2) @ m2 == vh1 @ m2 - vh2 @ m2
-			assert (m1 - m2) @ vw1 == m1 @ vw1 - m2 @ vw1
-			assert vh2 @ (m1 - m2) == vh2 @ m1 - vh2 @ m2
-			
-			assert (m1 + m2) @ n1 == m1 @ n1 + m2 @ n1
-			assert m1 @ (n1 + n2) == m1 @ n1 + m1 @ n2
-			assert n2 @ (m1 + m2) == n2 @ m1 + n2 @ m2
-			assert (n1 + n2) @ m2 == n1 @ m2 + n2 @ m2
-			
-			assert (m1 - m2) @ n1 == m1 @ n1 - m2 @ n1
-			assert m1 @ (n1 - n2) == m1 @ n1 - m1 @ n2
-			assert n2 @ (m1 - m2) == n2 @ m1 - n2 @ m2
-			assert (n1 - n2) @ m2 == n1 @ m2 - n2 @ m2
-			
-			assert (m1 @ n1) @ vh1 == m1 @ (n1 @ vh1)
-			assert (n2 @ m2) @ vw1 == n2 @ (m2 @ vw1)
+			for m in range(20):
+				x = F.random(randrange)
+				y = F.random(randrange)
+				
+				assert (d @ a1 @ (b, c))(x, y) == d(a1(b(x), c(y)))
+				assert (d @ a2 @ (b, c))(x, y) == d(a2(b(x), c(y)))
+				assert (a1 + a2)(x, y) == a1(x, y) + a2(x, y)
+				assert (a1 - a2)(x, y) == a1(x, y) - a2(x, y)
+				#print(type(a1 * e))
+				assert isinstance(a1 * e, Quadratic)
+				assert (a1 * e)(x, y) == e * a1(x, y)
+				#print(type(e * a2))
+				assert isinstance(e * a2, Quadratic)
+				assert (e * a2)(x, y) == e * a2(x, y)
+		
+		for h in range(1, 10):
+			for w in range(1, 10):
+				f1 = F.random(randrange)
+				f2 = F.random(randrange)
+				
+				vw1 = Vector.random(w, list, F, randrange)
+				vw2 = Vector.random(w, list, F, randrange)
+				vh1 = Vector.random(h, list, F, randrange)
+				vh2 = Vector.random(h, list, F, randrange)
+				
+				m1 = Matrix.random(h, w, dict, list, F, randrange)
+				m2 = Matrix.random(h, w, dict, list, F, randrange)
+				n1 = Matrix.random(w, h, dict, list, F, randrange)
+				n2 = Matrix.random(w, h, dict, list, F, randrange)
+				
+				assert m1 @ (f1 + f2) == m1 @ f1 + m1 @ f2
+				assert (f1 + f2) @ m2 == f1 @ m2 + f2 @ m2
+				assert (m1 + m2) @ f1 == m1 @ f1 + m2 @ f1
+				assert f2 @ (m1 + m2) == f2 @ m1 + f2 @ m2
+				
+				assert m1 @ (vw1 + vw2) == m1 @ vw1 + m1 @ vw2
+				assert (vh1 + vh2) @ m2 == vh1 @ m2 + vh2 @ m2
+				assert (m1 + m2) @ vw1 == m1 @ vw1 + m2 @ vw1
+				assert vh2 @ (m1 + m2) == vh2 @ m1 + vh2 @ m2
+				
+				assert m1 @ (f1 - f2) == m1 @ f1 - m1 @ f2
+				assert (f1 - f2) @ m2 == f1 @ m2 - f2 @ m2
+				assert (m1 - m2) @ f1 == m1 @ f1 - m2 @ f1
+				assert f2 @ (m1 - m2) == f2 @ m1 - f2 @ m2
+				
+				assert m1 @ (vw1 - vw2) == m1 @ vw1 - m1 @ vw2
+				assert (vh1 - vh2) @ m2 == vh1 @ m2 - vh2 @ m2
+				assert (m1 - m2) @ vw1 == m1 @ vw1 - m2 @ vw1
+				assert vh2 @ (m1 - m2) == vh2 @ m1 - vh2 @ m2
+				
+				assert (m1 + m2) @ n1 == m1 @ n1 + m2 @ n1
+				assert m1 @ (n1 + n2) == m1 @ n1 + m1 @ n2
+				assert n2 @ (m1 + m2) == n2 @ m1 + n2 @ m2
+				assert (n1 + n2) @ m2 == n1 @ m2 + n2 @ m2
+				
+				assert (m1 - m2) @ n1 == m1 @ n1 - m2 @ n1
+				assert m1 @ (n1 - n2) == m1 @ n1 - m1 @ n2
+				assert n2 @ (m1 - m2) == n2 @ m1 - n2 @ m2
+				assert (n1 - n2) @ m2 == n1 @ m2 - n2 @ m2
+				
+				assert (m1 @ n1) @ vh1 == m1 @ (n1 @ vh1)
+				assert (n2 @ m2) @ vw1 == n2 @ (m2 @ vw1)
 
 
 

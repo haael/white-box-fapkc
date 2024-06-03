@@ -1,1323 +1,858 @@
 #!/usr/bin/python3
 
 
-import inspect
-import ast
 from enum import Enum
-from ctypes import py_object, c_int, pythonapi
-from llvmlite.ir import VoidType, IntType, ArrayType, FunctionType, Constant, GlobalVariable, Function, Module, IRBuilder
-from collections import defaultdict
-
-
-class MissingCondition(BaseException):
-	pass
-
-
-class NonConstantExpression(Exception):
-	pass
+from ctypes import CFUNCTYPE, c_uint8, c_int16, POINTER
+from llvmlite.ir import Module, IntType, ArrayType, Constant, GlobalVariable, FunctionType, Function, IRBuilder
+from llvmlite.ir._utils import DuplicatedNameError
+from llvmlite.binding import initialize, initialize_native_target, initialize_native_asmprinter, parse_assembly, create_mcjit_compiler, Target, get_process_triple
+from collections.abc import Iterable
+from itertools import chain
 
 
 class SymbolicValue:
-	Mnemonic = Enum('SymbolicValue.Mnemonic', 'CONST LIST ARG FOR GLOB IF LOOP CALL INDEX ADD SUB MUL FLOORDIV MOD NEG POW SHL XOR AND EQ NE GT GE LT LE')
+	Type = Enum('SymbolicValue.Type', 'BOOL INT UINT LIST_INT LIST_UINT')
+	Mnemonic = Enum('SymbolicValue.Mnemonic', 'CONST PTR FUN ARG FOR IF LOOP CALL INDEX ADD SUB MUL FLOORDIV MOD NEG POW SHL XOR AND EQ NE GT GE LT LE')
 	
-	def __init__(self, value, *operands):
-		if not operands:
-			if isinstance(value, self.Mnemonic):
-				raise TypeError(f"Missing operands: {value}")
-			
-			try:
-				self.__mnemonic = value.__mnemonic
-				self.__operands = value.__operands
-			except AttributeError:
-				if isinstance(value, list) or isinstance(value, tuple):
-					self.__mnemonic = self.Mnemonic.LIST
-					self.__operands = [self.__class__(_element) for _element in value]
-				else:
-					self.__mnemonic = self.Mnemonic.CONST
-					self.__operands = [value]
-		else:
-			self.__mnemonic = value
-			self.__operands = operands
+	def __init__(self, mnemonic, type_=None, length=None, operands=None):
 		
-		if not isinstance(self.__operands, (list, tuple)):
-			raise TypeError(f"Operands type is {type(self.__operands).__name__}")
-		
-		if self.__mnemonic not in [self.Mnemonic.CONST, self.Mnemonic.ARG, self.Mnemonic.FOR, self.Mnemonic.GLOB]:
-			if any(not isinstance(_operand, self.__class__) for _operand in self.__operands):
-				raise TypeError("All operands must be SymbolicValue.")
-	
-	@classmethod
-	def make_const(cls, c):
-		return cls(cls.Mnemonic.CONST, c)
-	
-	@classmethod
-	def make_list(cls, *l):
-		return cls(cls.Mnemonic.LIST, *[cls(_el) for _el in l])
-	
-	@classmethod
-	def make_arg(cls, n):
-		if not isinstance(n, int):
-			raise ValueError
-		return cls(cls.Mnemonic.ARG, n)
-	
-	@classmethod
-	def make_for(cls, n):
-		if not isinstance(n, int):
-			raise ValueError
-		return cls(cls.Mnemonic.FOR, n)
-	
-	@classmethod
-	def make_if(cls, cond, yes, no):
-		return cls(cls.Mnemonic.IF, *[cls(_el) for _el in [cond, yes, no]])
-	
-	@classmethod
-	def make_loop(cls, args, result, init, count):
-		return cls(cls.Mnemonic.LOOP, *[cls(_el) for _el in [args, result, init, count]])
-	
-	@classmethod
-	def make_global(cls, g):
-		return cls(cls.Mnemonic.GLOB, g)
-	
-	def __traverse(self, action):
-		if self.__mnemonic in [self.Mnemonic.CONST, self.Mnemonic.ARG, self.Mnemonic.FOR, self.Mnemonic.GLOB]:
-			return action(self)
-		else:
-			return action(self, *[_op.__traverse(action) for _op in self.__operands])
-	
-	def substitute(self, from_, to):
-		def action(node, *args):
-			for n, f in enumerate(from_):
-				if self.__tree_equals(f, node):
-					return to[n]
-			else:
-				if node.__mnemonic in [self.Mnemonic.CONST, self.Mnemonic.ARG, self.Mnemonic.FOR]:
-					return node
-				else:
-					return self.__class__(node.__mnemonic, *args)
-		
-		return self.__traverse(action)
-	
-	def evaluate(self):
-		def pre_action(node, *args):
-			if node.__mnemonic == self.Mnemonic.ARG:
-				raise NonConstantExpression(node)
-			elif node.__mnemonic == self.Mnemonic.FOR:
-				return node
-			elif node.__mnemonic == self.Mnemonic.INDEX:
-				x, y = args
+
+		if type_ is None and length is None and operands is None:
+			if not isinstance(mnemonic, self.__class__) and not isinstance(mnemonic, int) and not isinstance(mnemonic, Iterable):
 				try:
-					return x[y]
-				except IndexError:
-					return None
-			else:
-				return self.__eval_action(node, *args)
-		
-		def post_action(node, *args):
-			if node.__mnemonic == self.Mnemonic.ARG:
-				raise NonConstantExpression(node)
-			elif node.__mnemonic == self.Mnemonic.FOR:
-				return node
-			else:
-				return self.__eval_action(node, *args)
-		
-		return self.__class__(self.__traverse(pre_action)).__traverse(post_action)
-	
-	def simplify(self):
-		def action(node, *args):
-			if node.__mnemonic == self.Mnemonic.ARG or node.__mnemonic == self.Mnemonic.FOR:
-				return node
-			else:
-				return self.__eval_action(node, *args)
-		
-		return self.__traverse(action)
-	
-	def compile(self, function, long_t, symbols):
-		builder_number = 0
-		for_var = {}
-		loops = {}
-		node_serial = 0
-		
-		before_loop = defaultdict(list)
-		after_loop = defaultdict(list)
-		begin_loop = defaultdict(list)
-		end_loop = defaultdict(list)
-		
-		begin_index = defaultdict(list)
-		end_index = defaultdict(list)
-		
-		def create_builder():
-			nonlocal builder_number
-			block = function.append_basic_block()
-			builder = IRBuilder(block)
-			number = builder_number
-			builder_number += 1
-			return block, builder, number
-		
-		def first_builder(*builders):
-			return sorted(builders, key=lambda _x: _x[2])[0]
-		
-		def last_builder(*builders):
-			return sorted(builders, key=lambda _x: _x[2])[-1]
-		
-		def not_terminated(fn):
-			def new_fn(node, block, builder, number):
-				assert not block.is_terminated
-				rvalue, rblock, rbuilder, rnumber = fn(node, block, builder, number)
-				#assert block.is_terminated if (node.__mnemonic != self.Mnemonic.LOOP) else not block.is_terminated, f"not terminated: {node.__mnemonic}"
-				assert not rblock.is_terminated, f"terminated: {node.__mnemonic}, {node}"
-				return rvalue, rblock, rbuilder, rnumber
-			return new_fn
-		
-		@not_terminated
-		def build(node, block, builder, number):
-			nonlocal node_serial
-			#print(node.__mnemonic, id(node), node)
-			
-			if node.__mnemonic == self.Mnemonic.IF:
-				cond, yes, no = node.__operands
-				
-				cond_result, cond_block, cond_builder, cond_number = build(cond, block, builder, number)
-				
-				yes_block, yes_builder, yes_number = create_builder()
-				no_block, no_builder, no_number = create_builder()
-				
-				cond_builder.comment(f"if ({str(cond)})")
-				cond_builder.cbranch(cond_result, yes_block, no_block)
-				
-				yes_result, yes_block, yes_builder, yes_number = build(yes, yes_block, yes_builder, yes_number)
-				no_result, no_block, no_builder, no_number = build(no, no_block, no_builder, no_number)
-				
-				join_block, join_builder, join_number = create_builder()
-				yes_builder.branch(join_block)
-				no_builder.branch(join_block)
-				
-				result = join_builder.phi(long_t)
-				result.add_incoming(yes_result, yes_block)
-				result.add_incoming(no_result, no_block)
-				
-				return result, join_block, join_builder, join_number
-			
-			elif node.__mnemonic == self.Mnemonic.LOOP:
-				try:
-					lb = loops[node]
-				except KeyError:
+					newargs = mnemonic.__getnewargs__()[0]
+				except AttributeError:
 					pass
 				else:
-					builder.comment(f"before loop {hex(hash(node))}")
-					before_loop[node].append((block, builder, number))
-					block, builder, number = create_builder()
-					builder.comment(f"after loop {hex(hash(node))}")
-					after_loop[node].append((block, builder, number))
-					return lb, block, builder, number
-				
-				builder.comment(f"before loop {hex(hash(node))}")
-				before_loop[node].append((block, builder, number))
-				#orig_block, orig_builder, orig_number = block, builder, number
-				
-				block, builder, number = create_builder()
-				#start_block, start_builder, start_number = block, builder, number
-				builder.comment(f"begin loop {hex(hash(node))}")
-				begin_loop[node].append((block, builder, number))
-				
-				fors, result, init, count = node.__operands
-				fors = fors.__operands
-				result = result.__operands
-				init = init.__operands
-				
-				r_count, block, builder, number = build(count, block, builder, number)
-				
-				r_init = []
-				for item in init:
-					value, block, builder, number = build(item, block, builder, number)
-					r_init.append(value)
-				
-				init_block = block
-				init_builder = builder
-				
-				block, builder, number = create_builder()
-				test_block = block
-				test_builder = builder
-				
-				init_builder.branch(test_block)
-				
-				r_var = []
-				for n, rv in enumerate(fors):
-					fv = for_var[rv.__operands[0]] = builder.phi(long_t)
-					fv.add_incoming(r_init[n], init_block)
-					r_var.append(fv)
-				
-				block, builder, number = create_builder()
-				body_block = block
-				
-				r_result = []
-				for item in result:
-					value, block, builder, number = build(item, block, builder, number)
-					r_result.append(value)
-				for n, rr in enumerate(r_result):
-					r_var[n].add_incoming(rr, block)
-				builder.branch(test_block)
-				
-				block, builder, number = create_builder()
-				exit_block = block
-				
-				test_builder.comment(f"cond loop {fors[0]} < {count}")
-				test_builder.cbranch(test_builder.icmp_signed('<', r_var[0], r_count), body_block, exit_block)
-				
-				loops[node] = r_var
-				builder.comment(f"end loop {hex(hash(node))}")
-				end_loop[node].append((block, builder, number))
-				
-				block, builder, number = create_builder()
-				builder.comment(f"after loop {hex(hash(node))}")
-				after_loop[node].append((block, builder, number))
-				
-				return r_var, block, builder, number
+					if isinstance(newargs, self.__class__):
+						mnemonic = newargs
 			
-			elif node.__mnemonic == self.Mnemonic.ARG:
-				return builder.sext(function.args[node.__operands[0]], long_t), block, builder, number
-			
-			elif node.__mnemonic == self.Mnemonic.FOR:
-				return for_var[node.__operands[0]] if node.__operands[0] in for_var else long_t(0), block, builder, number
-			
-			elif node.__mnemonic == self.Mnemonic.CONST:
-				return long_t(int(node.__operands[0])), block, builder, number
-			
-			elif node.__mnemonic == self.Mnemonic.GLOB:
-				return symbols[node.__operands[0]], block, builder, number
-				#s = symbols[node.__operands[0]]
-				##print(s.type.pointee, dir(s.type.pointee))
-				#if hasattr(s.type.pointee, 'count'):
-				#	return s, block, builder, number
-				#else:
-				#	return builder.sext(builder.load(builder.gep(s, [long_t(0)])), long_t), block, builder, number
-			
-			elif node.__mnemonic == self.Mnemonic.LIST:
-				result = []
-				builders = []
-				for item in node.__operands:
-					value, block, builder, number = build(item, block, builder, number)
-					result.append(value)
-					builders.append((block, builder, number))
-				block, builder, number = last_builder(*builders)
-				return result, block, builder, number
-			
-			elif node.__mnemonic == self.Mnemonic.INDEX:
-				#enter_block, enter_builder, enter_number = block, builder, number
-				
-				index_serial = node_serial
-				node_serial += 1
-				
-				builder.comment(f"begin index {hex(hash(node))}")
-				begin_index[index_serial].append((block, builder, number))
-				
-				list_, list_block, list_builder, list_number = build(node.__operands[0], block, builder, number)
-				
-				index, index_block, index_builder, index_number = build(node.__operands[1], list_block, list_builder, list_number)
-				
-				if isinstance(index, Constant):
-					block, builder, number = last_builder((list_block, list_builder, list_number), (index_block, index_builder, index_number))
-					builder.comment(f"end index (const: {index.constant}) {hex(hash(node))}")
-					end_index[index_serial].append((block, builder, number))
-					return list_[index.constant] if (0 <= index.constant < len(list_)) else long_t(0), block, builder, number
-				
-				elif isinstance(list_, GlobalVariable):
-					block, builder, number = last_builder((list_block, list_builder, list_number), (index_block, index_builder, index_number))
-					return builder.sext(builder.load(builder.gep(list_, [long_t(0), index])), long_t), block, builder, number
-				
-				else:
-					block, builder, number = last_builder((list_block, list_builder, list_number), (index_block, index_builder, index_number))
-					
-					test_block = [block]
-					test_builder = [builder]
-					for n in range(len(list_)):
-						block, builder, number = create_builder()
-						test_block.append(block)
-						test_builder.append(builder)
-					join_block, join_builder, join_number = create_builder()
-					
-					phi = join_builder.phi(long_t)
-					
-					for n in range(len(list_)):
-						test_builder[n].comment(f"check index {node.__operands[1]} == {n}")
-						test_builder[n].cbranch(test_builder[n].icmp_signed('==', index, long_t(n)), join_block, test_block[n + 1])
-						phi.add_incoming(list_[n], test_block[n])
-					test_builder[-1].branch(join_block)
-					phi.add_incoming(long_t(0), test_block[-1])
-					
-					join_builder.comment(f"end index (var: {node.__operands[1]}) {hex(hash(node))}")
-					end_index[index_serial].append((join_block, join_builder, join_number))
-					return phi, join_block, join_builder, join_number
-			
-			elif node.__mnemonic == self.Mnemonic.CALL:
-				f, *args = node.__operands
-				fn = symbols[f.__name__]
-				
-				a = []
-				builders = []
-				nbuilder = block, builder, number
-				for n, arg in enumerate(args):
-					value, nbuilder = build(node, *nbuilder)
-					a.append(value)
-					builders.append(nbuilder)
-				
-				block, builder, number = last_builder(*builders)
-				ar = [builder.trunc(_a, _t.type) for (_a, _t) in zip(a, fn.args)]
-				return builder.call(fn, ar), block, builder, number
-			
-			elif node.__mnemonic == self.Mnemonic.NEG:
-				x, block, builder, number = build(node.__operands[0], block, builder, number)
-				return builder.neg(x), block, builder, number
-			elif node.__mnemonic == self.Mnemonic.ADD:
-				x, block1, builder1, number1 = build(node.__operands[0], block, builder, number)
-				y, block2, builder2, number2 = build(node.__operands[1], block1, builder1, number1)
-				block, builder, number = last_builder((block1, builder1, number1), (block2, builder2, number2))
-				return builder.add(x, y), block, builder, number
-			elif node.__mnemonic == self.Mnemonic.SUB:
-				x, block1, builder1, number1 = build(node.__operands[0], block, builder, number)
-				y, block2, builder2, number2 = build(node.__operands[1], block1, builder1, number1)
-				block, builder, number = last_builder((block1, builder1, number1), (block2, builder2, number2))
-				return builder.sub(x, y), block, builder, number
-			elif node.__mnemonic == self.Mnemonic.MUL:
-				x, block1, builder1, number1 = build(node.__operands[0], block, builder, number)
-				y, block2, builder2, number2 = build(node.__operands[1], block1, builder1, number1)
-				block, builder, number = last_builder((block1, builder1, number1), (block2, builder2, number2))
-				return builder.mul(x, y), block, builder, number
-			elif node.__mnemonic == self.Mnemonic.FLOORDIV:
-				x, block1, builder1, number1 = build(node.__operands[0], block, builder, number)
-				y, block2, builder2, number2 = build(node.__operands[1], block1, builder1, number1)
-				block, builder, number = last_builder((block1, builder1, number1), (block2, builder2, number2))
-				xmy = builder.icmp_signed('!=', builder.srem(x, y), long_t(0))
-				xl0 = builder.icmp_signed('<', x, long_t(0))
-				yl0 = builder.icmp_signed('<', y, long_t(0))
-				xl0_xor_yl0 = builder.xor(xl0, yl0)
-				xmy_and_xxy = builder.and_(xmy, xl0_xor_yl0)
-				d = builder.sdiv(x, y)
-				d_minus_1 = builder.sub(d, long_t(1))
-				r = builder.select(xmy_and_xxy, d_minus_1, d)
-				return r, block, builder, number
-			elif node.__mnemonic == self.Mnemonic.POW:
-				x, block1, builder1, number1 = build(node.__operands[0], block, builder, number)
-				y, block2, builder2, number2 = build(node.__operands[1], block1, builder1, number1)
-				block, builder, number = last_builder((block1, builder1, number1), (block2, builder2, number2))
-				return builder.call(symbols['_pow'], [x, y]), block, builder, number
-			elif node.__mnemonic == self.Mnemonic.SHL:
-				x, block1, builder1, number1 = build(node.__operands[0], block, builder, number)
-				y, block2, builder2, number2 = build(node.__operands[1], block1, builder1, number1)
-				block, builder, number = last_builder((block1, builder1, number1), (block2, builder2, number2))
-				return builder.shl(x, y), block, builder, number
-			elif node.__mnemonic == self.Mnemonic.XOR:
-				x, block1, builder1, number1 = build(node.__operands[0], block, builder, number)
-				y, block2, builder2, number2 = build(node.__operands[1], block1, builder1, number1)
-				block, builder, number = last_builder((block1, builder1, number1), (block2, builder2, number2))
-				return builder.xor(x, y), block, builder, number
-			elif node.__mnemonic == self.Mnemonic.AND:
-				x, block1, builder1, number1 = build(node.__operands[0], block, builder, number)
-				y, block2, builder2, number2 = build(node.__operands[1], block1, builder1, number1)
-				block, builder, number = last_builder((block1, builder1, number1), (block2, builder2, number2))
-				return builder.and_(x, y), block, builder, number
-			elif node.__mnemonic == self.Mnemonic.MOD:
-				x, block1, builder1, number1 = build(node.__operands[0], block, builder, number)
-				y, block2, builder2, number2 = build(node.__operands[1], block1, builder1, number1)
-				block, builder, number = last_builder((block1, builder1, number1), (block2, builder2, number2))
-				return builder.srem(x, y), block, builder, number
-			elif node.__mnemonic == self.Mnemonic.GT:
-				x, block1, builder1, number1 = build(node.__operands[0], block, builder, number)
-				y, block2, builder2, number2 = build(node.__operands[1], block1, builder1, number1)
-				block, builder, number = last_builder((block1, builder1, number1), (block2, builder2, number2))
-				return builder.icmp_signed('>', x, y), block, builder, number
-			elif node.__mnemonic == self.Mnemonic.GE:
-				x, block1, builder1, number1 = build(node.__operands[0], block, builder, number)
-				y, block2, builder2, number2 = build(node.__operands[1], block1, builder1, number1)
-				block, builder, number = last_builder((block1, builder1, number1), (block2, builder2, number2))
-				return builder.icmp_signed('>=', x, y), block, builder, number
-			elif node.__mnemonic == self.Mnemonic.LT:
-				x, block1, builder1, number1 = build(node.__operands[0], block, builder, number)
-				y, block2, builder2, number2 = build(node.__operands[1], block1, builder1, number1)
-				block, builder, number = last_builder((block1, builder1, number1), (block2, builder2, number2))
-				return builder.icmp_signed('<', x, y), block, builder, number
-			elif node.__mnemonic == self.Mnemonic.LE:
-				x, block1, builder1, number1 = build(node.__operands[0], block, builder, number)
-				y, block2, builder2, number2 = build(node.__operands[1], block1, builder1, number1)
-				block, builder, number = last_builder((block1, builder1, number1), (block2, builder2, number2))
-				return builder.icmp_signed('<=', x, y), block, builder, number
-			elif node.__mnemonic == self.Mnemonic.EQ:
-				x, block1, builder1, number1 = build(node.__operands[0], block, builder, number)
-				y, block2, builder2, number2 = build(node.__operands[1], block1, builder1, number1)
-				block, builder, number = last_builder((block1, builder1, number1), (block2, builder2, number2))
-				return builder.icmp_signed('==', x, y), block, builder, number
-			elif node.__mnemonic == self.Mnemonic.NE:
-				x, block1, builder1, number1 = build(node.__operands[0], block, builder, number)
-				y, block2, builder2, number2 = build(node.__operands[1], block1, builder1, number1)
-				block, builder, number = last_builder((block1, builder1, number1), (block2, builder2, number2))
-				return builder.icmp_signed('!=', x, y), block, builder, number
-			else:
-				raise NotImplementedError
-		
-		block, builder, number = create_builder()
-		result, block, builder, number = build(self, block, builder, number)
-		builder.ret(builder.trunc(result, function.type.pointee.return_type))
-		
-		for loop, builders in before_loop.items():
-			block, builder, number = first_builder(*builders)
 			try:
-				index = [_index for (_index, _builders) in begin_index.items() if number in frozenset(_bb[2] for _bb in _builders)][0]
-			except IndexError:
-				builder.branch(begin_loop[loop][0])
-			else:
-				assert len(begin_index[index]) == 1
-				begin_index[index][0][1].branch(begin_loop[loop][0][0])
-				end_loop[loop][0][1].branch(after_loop[loop][0][0])
-		
-		for index, builders in begin_index.items():
-			assert len(builders) == 1
-			block, builder, number = builders[0]
-			if block.is_terminated: continue
-			builder.branch(end_index[index][0][0])
-		
-		for index, builders in begin_index.items():
-			(block, builder, number) = builders[0]
-			assert block.is_terminated
+				self.__mnemonic = mnemonic.__mnemonic
+				self.__type = mnemonic.__type
+				self.__length = mnemonic.__length
+				self.__operands = mnemonic.__operands
+			except AttributeError:
+				if isinstance(mnemonic, int):
+					self.__mnemonic = self.Mnemonic.CONST
+					if mnemonic >= 0:
+						self.__type = self.Type.UINT
+					else:
+						self.__type = self.Type.INT
+					self.__length = None
+					self.__operands = mnemonic
+				elif isinstance(mnemonic, Iterable):
+					self.__mnemonic = self.Mnemonic.CONST
+					values = [self.__class__(v) for v in mnemonic]
+					t = frozenset(_v.__type for _v in values)
+					if t == frozenset({self.Type.INT, self.Type.UINT}):
+						self.__type = self.Type.LIST_INT
+					elif t == frozenset({self.Type.UINT}):
+						self.__type = self.Type.LIST_UINT
+					else:
+						raise ValueError(f"List must be flat collection of ints. Got: {values}")
+					self.__length = len(values)
+					self.__operands = values
+				else:
+					raise ValueError(f"Could not convert value to SymbolicValue: {type(mnemonic)}.")
+		else:
+			self.__mnemonic = mnemonic
+			self.__type = type_
+			self.__length = length
+			self.__operands = operands
 	
 	@classmethod
-	def __eval_action(cls, node, *args):
-		if node.__mnemonic == cls.Mnemonic.CONST:
-			return node.__operands[0]
-		elif node.__mnemonic == cls.Mnemonic.LIST:
-			return args
-		elif node.__mnemonic == cls.Mnemonic.CALL:
-			x, *r = args
-			return x(*r)
-		elif node.__mnemonic == cls.Mnemonic.IF:
-			cond, yes, no = args
-			if isinstance(cond, cls):
-				return cls.make_if(cond, yes, no)
-			elif cond:
-				return yes
-			else:
-				return no
-		elif node.__mnemonic == cls.Mnemonic.LOOP:
-			fors, result, init, count = args
-			
-			if isinstance(count, cls):
-				return cls.make_loop(fors, result, init, count)
-			
-			result = [_element for _element in cls(result).__operands]
-			data = [cls(_element).simplify() for _element in init]
-			
-			assert len(data) == len(result)
-			
-			while count > 0:
-				n = 0
-				nzfor, nzdata = zip(*[(_for, cls(_delement)) for (_for, _delement) in zip(fors, data) if _for != None])
-				assert not any(_d == None for _d in nzdata)
-				
-				while n < len(result):
-					if fors[n] != None:
-						assert result[n] != None
-						data[n] = cls(result[n].substitute(nzfor, nzdata).simplify())
-					n += 1
-				count -= 1
-			
-			if any(isinstance(_element, cls) for _element in data):
-				return cls.make_list(*data)
-			else:
-				return data
-		elif node.__mnemonic == cls.Mnemonic.INDEX:
-			x, y = args
-			try:
-				return x[y]
-			except IndexError:
-				raise IndexError(f"Out of range: `{x}[{y}]`.")
-		elif node.__mnemonic == cls.Mnemonic.NEG:
-			x, = args
-			return -x
-		elif node.__mnemonic == cls.Mnemonic.ADD:
-			x, y = args
-			return x + y
-		elif node.__mnemonic == cls.Mnemonic.SUB:
-			x, y = args
-			return x - y
-		elif node.__mnemonic == cls.Mnemonic.MUL:
-			x, y = args
-			return x * y
-		elif node.__mnemonic == cls.Mnemonic.FLOORDIV:
-			x, y = args
-			return x // y
-		elif node.__mnemonic == cls.Mnemonic.POW:
-			x, y = args
-			return x ** y
-		elif node.__mnemonic == cls.Mnemonic.SHL:
-			x, y = args
-			return x << y
-		elif node.__mnemonic == cls.Mnemonic.XOR:
-			x, y = args
-			return x ^ y
-		elif node.__mnemonic == cls.Mnemonic.AND:
-			x, y = args
-			return x & y
-		elif node.__mnemonic == cls.Mnemonic.MOD:
-			x, y = args
-			return x % y
-		elif node.__mnemonic == cls.Mnemonic.GT:
-			x, y = args
-			return x > y
-		elif node.__mnemonic == cls.Mnemonic.GE:
-			x, y = args
-			return x >= y
-		elif node.__mnemonic == cls.Mnemonic.LT:
-			x, y = args
-			return x < y
-		elif node.__mnemonic == cls.Mnemonic.LE:
-			x, y = args
-			return x <= y
-		elif node.__mnemonic == cls.Mnemonic.EQ:
-			x, y = args
-			return x == y
-		elif node.__mnemonic == cls.Mnemonic.NE:
-			x, y = args
-			return x != y
-		else:
-			raise NotImplementedError(f"Could not evaluate: {node.__mnemonic.name}")
+	def _int(cls, v):
+		return cls(cls.Mnemonic.CONST, cls.Type.INT, None, v)
 	
-	def extract_args(self):
-		def action(node, *args):
-			if node.__mnemonic == self.Mnemonic.ARG:
-				return frozenset([node])
-			else:
-				return frozenset().union(*args)
-		
-		return self.__traverse(action)
+	@classmethod
+	def _uint(cls, v):
+		return cls(cls.Mnemonic.CONST, cls.Type.UINT, None, v)
 	
-	def extract_fors(self):
-		def action(node, *args):
-			if node.__mnemonic == self.Mnemonic.FOR:
-				return frozenset([node])
-			else:
-				return self.__class__(node.__mnemonic, *args)
-		
-		return self.__traverse(action)
+	@classmethod
+	def _list_int(cls, v):
+		l = [cls._int(_v) for _v in v]
+		return cls(cls.Mnemonic.CONST, cls.Type.LIST_INT, len(l), l)
 	
-	def optimize_loops(self):
-		def action(node, *args):
-			if node.__mnemonic in [self.Mnemonic.CONST, self.Mnemonic.ARG, self.Mnemonic.FOR, self.Mnemonic.GLOB]:
-				return node
-			elif node.__mnemonic == self.Mnemonic.INDEX:
-				list_, index = args
-				if list_.__mnemonic == self.Mnemonic.LOOP:
-					count = list_.__operands[3]
-					fors, result, init = map((lambda _x: list(_x.__operands)), list_.__operands[:3])
-					
-					assert len(fors) == len(result) == len(init)
-					
-					index = index.simplify()
-					
-					if isinstance(index, self.__class__):
-						orig_init = list(init)
-						orig_fors = list(fors)
-						for n in reversed([_n for (_n, _f) in enumerate(list(fors)) if _f == None]):
-							del fors[n], result[n], init[n]
-						loop = self.make_loop(fors, result, init, count)
-						
-						case_ = SymbolicValue(0)
-						less = 0
-						for n in range(len(orig_fors)):
-							if orig_fors[n] == None:
-								case_ = self.make_if(index == n, orig_init[n], case_)
-								less += 1
-							else:
-								case_ = self.make_if(index == n, loop[index - less], case_)
-						
-						return case_
-					elif fors[index] == None:
-						return init[index]
-					else:
-						for n in reversed([_n for (_n, _f) in enumerate(list(fors)) if _f == None]):
-							del fors[n], result[n], init[n]
-							if n <= index:
-								index -= 1
-						return self.make_loop(fors, result, init, count)[index]
-				
-				elif list_.__mnemonic == self.Mnemonic.IF:
-					cond, yes, no = list_.__operands
-					return self.make_if(cond, yes[index].optimize_loops(), no[index].optimize_loops())
-				else:
-					return self.__class__(node.__mnemonic, *args)
-			elif node.__mnemonic == self.Mnemonic.LOOP:
-				count = args[3]
-				fors, result, init = map((lambda _x: list(_x.__operands)), args[:3])
-				static_vars = [(_n, _f, _i) for (_n, (_f, _r, _i)) in enumerate(zip(fors, result, init)) if self.__tree_equals(_f, _r)]
-				if not static_vars:
-					return self.__class__(node.__mnemonic, *args)
-				
-				num, from_, to = zip(*static_vars)
-				
-				for n in num:
-					fors[n] = None
-				
-				result = self.make_list(*result).substitute(from_, to)
-				new_loop = self.make_loop(fors, result, init, count)
-				return new_loop
-			else:
-				return self.__class__(node.__mnemonic, *args)
-		
-		return self.__traverse(action)
+	@classmethod
+	def _list_uint(cls, v):
+		l = [cls._uint(_v) for _v in v]
+		return cls(cls.Mnemonic.CONST, cls.Type.LIST_UINT, len(l), l)
 	
-	def __str__(self):
-		def action(node, *args):
-			if node.__mnemonic == self.Mnemonic.CONST:
-				if hasattr(node.__operands[0], '__name__'):
-					return node.__operands[0].__name__
-				else:
-					return str(node.__operands[0])
-			elif node.__mnemonic == self.Mnemonic.LIST:
-				return '[' + ', '.join(str(_op) for _op in args) + ']'
-			elif node.__mnemonic == self.Mnemonic.IF:
-				return 'if(' + ', '.join(args) + ')'
-			elif node.__mnemonic == self.Mnemonic.LOOP:
-				return 'loop(' + ', '.join(args) + ')'
-			elif node.__mnemonic == self.Mnemonic.ARG:
-				return '$' + str(node.__operands[0])
-			elif node.__mnemonic == self.Mnemonic.FOR:
-				return '£' + str(node.__operands[0])
-			elif node.__mnemonic == self.Mnemonic.GLOB:
-				return '@' + str(node.__operands[0])
-			elif node.__mnemonic == self.Mnemonic.CALL:
-				x, *r = args
-				return x + '(' + ', '.join(r) +  ')'
-			elif node.__mnemonic == self.Mnemonic.INDEX:
-				x, y = args
-				if node.__mnemonic in [self.Mnemonic.CONST, self.Mnemonic.ARG, self.Mnemonic.FOR, self.Mnemonic.CALL, self.Mnemonic.INDEX]:
-					return x + '[' + y + ']'
-				else:
-					return '(' + x + ')[' + y + ']'
-			elif node.__mnemonic == self.Mnemonic.NEG:
-				x, = args
-				if node.__mnemonic in [self.Mnemonic.CONST, self.Mnemonic.ARG, self.Mnemonic.FOR, self.Mnemonic.MUL, self.Mnemonic.FLOORDIV, self.Mnemonic.NEG, self.Mnemonic.CALL, self.Mnemonic.INDEX]:
-					return '-' + x
-				else:
-					return '-(' + x + ')'
-			elif node.__mnemonic == self.Mnemonic.ADD:
-				x, y = args
-				if node.__operands[0].__mnemonic not in [self.Mnemonic.CONST, self.Mnemonic.ARG, self.Mnemonic.FOR, self.Mnemonic.MUL, self.Mnemonic.FLOORDIV, self.Mnemonic.ADD, self.Mnemonic.SUB, self.Mnemonic.CALL, self.Mnemonic.INDEX]:
-					x = '(' + x + ')'
-				if node.__operands[1].__mnemonic not in [self.Mnemonic.CONST, self.Mnemonic.ARG, self.Mnemonic.FOR, self.Mnemonic.MUL, self.Mnemonic.FLOORDIV, self.Mnemonic.ADD, self.Mnemonic.SUB, self.Mnemonic.CALL, self.Mnemonic.INDEX]:
-					y = '(' + y + ')'
-				return x + ' + ' + y
-			elif node.__mnemonic == self.Mnemonic.SUB:
-				x, y = args
-				if node.__operands[0].__mnemonic not in [self.Mnemonic.CONST, self.Mnemonic.ARG, self.Mnemonic.FOR, self.Mnemonic.MUL, self.Mnemonic.FLOORDIV, self.Mnemonic.ADD, self.Mnemonic.SUB, self.Mnemonic.CALL, self.Mnemonic.INDEX]:
-					x = '(' + x + ')'
-				if node.__operands[1].__mnemonic not in [self.Mnemonic.CONST, self.Mnemonic.ARG, self.Mnemonic.FOR, self.Mnemonic.MUL, self.Mnemonic.FLOORDIV, self.Mnemonic.ADD, self.Mnemonic.SUB, self.Mnemonic.CALL, self.Mnemonic.INDEX]:
-					y = '(' + y + ')'
-				return x + ' - ' + y
-			elif node.__mnemonic == self.Mnemonic.MUL:
-				x, y = args
-				if node.__operands[0].__mnemonic not in [self.Mnemonic.CONST, self.Mnemonic.ARG, self.Mnemonic.FOR, self.Mnemonic.MUL, self.Mnemonic.FLOORDIV, self.Mnemonic.CALL, self.Mnemonic.INDEX]:
-					x = '(' + x + ')'
-				if node.__operands[1].__mnemonic not in [self.Mnemonic.CONST, self.Mnemonic.ARG, self.Mnemonic.FOR, self.Mnemonic.MUL, self.Mnemonic.FLOORDIV, self.Mnemonic.CALL, self.Mnemonic.INDEX]:
-					y = '(' + y + ')'
-				return x + ' * ' + y
-			elif node.__mnemonic == self.Mnemonic.FLOORDIV:
-				x, y = args
-				if node.__operands[0].__mnemonic not in [self.Mnemonic.CONST, self.Mnemonic.ARG, self.Mnemonic.FOR, self.Mnemonic.MUL, self.Mnemonic.FLOORDIV, self.Mnemonic.CALL, self.Mnemonic.INDEX]:
-					x = '(' + x + ')'
-				if node.__operands[1].__mnemonic not in [self.Mnemonic.CONST, self.Mnemonic.ARG, self.Mnemonic.FOR, self.Mnemonic.MUL, self.Mnemonic.FLOORDIV, self.Mnemonic.CALL, self.Mnemonic.INDEX]:
-					y = '(' + y + ')'
-				return x + ' // ' + y
-			elif node.__mnemonic == self.Mnemonic.POW:
-				x, y = args
-				if node.__operands[0].__mnemonic not in [self.Mnemonic.CONST, self.Mnemonic.ARG, self.Mnemonic.FOR, self.Mnemonic.CALL, self.Mnemonic.INDEX]:
-					x = '(' + x + ')'
-				if node.__operands[1].__mnemonic not in [self.Mnemonic.CONST, self.Mnemonic.ARG, self.Mnemonic.FOR, self.Mnemonic.NEG, self.Mnemonic.CALL, self.Mnemonic.INDEX]:
-					y = '(' + y + ')'
-				return x + ' ** ' + y
-			elif node.__mnemonic == self.Mnemonic.SHL:
-				x, y = args
-				if node.__operands[0].__mnemonic not in [self.Mnemonic.CONST, self.Mnemonic.ARG, self.Mnemonic.FOR, self.Mnemonic.CALL, self.Mnemonic.INDEX]:
-					x = '(' + x + ')'
-				if node.__operands[1].__mnemonic not in [self.Mnemonic.CONST, self.Mnemonic.ARG, self.Mnemonic.FOR, self.Mnemonic.NEG, self.Mnemonic.CALL, self.Mnemonic.INDEX]:
-					y = '(' + y + ')'
-				return x + ' << ' + y
-			elif node.__mnemonic == self.Mnemonic.XOR:
-				x, y = args
-				if node.__operands[0].__mnemonic not in [self.Mnemonic.CONST, self.Mnemonic.ARG, self.Mnemonic.FOR, self.Mnemonic.CALL, self.Mnemonic.INDEX]:
-					x = '(' + x + ')'
-				if node.__operands[1].__mnemonic not in [self.Mnemonic.CONST, self.Mnemonic.ARG, self.Mnemonic.FOR, self.Mnemonic.NEG, self.Mnemonic.CALL, self.Mnemonic.INDEX]:
-					y = '(' + y + ')'
-				return x + ' ^ ' + y
-			elif node.__mnemonic == self.Mnemonic.MOD:
-				x, y = args
-				if node.__operands[0].__mnemonic not in [self.Mnemonic.CONST, self.Mnemonic.ARG, self.Mnemonic.FOR, self.Mnemonic.CALL, self.Mnemonic.INDEX]:
-					x = '(' + x + ')'
-				if node.__operands[1].__mnemonic not in [self.Mnemonic.CONST, self.Mnemonic.ARG, self.Mnemonic.FOR, self.Mnemonic.NEG, self.Mnemonic.CALL, self.Mnemonic.INDEX]:
-					y = '(' + y + ')'
-				return x + ' % ' + y
-			elif node.__mnemonic == self.Mnemonic.GT:
-				x, y = args
-				if node.__operands[0].__mnemonic in [self.Mnemonic.GT, self.Mnemonic.LT, self.Mnemonic.GE, self.Mnemonic.LE, self.Mnemonic.EQ, self.Mnemonic.NE, self.Mnemonic.CALL, self.Mnemonic.INDEX]:
-					x = '(' + x + ')'
-				if node.__operands[1].__mnemonic in [self.Mnemonic.GT, self.Mnemonic.LT, self.Mnemonic.GE, self.Mnemonic.LE, self.Mnemonic.EQ, self.Mnemonic.NE, self.Mnemonic.CALL, self.Mnemonic.INDEX]:
-					y = '(' + y + ')'
-				return x + ' > ' + y
-			elif node.__mnemonic == self.Mnemonic.GE:
-				x, y = args
-				if node.__operands[0].__mnemonic in [self.Mnemonic.GT, self.Mnemonic.LT, self.Mnemonic.GE, self.Mnemonic.LE, self.Mnemonic.EQ, self.Mnemonic.NE, self.Mnemonic.CALL, self.Mnemonic.INDEX]:
-					x = '(' + x + ')'
-				if node.__operands[1].__mnemonic in [self.Mnemonic.GT, self.Mnemonic.LT, self.Mnemonic.GE, self.Mnemonic.LE, self.Mnemonic.EQ, self.Mnemonic.NE, self.Mnemonic.CALL, self.Mnemonic.INDEX]:
-					y = '(' + y + ')'
-				return x + ' >= ' + y
-			elif node.__mnemonic == self.Mnemonic.LT:
-				x, y = args
-				if node.__operands[0].__mnemonic in [self.Mnemonic.GT, self.Mnemonic.LT, self.Mnemonic.GE, self.Mnemonic.LE, self.Mnemonic.EQ, self.Mnemonic.NE, self.Mnemonic.CALL, self.Mnemonic.INDEX]:
-					x = '(' + x + ')'
-				if node.__operands[1].__mnemonic in [self.Mnemonic.GT, self.Mnemonic.LT, self.Mnemonic.GE, self.Mnemonic.LE, self.Mnemonic.EQ, self.Mnemonic.NE, self.Mnemonic.CALL, self.Mnemonic.INDEX]:
-					y = '(' + y + ')'
-				return x + ' < ' + y
-			elif node.__mnemonic == self.Mnemonic.LE:
-				x, y = args
-				if node.__operands[0].__mnemonic in [self.Mnemonic.GT, self.Mnemonic.LT, self.Mnemonic.GE, self.Mnemonic.LE, self.Mnemonic.EQ, self.Mnemonic.NE, self.Mnemonic.CALL, self.Mnemonic.INDEX]:
-					x = '(' + x + ')'
-				if node.__operands[1].__mnemonic in [self.Mnemonic.GT, self.Mnemonic.LT, self.Mnemonic.GE, self.Mnemonic.LE, self.Mnemonic.EQ, self.Mnemonic.NE, self.Mnemonic.CALL, self.Mnemonic.INDEX]:
-					y = '(' + y + ')'
-				return x + ' <= ' + y
-			elif node.__mnemonic == self.Mnemonic.EQ:
-				x, y = args
-				if node.__operands[0].__mnemonic in [self.Mnemonic.GT, self.Mnemonic.LT, self.Mnemonic.GE, self.Mnemonic.LE, self.Mnemonic.EQ, self.Mnemonic.NE, self.Mnemonic.CALL, self.Mnemonic.INDEX]:
-					x = '(' + x + ')'
-				if node.__operands[1].__mnemonic in [self.Mnemonic.GT, self.Mnemonic.LT, self.Mnemonic.GE, self.Mnemonic.LE, self.Mnemonic.EQ, self.Mnemonic.NE, self.Mnemonic.CALL, self.Mnemonic.INDEX]:
-					y = '(' + y + ')'
-				return x + ' == ' + y
-			elif node.__mnemonic == self.Mnemonic.NE:
-				x, y = args
-				if node.__operands[0].__mnemonic in [self.Mnemonic.GT, self.Mnemonic.LT, self.Mnemonic.GE, self.Mnemonic.LE, self.Mnemonic.EQ, self.Mnemonic.NE, self.Mnemonic.CALL, self.Mnemonic.INDEX]:
-					x = '(' + x + ')'
-				if node.__operands[1].__mnemonic in [self.Mnemonic.GT, self.Mnemonic.LT, self.Mnemonic.GE, self.Mnemonic.LE, self.Mnemonic.EQ, self.Mnemonic.NE, self.Mnemonic.CALL, self.Mnemonic.INDEX]:
-					y = '(' + y + ')'
-				return x + ' != ' + y
-
-			else:
-				raise NotImplementedError
-		
-		return self.__traverse(action)
+	@classmethod
+	def _fun_int(cls, v):
+		return cls(cls.Mnemonic.FUN, cls.Type.INT, None, v)
 	
-	def __repr__(self):
-		return self.__class__.__name__ + '(' + self.__mnemonic.name + ', ' + ', '.join([repr(_op) for _op in self.__operands]) + ')'
+	@classmethod
+	def _fun_uint(cls, v):
+		return cls(cls.Mnemonic.FUN, cls.Type.UINT, None, v)
 	
-	def __format__(self, f):
-		return str(self)
+	@classmethod
+	def _fun_list_int(cls, v, l):
+		return cls(cls.Mnemonic.FUN, cls.Type.LIST_INT, l, v)
+	
+	@classmethod
+	def _fun_list_uint(cls, v, l):
+		return cls(cls.Mnemonic.FUN, cls.Type.LIST_UINT, l, v)
+	
+	@classmethod
+	def _arg_int(cls, v):
+		return cls(cls.Mnemonic.ARG, cls.Type.INT, None, v)
+	
+	@classmethod
+	def _arg_uint(cls, v):
+		return cls(cls.Mnemonic.ARG, cls.Type.UINT, None, v)
+	
+	@classmethod
+	def _arg_list_int(cls, v, l):
+		return cls(cls.Mnemonic.ARG, cls.Type.LIST_INT, l, v)
+	
+	@classmethod
+	def _arg_list_uint(cls, v, l):
+		return cls(cls.Mnemonic.ARG, cls.Type.LIST_UINT, l, v)
+	
+	@classmethod
+	def _ptr_int(cls, v):
+		return cls(cls.Mnemonic.PTR, cls.Type.INT, None, v)
+	
+	@classmethod
+	def _ptr_uint(cls, v):
+		return cls(cls.Mnemonic.PTR, cls.Type.UINT, None, v)
+	
+	@classmethod
+	def _ptr_list_int(cls, v, l):
+		return cls(cls.Mnemonic.PTR, cls.Type.LIST_INT, l, v)
+	
+	@classmethod
+	def _ptr_list_uint(cls, v, l):
+		return cls(cls.Mnemonic.PTR, cls.Type.LIST_UINT, l, v)
+	
+	@classmethod
+	def _if(cls, c, yes, no):
+		if yes.__type != no.__type:
+			raise ValueError
+		return cls(cls.Mnemonic.IF, yes.__type, yes.__length, [c, yes, no])
+	
+	@classmethod
+	def _for(cls, n, l):
+		return cls(cls.Mnemonic.FOR, cls.Type.UINT, None, [n, l])
 	
 	def __add__(self, other):
-		return self.__class__(self.Mnemonic.ADD, self, self.__class__(other))
-	
-	def __radd__(self, other):
-		return self.__class__(self.Mnemonic.ADD, self.__class__(other), self)
+		try:
+			other = self.__class__(other)
+		except ValueError:
+			return NotImplemented
+		
+		if frozenset({self.__type, other.__type}) == frozenset({self.Type.UINT}):
+			type_ = self.Type.UINT
+			length = None
+		elif frozenset({self.__type, other.__type}) == frozenset({self.Type.INT}):
+			type_ = self.Type.INT
+			length = None
+		elif frozenset({self.__type, other.__type}) == frozenset({self.Type.INT, self.Type.UINT}):
+			type_ = self.Type.INT
+			length = None
+		
+		elif frozenset({self.__type, other.__type}) == frozenset({self.Type.LIST_UINT}):
+			type_ = self.Type.LIST_UINT
+			length = self.__length + other.__length
+		elif frozenset({self.__type, other.__type}) == frozenset({self.Type.LIST_INT}):
+			type_ = self.Type.LIST_INT
+			length = self.__length + other.__length
+		elif frozenset({self.__type, other.__type}) == frozenset({self.Type.LIST_INT, self.Type.LIST_UINT}):
+			type_ = self.Type.LIST_INT
+			length = self.__length + other.__length
+		
+		else:
+			raise TypeError(f"Could not __add__ following types: {self.__type.name}, {other.__type.name}")
+		
+		return self.__class__(self.Mnemonic.ADD, type_, length, [self, other])
 	
 	def __sub__(self, other):
-		return self.__class__(self.Mnemonic.SUB, self, self.__class__(other))
-	
-	def __rsub__(self, other):
-		return self.__class__(self.Mnemonic.SUB, self.__class__(other), self)
-	
-	def __mul__(self, other):
-		return self.__class__(self.Mnemonic.MUL, self, self.__class__(other))
-	
-	def __rmul__(self, other):
-		return self.__class__(self.Mnemonic.MUL, self.__class__(other), self)
-	
-	def __floordiv__(self, other):
-		return self.__class__(self.Mnemonic.FLOORDIV, self, self.__class__(other))
-	
-	def __neg__(self):
-		return self.__class__(self.Mnemonic.NEG, self)
-	
-	def __rlshift__(self, other):
-		return self.__class__(self.Mnemonic.SHL, self.__class__(other), self)
-	
-	def __pow__(self, other):
-		return self.__class__(self.Mnemonic.POW, self, self.__class__(other))
-	
-	def __rpow__(self, other):
-		return self.__class__(self.Mnemonic.POW, self.__class__(other), self)
-	
-	def __xor__(self, other):
-		return self.__class__(self.Mnemonic.XOR, self, self.__class__(other))
-	
-	def __and__(self, other):
-		return self.__class__(self.Mnemonic.AND, self, self.__class__(other))
+		try:
+			other = self.__class__(other)
+		except ValueError:
+			return NotImplemented
+
+		if frozenset({self.__type, other.__type}) == frozenset({self.Type.UINT}):
+			type_ = self.Type.INT
+		elif frozenset({self.__type, other.__type}) == frozenset({self.Type.INT}):
+			type_ = self.Type.INT
+		elif frozenset({self.__type, other.__type}) == frozenset({self.Type.INT, self.Type.UINT}):
+			type_ = self.Type.INT
+		
+		else:
+			raise TypeError(f"Could not __sub__ following types: {self.__type.name}, {other.__type.name}")
+		
+		return self.__class__(self.Mnemonic.SUB, type_, None, [self, other])
 	
 	def __mod__(self, other):
-		return self.__class__(self.Mnemonic.MOD, self, self.__class__(other))
-	
-	def __getitem__(self, other):
-		return self.__class__(self.Mnemonic.INDEX, self, self.__class__(other))
-	
-	def __call__(self, *args):
-		return self.__class__(self.Mnemonic.CALL, self, *[self.__class__(_arg) for _arg in args])
-	
-	def __gt__(self, other):
-		return self.__class__(self.Mnemonic.GT, self, self.__class__(other))
-	
-	def __lt__(self, other):
-		return self.__class__(self.Mnemonic.LT, self, self.__class__(other))
-	
-	def __ge__(self, other):
-		return self.__class__(self.Mnemonic.GE, self, self.__class__(other))
-	
-	def __le__(self, other):
-		return self.__class__(self.Mnemonic.LE, self, self.__class__(other))
-	
-	@classmethod
-	def __tree_equals(cls, a, b):
-		if a is b:
-			return True
-		
-		if not isinstance(a, cls) and not isinstance(b, cls):
-			return a == b
-		
-		if not isinstance(a, cls) or not isinstance(b, cls):
-			return False
-		
-		return a.__mnemonic == b.__mnemonic and len(a.__operands) == len(b.__operands) and all(cls.__tree_equals(_a, _b) for (_a, _b) in zip(a.__operands, b.__operands))
-	
-	def __eq__(self, other):
-		if self.__tree_equals(self, other):
-			return True
-		return self.__class__(self.Mnemonic.EQ, self, self.__class__(other))
-	
-	def __ne__(self, other):
-		if self.__tree_equals(self, other):
-			return False
-		return self.__class__(self.Mnemonic.NE, self, self.__class__(other))
-	
-	def __hash__(self):
-		return hash((self.__mnemonic,) + tuple(self.__operands))
-	
-	def __int__(self):
 		try:
-			value = self.evaluate()
-		except NonConstantExpression:
-			pass
+			other = self.__class__(other)
+		except ValueError:
+			return NotImplemented
+		
+		if frozenset({self.__type, other.__type}) == frozenset({self.Type.UINT}):
+			type_ = self.Type.UINT
+		
 		else:
-			if not isinstance(value, self.__class__):
-				return int(value)
+			raise TypeError(f"Could not __mod__ following types: {self.__type.name}, {other.__type.name}")
 		
-		raise TypeError
+		return self.__class__(self.Mnemonic.MOD, type_, None, [self, other])
 	
-	membership_test = False
-	
-	def __bool__(self):
+	def __xor__(self, other):
 		try:
-			value = self.evaluate()
-		except NonConstantExpression:
-			value = self.simplify()
+			other = self.__class__(other)
+		except ValueError:
+			return NotImplemented
+
+		if frozenset({self.__type, other.__type}) == frozenset({self.Type.UINT}):
+			type_ = self.Type.UINT
+		elif frozenset({self.__type, other.__type}) == frozenset({self.Type.INT}):
+			type_ = self.Type.INT
+		elif frozenset({self.__type, other.__type}) == frozenset({self.Type.INT, self.Type.UINT}):
+			type_ = self.Type.INT
+		
 		else:
-			if not isinstance(value, self.__class__):
-				return bool(value)
+			raise TypeError(f"Could not __xor__ following types: {self.__type.name}, {other.__type.name}")
 		
-		if self.__class__.membership_test or not hasattr(self.__class__, 'conditions'):
-			if self.__mnemonic == self.Mnemonic.EQ:
-				return self.__tree_equals(*self.__operands)
-			elif self.__mnemonic == self.Mnemonic.NE:
-				return not self.__tree_equals(*self.__operands)
-			else:
-				raise RuntimeError
-		
-		try:
-			self.__class__.membership_test = True
-			return self.__class__.conditions[value]
-		except KeyError:
-			raise MissingCondition(value)
-		finally:
-			self.__class__.membership_test = False
+		return self.__class__(self.Mnemonic.XOR, type_, None, [self, other])
 	
-	@classmethod
-	def merge_trees(cls, call, condition, yes_result, no_result):
-		if yes_result.__mnemonic != no_result.__mnemonic:
-			return call(condition, yes_result, no_result)
-		elif yes_result.__mnemonic in [cls.Mnemonic.CONST, cls.Mnemonic.ARG, cls.Mnemonic.FOR]:
-			if yes_result.__operands[0] == no_result.__operands[0]:
-				return yes_result
-			else:
-				return call(condition, yes_result, no_result)
-		elif yes_result.__mnemonic == cls.Mnemonic.IF:
-			cond1, a1, b1 = yes_result.__operands
-			cond2, a2, b2 = no_result.__operands
-			if not cls.__tree_equals(cond1, cond2):
-				return call(condition, yes_result, no_result)
-			else:
-				return cls(cls.Mnemonic.IF, cond1, cls.merge_trees(call, condition, a1, a2), cls.merge_trees(call, condition, b1, b2))
-		elif yes_result.__mnemonic == cls.Mnemonic.LOOP:
-			fors1, result1, init1, count1 = yes_result.__operands
-			fors2, result2, init2, count2 = no_result.__operands
-			if not cls.__tree_equals(fors1, fors2):
-				return call(condition, yes_result, no_result)
-			else:
-				return cls(cls.Mnemonic.LOOP, fors1, cls.merge_trees(call, condition, result1, result2), cls.merge_trees(call, condition, init1, init2), cls.merge_trees(call, condition, count1, count2))
+	def __rxor__(self, other):
+		try:
+			other = self.__class__(other)
+		except ValueError:
+			return NotImplemented
+		
+		return other.__xor__(self)
+	
+	def __mul__(self, other):
+		try:
+			other = self.__class__(other)
+		except ValueError:
+			return NotImplemented
+		
+		if frozenset({self.__type, other.__type}) == frozenset({self.Type.UINT}):
+			type_ = self.Type.UINT
+		elif frozenset({self.__type, other.__type}) == frozenset({self.Type.INT}):
+			type_ = self.Type.INT
+		elif frozenset({self.__type, other.__type}) == frozenset({self.Type.INT, self.Type.UINT}):
+			type_ = self.Type.INT
+		
 		else:
-			return cls(yes_result.__mnemonic, *[cls.merge_trees(call, condition, _yes, _no) for (_yes, _no) in zip(yes_result.__operands, no_result.__operands)])
-
-
-class Transformer(ast.NodeTransformer):
-	def visit_Constant(self, orig_node):
-		new_node = ast.parse(f'SymbolicValue({ast.unparse(orig_node)})')
-		return new_node.body[0].value
-  
-
-def sm_range(limit):
-	frame = inspect.stack()[1].frame
-	orig_locals = dict(frame.f_locals)
+			raise TypeError(f"Could not __mul__ following types: {self.__type.name}, {other.__type.name}")
+		
+		return self.__class__(self.Mnemonic.MUL, type_, None, [self, other])
 	
-	keys = list(sorted(orig_locals.keys()))
-	
-	for_vars = []
-	n = 0
-	while n < len(keys) + 1:
-		for_vars.append(SymbolicValue.make_for(SymbolicValue.for_no))
-		SymbolicValue.for_no += 1
-		n += 1
-	
-	subst_locals = {}
-	n = 0
-	while n < len(keys):
-		subst_locals[keys[n]] = for_vars[n + 1]
-		n += 1
-	
-	frame.f_locals.update(subst_locals)
-	pythonapi.PyFrame_LocalsToFast(py_object(frame), c_int(0))
-	
-	yield for_vars[0]
-	
-	frame = inspect.stack()[1].frame
-	new_locals = dict(frame.f_locals)
-	
-	loop_vars = frozenset(new_locals.keys()) - frozenset(orig_locals.keys())
-	dynamic_vars = (frozenset(orig_locals.keys()) | frozenset(new_locals.keys())) - loop_vars
-	
-	init_values = [SymbolicValue(0)] + [orig_locals[_key] for _key in keys if _key in dynamic_vars]
-	arg_values = [for_vars[0]] + [subst_locals[_key] for _key in keys if _key in dynamic_vars]
-	
-	result_values = [for_vars[0] + 1] + [new_locals[_key] for _key in keys if _key in dynamic_vars]
-	
-	loop = SymbolicValue.make_loop(arg_values, result_values, init_values, limit)
-	iteration_values = dict(zip([_key for _key in keys if _key in dynamic_vars], [loop[_n] for _n in range(len(dynamic_vars) + 1)][1:]))
-	
-	frame.f_locals.update(iteration_values)
-	pythonapi.PyFrame_LocalsToFast(py_object(frame), c_int(0))
-
-
-def transform(fn, module, short_t, long_t, fname, arg_len=None, symbols={}, compiled={}):
-	source = 'if True:\n' + inspect.getsource(fn)
-	orig_tree = ast.parse(source)
-	mod_tree = Transformer().visit(orig_tree)
-	code = compile(mod_tree, '<string>', 'exec')
-	globals_ = {'range':sm_range, 'SymbolicValue':SymbolicValue}
-	globals_.update(symbols)
-	locals_ = {}
-	exec(code, globals_, locals_)
-	#print(locals_)
-	ft = list(locals_.values())[0]
-	if arg_len is None:
-		arg_len = len(inspect.getfullargspec(fn).args)
-	args = [SymbolicValue.make_arg(_n) for _n in range(arg_len)]
-	
-	def run():
+	def __pow__(self, other):
 		try:
-			for_no = SymbolicValue.for_no
-			#print("call", ft, args)
-			return ft(*args)
+			other = self.__class__(other)
+		except ValueError:
+			return NotImplemented
 		
-		except MissingCondition as error:
-			condition = error.args[0]
-			
-			conditions = dict(SymbolicValue.conditions)
-			
-			SymbolicValue.conditions[condition] = True
-			SymbolicValue.for_no = for_no
-			yes_result = run()
-			SymbolicValue.conditions = dict(conditions)
-			
-			SymbolicValue.conditions[condition] = False
-			SymbolicValue.for_no = for_no
-			no_result = run()
-			SymbolicValue.conditions = dict(conditions)
-			
-			if isinstance(yes_result, SymbolicValue) and isinstance(no_result, SymbolicValue):
-				return SymbolicValue.merge_trees(SymbolicValue.make_if, condition, yes_result, no_result)
-			
-			else:
-				if isinstance(yes_result, SymbolicValue):
-					yes_result = no_result.__class__(yes_result)
-				elif isinstance(no_result, SymbolicValue):
-					no_result = yes_result.__class__(no_result)
-				
-				result = object.__new__(yes_result.__class__)
-				result.__dict__ = {_name:SymbolicValue.merge_trees(SymbolicValue.make_if, condition, yes_result.__dict__[_name], no_result.__dict__[_name]) for _name in yes_result.__dict__.keys()}
-				return result
-		
-		except AssertionError:
-			pass
-		
-		except (ArithmeticError, IndexError) as error:
-			return SymbolicValue(0) # TODO
-	
-	SymbolicValue.for_no = 0
-	SymbolicValue.conditions = {}
-	
-	circuit = run()
-	
-	del SymbolicValue.for_no
-	del SymbolicValue.conditions
-	
-	if isinstance(circuit, SymbolicValue):
-		circuit = circuit.optimize_loops()
-	else:
-		ncircuit = object.__new__(circuit.__class__)
-		ncircuit.__dict__ = {_name:(_value.optimize_loops() if isinstance(_value, SymbolicValue) else _value) for (_name, _value) in circuit.__dict__.items()}
-		circuit = ncircuit
-	
-	lfn = Function(module, FunctionType(short_t, [short_t] * arg_len), fname)
-	
-	if isinstance(circuit, SymbolicValue):
-		circuit.compile(lfn, long_t, compiled)
-	else:
-		for scircuit in circuit.__dict__.values():
-			scircuit.compile(lfn, long_t, compiled)
-	
-	def new_fn(*args):
-		if len(args) != arg_len:
+		if other.__type != self.Type.UINT:
 			raise TypeError
 		
-		k = [SymbolicValue.make_arg(_n) for _n in range(arg_len)]
-		v = [SymbolicValue(_arg) for _arg in args]
+		if self.__type not in (self.Type.INT, self.Type.UINT):
+			raise TypeError
 		
-		if isinstance(circuit, SymbolicValue):
-			rcircuit = circuit.substitute(k, v).evaluate()
+		return self.__class__(self.Mnemonic.POW, self.__type, None, [self, other])
+	
+	def __rpow__(self, other):
+		try:
+			other = self.__class__(other)
+		except ValueError:
+			return NotImplemented
+		
+		return other.__pow__(self)
+	
+	def __abs__(self):
+		if self.__type == self.Type.UINT:
+			return self
+		elif self.__type != self.Type.INT:
+			raise TypeError
+		
+		r = self.__class__._if(self >= self.__class__(0), self, -self)
+		return self.__class__(r.__mnemonic, self.Type.UINT, r.__length, r.__operands)
+	
+	def __neg__(self):
+		return self.__class__(-1) * self
+	
+	def __lt__(self, other):
+		try:
+			other = self.__class__(other)
+		except ValueError:
+			return NotImplemented
+		
+		return self.__class__(self.Mnemonic.LT, self.Type.BOOL, None, [self, other])
+	
+	def __gt__(self, other):
+		try:
+			other = self.__class__(other)
+		except ValueError:
+			return NotImplemented
+		
+		return self.__class__(self.Mnemonic.GT, self.Type.BOOL, None, [self, other])
+	
+	def __ge__(self, other):
+		try:
+			other = self.__class__(other)
+		except ValueError:
+			return NotImplemented
+		
+		return self.__class__(self.Mnemonic.GE, self.Type.BOOL, None, [self, other])
+	
+	def __len__(self):
+		if self.__length is None:
+			raise TypeError(f"Can not determine length of {self}.")
 		else:
-			rcircuit = object.__new__(circuit.__class__)
-			rcircuit.__dict__ = {_name:(_value.circuit.substitute(k, v).evaluate() if isinstance(_value, SymbolicValue) else _value) for (_name, _value) in circuit.__dict__.items()}
+			return self.__length
+	
+	def __iter__(self):
+		for n in range(len(self)):
+			yield self[n]
+	
+	def __call__(self, *args):
+		if self.__mnemonic != self.Mnemonic.FUN:
+			raise TypeError(f"Can not call {self}.")
 		
-		return rcircuit
+		return self.__class__(self.Mnemonic.CALL, self.__type, self.__length, [self] + list(self.__class__(_arg) for _arg in args))
 	
-	new_fn.__name__ = fname.split('.')[-1]
-	new_fn.__qualname__ = fname
-	
-	return new_fn, lfn
-
-
-if __debug__ and __name__ == '__main__':
-	from random import randrange
-	from pathlib import Path
-	from itertools import product
-	from subprocess import Popen
-	
-	
-	def fn_const():
-		return 7
-
-
-	def fn_ignore(x):
-		return 8
-
-
-	def fn_identity(x):
-		return x
-
-
-	def fn_project(x, y):
-		return y
-
-
-	def fn_inc(x):
-		return x + 1
-	
-	
-	def fn_add(x, y):
-		return x + y
-	
-	
-	def fn_cond(x, y):
-		if x > y:
-			return x
+	def __getitem__(self, index):
+		try:
+			index = self.__class__(index)
+		except ValueError:
+			return NotImplemented
+		
+		if index.__type not in (self.Type.INT, self.Type.UINT):
+			raise TypeError(f"Can not use {index} as index.")
+		
+		if self.__type == self.Type.LIST_INT:
+			type_ = self.Type.INT
+		elif self.__type == self.Type.LIST_UINT:
+			type_ = self.Type.UINT
 		else:
-			return y
+			raise TypeError(f"Can not take item of {self}.")
+		
+		return self.__class__(self.Mnemonic.INDEX, type_, None, [self, index])
 	
+	def __repr__(self):
+		return self.__class__.__name__ + '(' + self.__mnemonic.name + ', ' + self.__type.name + ', ' + repr(self.__length) + ', ' + repr(self.__operands) + ')'
 	
-	def fn_conds(x, y):
-		if x > y:
-			if x > 3:
-				return 1
+	def __bool__(self):
+		state = self._state()
+		if state in boolean_values:
+			return boolean_values[state]
 		else:
-			if y > 4:
-				return 2
-		
-		if x < y:
-			return 3
-		
-		return 4
+			raise BooleanQuery(self)
 	
+	def _state(self):
+		return (self.__mnemonic, self.__type, self.__length, tuple(_op._state() if hasattr(_op, '_state') else _op for _op in self.__operands) if isinstance(self.__operands, list) else self.__operands)
+
+
+boolean_values = {}
+
+
+class BooleanQuery(BaseException):
+	def __init__(self, value):
+		self.value = value
+
+
+def trace(fn, args):
+	boolean_values.clear()
 	
-	def fn_loop(x):
-		r = 2
-		a = x
-		for i in range(x + 4):
-			a -= i * r
-			r += i * x
-		return r // a
-	
-	
-	def fn_inner_loop(x):
-		q = 0
-		r = 1
-		for i in range(3):
-			q += 1
-			for j in range(6):
-				r += i * x
-				q += j
-		return (q - r) & 0x7f
-	
-	
-	def fn_simple_loop(x):
-		r = 0
-		for j in range(3):
-			r += x
-		return r
-	
-	
-	def fn_2var_loop(x):
-		a = 0 + x
-		b = 1
-		c = 2
-		for j in range(a):
-			b += x
-			c -= j
-		return a + b + c
-	
-	
-	def fn_2cond_loop(x):
-		a = 0 + x
-		b = 1
-		c = 2
-		if b > x:
-			for i in range(b):
-				b += i
-				c -= a
-		for j in range(a):
-			b += x
-			c -= j
-		return a + b + c
-	
-	
-	def fn_double_loop(x):
-		r = 0
-		for i in range(3):
-			r += i
-		
-		q = 0
-		for j in range(3):
-			q += j
-			r += j
-		
-		return q - r
-	
-	
-	def fn_cond_loop(x):
-		r = 0
-		for j in range(4):
-			if j <= 2:
-				r += x
+	def path():
+		try:
+			return SymbolicValue(fn(*args))
+		except BooleanQuery as bq:
+			state = bq.value._state()
+			
+			boolean_values[state] = True
+			yes = path()
+			
+			boolean_values[state] = False
+			no = path()
+			
+			del boolean_values[state]
+			
+			if yes is None:
+				return no
+			elif no is None:
+				return yes
 			else:
-				r -= x * (j + 1)
-		return r
+				return SymbolicValue._if(bq.value, yes, no)
+		except ArithmeticError:
+			return None
 	
+	return path()
+
+
+def build_array(module, name, int_t, array):
+	array_t = ArrayType(int_t, len(array._SymbolicValue__operands))
+	result = GlobalVariable(module, array_t, name)
+	result.initializer = array_t([int_t(_n._SymbolicValue__operands) for _n in array._SymbolicValue__operands])
+	result.global_constant = True
+
+
+def build_function(module, name, args_t, return_t, expr):
+	int_t = IntType(16)
+	bool_t = IntType(1)
 	
-	def fn_ifn_for(x):
-		r = 0
-		if x > 1:
-			for j in range(x):
-				r += j
-		return r
+	function_t = FunctionType(return_t, args_t)
+	try:
+		function = Function(module, function_t, name)
+	except DuplicatedNameError:
+		function = module.get_global(name)
+	assert function.type.pointee == function_t, f"{function.type} == {function_t}"
 	
+	if expr is None:
+		assert function.is_declaration
+		return
 	
-	def fn_for_if(x):
-		r = 0
-		for j in range(x):
-			if j > 2:
-				r += j
-		return r
-	
-	
-	def fn_loop_opt(x, y):
-		q = 1
-		r = 2
+	def assemble(expr, builder):
+		if isinstance(expr._SymbolicValue__operands, Iterable) and not isinstance(expr._SymbolicValue__operands, str):
+			if expr._SymbolicValue__mnemonic == expr.Mnemonic.IF:
+				c, yes, no = expr._SymbolicValue__operands
+				
+				if isinstance(c, SymbolicValue) and c._SymbolicValue__mnemonic != expr.Mnemonic.CONST:
+					c, c_builder = assemble(c, builder)
+					if c.type != bool_t:
+						c = c_builder.icmp_signed('!=', c, int_t(0))
+					
+					yes_builder_enter = IRBuilder(function.append_basic_block())
+					yes_r, yes_builder_exit = assemble(yes, yes_builder_enter)
+					no_builder_enter = IRBuilder(function.append_basic_block())
+					no_r, no_builder_exit = assemble(no, no_builder_enter)
+					
+					assert yes_r.type == no_r.type
+					
+					c_builder.cbranch(c, yes_builder_enter.block, no_builder_enter.block)
+					r_builder = IRBuilder(function.append_basic_block())
+					yes_builder_exit.branch(r_builder.block)
+					no_builder_exit.branch(r_builder.block)
+					
+					phi = r_builder.phi(yes_r.type)
+					phi.add_incoming(yes_r, yes_builder_exit.block)
+					phi.add_incoming(no_r, no_builder_exit.block)
+					return phi, r_builder
+				else:
+					raise NotImplementedError
+			
+			else:
+				args = []
+				for e in expr._SymbolicValue__operands:
+					if isinstance(e, SymbolicValue):
+						r, builder = assemble(e, builder)
+					else:
+						r = e
+					args.append(r)
+			
+			if expr._SymbolicValue__mnemonic == expr.Mnemonic.CONST:
+				if expr._SymbolicValue__type == expr.Type.LIST_INT or expr._SymbolicValue__type == expr.Type.LIST_UINT:
+					#print("return list", len(expr._SymbolicValue__), args)
+					assert len(expr._SymbolicValue__operands) == len(args)
+					return args, builder
+				else:
+					raise NotImplementedError(str(expr._SymbolicValue__type))
+			
+			elif expr._SymbolicValue__mnemonic == expr.Mnemonic.INDEX:
+				#print(args[0].type)
+				p = builder.gep(args[0], [int_t(0), args[1]])
+				r = builder.load(p)
+				
+				if expr._SymbolicValue__operands[0]._SymbolicValue__type == expr.Type.LIST_UINT:
+					q = builder.zext(r, int_t)
+				elif expr._SymbolicValue__operands[0]._SymbolicValue__type == expr.Type.LIST_INT:
+					#builder.comment("signed int array element")
+					q = builder.sext(r, int_t)
+				else:
+					raise NotImplementedError(str(expr._SymbolicValue__operands[0]._SymbolicValue__type))
+				
+				return q, builder
+			
+			elif expr._SymbolicValue__mnemonic == expr.Mnemonic.XOR:
+				return builder.xor(args[0], args[1]), builder
+			
+			elif expr._SymbolicValue__mnemonic == expr.Mnemonic.ADD:
+				return builder.add(args[0], args[1]), builder
+			
+			elif expr._SymbolicValue__mnemonic == expr.Mnemonic.MUL:
+				return builder.mul(args[0], args[1]), builder
+			
+			elif expr._SymbolicValue__mnemonic == expr.Mnemonic.GE:
+				return builder.icmp_signed('>=', args[0], args[1]), builder
+			
+			elif expr._SymbolicValue__mnemonic == expr.Mnemonic.MOD:
+				if expr._SymbolicValue__operands[1]._SymbolicValue__type != expr.Type.UINT:
+					raise NotImplementedError(str(expr._SymbolicValue__operands[1]._SymbolicValue__type))
+				
+				if expr._SymbolicValue__operands[0]._SymbolicValue__type != expr.Type.INT:
+					return builder.urem(args[0], args[1]), builder # urem in Python semantics
+				elif expr._SymbolicValue__operands[0]._SymbolicValue__type != expr.Type.UINT:
+					return builder.urem(args[0], args[1]), builder
+				else:
+					raise NotImplementedError(str(expr._SymbolicValue__operands[0]._SymbolicValue__type))
+				
+			elif expr._SymbolicValue__mnemonic == expr.Mnemonic.CALL:
+				fn = args[0]
+				
+				tr_args = []
+				#print(fn.type.pointee, dir(fn.type.pointee))
+				for a, tt in zip(args[1:], fn.type.pointee.args):
+					if isinstance(a, list):
+						l = builder.alloca(tt.pointee)
+						for n, el in enumerate(a):
+							#print(tt.pointee, dir(tt.pointee))
+							p = builder.gep(l, [int_t(0), int_t(n)])
+							v = builder.trunc(el, tt.pointee.element)
+							builder.store(v, p)
+						a = l
+					elif a.type != tt:
+						a = builder.trunc(a, tt)
+					tr_args.append(a)
+				
+				r = builder.call(fn, tr_args)
+				if expr._SymbolicValue__operands[0]._SymbolicValue__type == expr.Type.INT:
+					#builder.comment("signed function result")
+					r = builder.sext(r, int_t)
+				elif expr._SymbolicValue__operands[0]._SymbolicValue__type == expr.Type.UINT:
+					r = builder.zext(r, int_t)
+				else:
+					raise NotImplementedError(str(expr._SymbolicValue__operands[0]._SymbolicValue__type))
+				
+				return r, builder
+			
+			else:
+				raise NotImplementedError(str(expr))
 		
-		for j in range(y):
-			for i in range(x):
-				r += j
-		
-		return (r // q) & 0x7f
+		else:
+			if expr._SymbolicValue__mnemonic == expr.Mnemonic.CONST:
+				return int_t(expr._SymbolicValue__operands), builder
+			elif expr._SymbolicValue__mnemonic == expr.Mnemonic.ARG:
+				a = function.args[expr._SymbolicValue__operands]
+				if expr._SymbolicValue__type == expr.Type.UINT:
+					r = builder.zext(a, int_t)
+				elif expr._SymbolicValue__type == expr.Type.INT:
+					#builder.comment("signed int formal arg")
+					r = builder.sext(a, int_t)
+				elif expr._SymbolicValue__type == expr.Type.LIST_INT or expr._SymbolicValue__type == expr.Type.LIST_UINT:
+					r = a
+				else:
+					raise NotImplementedError(str(expr._SymbolicValue__type))
+				return r, builder
+			elif expr._SymbolicValue__mnemonic == expr.Mnemonic.PTR:
+				return module.get_global(expr._SymbolicValue__operands), builder
+			elif expr._SymbolicValue__mnemonic == expr.Mnemonic.FUN:
+				return module.get_global(expr._SymbolicValue__operands), builder
+			else:
+				raise NotImplementedError(str(expr))
 	
-	
-	def fn_multi(x, y):
-		q = 0
-		
-		if x > 0:
-			for i in range(2):
-				q += 1
-		
-		for j in range(3):
-			q += 1
-		
-		return q
-	
-	
-	result_module = Module()
-	
-	short_t = IntType(8)
-	long_t = IntType(16)
-	
-	values_a = Path('a.values.txt').open('w')
-	values_b = Path('b.values.txt').open('w')
-	
-	for fn in [fn_const, fn_ignore, fn_identity, fn_project, fn_inc, fn_add, fn_cond, fn_conds, fn_loop, fn_simple_loop, fn_double_loop, fn_inner_loop, fn_cond_loop, fn_ifn_for, fn_for_if, fn_loop_opt, fn_multi]:
-		ft, _ = transform(fn, result_module, short_t, long_t, fn.__name__)
-		arg_len = len(inspect.getfullargspec(fn).args)
-		
-		for n in range(10):
-			r = [randrange(-20, 20) for _r in range(arg_len)]
-			a = fn(*r)
-			b = ft(*r)
-			assert not isinstance(a, SymbolicValue)
-			assert not isinstance(b, SymbolicValue)
-			assert a == b, f"{ft.__name__}({', '.join([str(_r) for _r in r])}): {a} = {b}"
-		
-		values_a.write(fn.__name__)
-		for r in product(*[range(-10, 10) for _r in range(arg_len)]):
-			f = fn(*r)
-			values_a.write("\t")
-			values_a.write(",".join([str(_r) for _r in r]))
-			values_a.write(":")
-			values_a.write(str(f))
-		values_a.write("\n")
-		
-		values_b.write(ft.__name__)
-		for r in product(*[range(-10, 10) for _r in range(arg_len)]):
-			f = ft(*r)
-			values_b.write("\t")
-			values_b.write(",".join([str(_r) for _r in r]))
-			values_b.write(":")
-			values_b.write(str(f))
-		values_b.write("\n")
-	
-	values_a.close()
-	values_b.close()
-	
-	Path('test.ll').write_text(str(result_module), 'utf-8')
-	Popen('clang -o test.exe main.c test.ll -Wno-override-module -O3', shell=True).wait()
-	Popen('./test.exe >c.values.txt', shell=True).wait()
-	Popen('sha256sum a.values.txt b.values.txt c.values.txt', shell=True).wait()
+	builder = IRBuilder(function.append_basic_block())
+	result, builder = assemble(expr, builder)
+	if isinstance(result, list):
+		assert return_t == args_t[-1]
+		assert len(result) == return_t.pointee.count, f"{function_t} ;;; {function.type}"
+		#print("return list", name, len(result), return_t)
+		r = function.args[len(args_t) - 1]
+		for n, val in enumerate(result):
+			p = builder.gep(r, [int_t(0), int_t(n)])
+			#print(return_t, dir(return_t.pointee), return_t.pointee.element)
+			v = builder.trunc(val, return_t.pointee.element)
+			builder.store(v, p)
+	else:
+		r = builder.trunc(result, return_t)
+	builder.ret(r)
 
 
 
+byte_t = IntType(8)
+short_t = IntType(16)
+
+
+def optimize(Field):
+	module = Module()
+	
+	build_array(module, 'Field.exponent', byte_t, SymbolicValue(Field.exponent))
+	build_array(module, 'Field.logarithm', byte_t, SymbolicValue(Field.logarithm))
+	
+	Field.exponent = SymbolicValue._ptr_list_uint('Field.exponent', 256)
+	Field.logarithm = SymbolicValue._ptr_list_uint('Field.logarithm', 256)
+	
+	field_sum_types = set()
+	py_field_sum = Field.sum
+	def field_sum_capture(l):
+		l = [SymbolicValue(_f) for _f in l]
+		if len(l) not in field_sum_types:
+			field_sum_types.add(len(l))
+			build_function(module, f'Field.sum_{len(l)}', [ArrayType(byte_t, len(l)).as_pointer()], byte_t, None)
+		return SymbolicValue._fun_uint(f'Field.sum_{len(l)}')(l)
+	Field.sum = field_sum_capture
+	
+	build_function(module, 'Field.__mul__', [byte_t, byte_t], byte_t, trace(Field.__mul__, [Field(SymbolicValue._arg_uint(0)), Field(SymbolicValue._arg_uint(1))]))
+	Field.__mul__ = lambda _a, _b: Field(SymbolicValue._fun_uint('Field.__mul__')(SymbolicValue(_a), SymbolicValue(_b)))
+	
+	build_function(module, 'Field.__pow__', [byte_t, short_t], byte_t, trace(Field.__pow__, [Field(SymbolicValue._arg_uint(0)), SymbolicValue._arg_int(1)]))
+	Field.__pow__ = lambda _a, _b: Field(SymbolicValue._fun_uint('Field.__pow__')(SymbolicValue(_a), SymbolicValue(_b)))
+	
+	build_function(module, 'Linear.__call__', [ArrayType(byte_t, Field.field_power).as_pointer(), byte_t], byte_t, trace(Linear.__call__, [Linear([Field(SymbolicValue._arg_list_uint(0, Field.field_power)[_n]) for _n in range(Field.field_power)]), Field(SymbolicValue._arg_uint(1))]))
+	Linear.__call_ = lambda _l, _f: Field(SymbolicValue._fun_uint('Linear.__call__')(SymbolicValue(_l), SymbolicValue(_f)))
+	
+	build_function(module, 'Quadratic.__call__', [ArrayType(byte_t, Field.field_power**2).as_pointer(), byte_t, byte_t], byte_t, trace(Quadratic.__call__, [Quadratic([Linear([Field(SymbolicValue._arg_list_uint(0, Field.field_power**2)[Field.field_power * m + n]) for n in range(Field.field_power)]) for m in range(Field.field_power)]), Field(SymbolicValue._arg_uint(1)), Field(SymbolicValue._arg_uint(2))]))
+	Quadratic.__call_ = lambda _q, _f1, _f2: Field(SymbolicValue._fun_uint('Quadratic.__call__')(SymbolicValue(_q), SymbolicValue(_f1), SymbolicValue(_f2)))
+	
+	linearcircuit_call_types = set()
+	py_linearcircuit_call = LinearCircuit.__call__
+	def linearcircuit_call_capture(lc, iv):
+		lc = list(chain.from_iterable((SymbolicValue(lc[_o, _i].linear_coefficient(_k) for _k in range(Field.field_power))) for _o, _i in product(range(lc.output_size), range(lc.input_size))))
+		iv = [SymbolicValue(_f) for _f in iv]
+		
+		len_lc = len(lc) // Field.field_power
+		len_iv = len(iv)
+		assert len_lc % len_iv == 0, f"{len_lc}, {len_iv}"
+		len_ov = len_lc // len_iv
+		
+		if (len_ov, len_iv) not in linearcircuit_call_types:
+			linearcircuit_call_types.add((len_ov, len_iv))
+			build_function(module, f'LinearCircuit.__call__{len_ov}_{len_iv}', [ArrayType(byte_t, len_lc * Field.field_power).as_pointer(), ArrayType(byte_t, len_iv).as_pointer(), ArrayType(byte_t, len_ov).as_pointer()], ArrayType(byte_t, len_ov).as_pointer(), None)
+		return SymbolicValue._fun_uint(f'LinearCircuit.__call__{len_ov}_{len_iv}')(lc, iv)
+	LinearCircuit.__call__ = linearcircuit_call_capture
+	
+	'''
+	quadraticcircuit_call_types = set()
+	py_quadraticcircuit_call = QuadraticCircuit.__call__
+	def quadraticcircuit_call_capture(qc, iv):
+		print(qc.output_size, qc.input_size, qc[qc.output_size - 1, qc.input_size - 1, qc.input_size - 1])
+		qc = list(chain.from_iterable((SymbolicValue(qc[_o, _i, _j].quadratic_coefficient(_k, _l) for _k, _l in product(range(Field.field_power), range(Field.field_power)))) for _o, _i, _j in product(range(qc.output_size), range(qc.input_size), range(qc.input_size))))
+		iv = [SymbolicValue(_f) for _f in iv]
+		
+		len_qc = len(qc) // Field.field_power**2
+		len_iv = len(iv)
+		assert len_qc % len_iv**2 == 0, f"{len_qc}, {len_iv}"
+		len_ov = len_qc // len_iv**2
+		
+		if (len_ov, len_iv) not in quadraticcircuit_call_types:
+			quadraticcircuit_call_types.add((len_ov, len_iv))
+			build_function(module, f'QuadraticCircuit.__call__{len_ov}_{len_iv}', [ArrayType(byte_t, len_qc * Field.field_power**2).as_pointer(), ArrayType(byte_t, len_iv).as_pointer(), ArrayType(byte_t, len_ov).as_pointer()], ArrayType(byte_t, len_ov).as_pointer(), None)
+		return SymbolicValue._fun_uint(f'QuadraticCircuit.__call__{len_ov}_{len_iv}')(qc, iv)
+	QuadraticCircuit.__call__ = quadraticcircuit_call_capture
+	'''
+	
+	for output_size, input_size in [(4, 12), (8, 12), (8, 20), (12, 20)]:
+		lc = LinearCircuit({(_i, _j):Linear([Field(SymbolicValue._arg_list_uint(0, Field.field_power * output_size * input_size)[_i * input_size * Field.field_power + _j * Field.field_power + _k]) for _k in range(Field.field_power)]) for (_i, _j) in product(range(output_size), range(input_size))})
+		iv = Vector([Field(SymbolicValue._arg_list_uint(1, input_size)[_i]) for _i in range(input_size)])
+		tr = lc(iv)
+	
+	arg = SymbolicValue._arg_list_uint(0, Field.field_power**2 * output_size * input_size**2)
+	n = 0
+	qs = {}
+	for output_size, input_size in [(4, 12)]:
+		for o, i, j in product(range(output_size), range(input_size), range(input_size)):
+			ls = []
+			for k in range(Field.field_power):
+				fs = []
+				for l in range(Field.field_power):
+					fs.append(Field(arg[n]))
+					n += 1
+				ls.append(Linear(fs))
+			qs[o, i, j] = Quadratic(ls)
+		qc = QuadraticCircuit(qs)
+		
+		iv = Vector([Field(SymbolicValue._arg_list_uint(1, input_size)[_i]) for _i in range(input_size)])
+		tr = qc(iv)
+	
+	#field_sum_types.add(144)
+	field_sum_types.add(289)
+	
+	print(field_sum_types, linearcircuit_call_types) #, quadraticcircuit_call_types)
+	
+	for output_size, input_size in linearcircuit_call_types:
+		lc = LinearCircuit({(_i, _j):Linear([Field(SymbolicValue._arg_list_uint(0, Field.field_power * output_size * input_size)[_i * input_size * Field.field_power + _j * Field.field_power + _k]) for _k in range(Field.field_power)]) for (_i, _j) in product(range(output_size), range(input_size))})
+		iv = Vector([Field(SymbolicValue._arg_list_uint(1, input_size)[_i]) for _i in range(input_size)])
+		tr = trace((lambda _lc, _iv: py_linearcircuit_call(_lc, _iv).serialize()), [lc, iv])
+		print("implement", f'LinearCircuit.__call__{output_size}_{input_size}')
+		build_function(module, f'LinearCircuit.__call__{output_size}_{input_size}', [ArrayType(byte_t, input_size * output_size * Field.field_power).as_pointer(), ArrayType(byte_t, input_size).as_pointer(), ArrayType(byte_t, output_size).as_pointer()], ArrayType(byte_t, output_size).as_pointer(), tr)
+	
+	'''
+	for output_size, input_size in quadraticcircuit_call_types:
+		qc = QuadraticCircuit({(_o, _i, _j):Quadratic([Linear([Field(SymbolicValue._arg_list_uint(0, Field.field_power**2 * output_size * input_size**2)[_i * input_size * Field.field_power**2 + _j * Field.field_power**2 + _k * Field.field_power + _l]) for _k in range(Field.field_power)]) for _l in range(Field.field_power)]) for (_o, _i, _j) in product(range(output_size), range(input_size), range(input_size))})
+		iv = Vector([Field(SymbolicValue._arg_list_uint(1, input_size)[_i]) for _i in range(input_size)])
+		tr = trace((lambda _qc, _iv: py_quadraticcircuit_call(_qc, _iv).serialize()), [qc, iv])
+		print("implement", f'QuadraticCircuit.__call__{output_size}_{input_size}')
+		build_function(module, f'QuadraticCircuit.__call__{output_size}_{input_size}', [ArrayType(byte_t, input_size**2 * output_size * Field.field_power**2).as_pointer(), ArrayType(byte_t, input_size).as_pointer(), ArrayType(byte_t, output_size).as_pointer()], ArrayType(byte_t, output_size).as_pointer(), tr)
+	'''
+	
+	for l in field_sum_types:
+		print("implement", f'Field.sum_{l}')
+		build_function(module, f'Field.sum_{l}', [ArrayType(byte_t, l).as_pointer()], byte_t, trace(py_field_sum, [[Field(SymbolicValue._arg_list_uint(0, l)[_n]) for _n in range(l)]]))
+	
+	print("compiling...")
+	engine = create_mcjit_compiler(parse_assembly(str(module)), Target.from_triple(get_process_triple()).create_target_machine())
+	engine.finalize_object()
+	engine.run_static_constructors()
+	print(" ready")
+	
+	def field_sum_bridge(l):
+		if hasattr(l, 'serialize'):
+			l = l.serialize()
+			array_t = c_uint8 * len(l)
+			l = array_t.from_buffer(l)
+		else:
+			l = [int(_v) for _v in l]
+			array_t = c_uint8 * len(l)
+			l = array_t(*l)
+		
+		c_field_sum = engine.get_function_address(f'Field.sum_{len(l)}')
+		if not c_field_sum:
+			raise NotImplementedError(f'Field.sum_{len(l)}')
+		
+		field_sum = CFUNCTYPE(c_uint8, array_t)(c_field_sum)
+		return Field(field_sum(l))
+	Field.sum = field_sum_bridge
+	
+	field_mul = CFUNCTYPE(c_uint8, c_uint8, c_uint8)(engine.get_function_address('Field.__mul__'))
+	Field.__mul__ = lambda x, y: Field(field_mul(c_uint8(int(x)), c_uint8(int(y))))
+	
+	field_pow = CFUNCTYPE(c_uint8, c_uint8, c_int16)(engine.get_function_address('Field.__pow__'))
+	Field.__pow__ = lambda x, y: Field(field_pow(c_uint8(int(x)), c_int16(y)))
+	
+	linear_array_t = c_uint8 * Field.field_power
+	linear_call = CFUNCTYPE(c_uint8, linear_array_t, c_uint8)(engine.get_function_address('Linear.__call__'))
+	Linear.__call__ = lambda x, y: Field(linear_call(linear_array_t.from_buffer(x.serialize()), c_uint8(int(y))))
+	
+	quadratic_array_t = c_uint8 * Field.field_power**2
+	quadratic_call = CFUNCTYPE(c_uint8, quadratic_array_t, c_uint8, c_uint8)(engine.get_function_address('Quadratic.__call__'))
+	Quadratic.__call__ = lambda x, y, z: Field(quadratic_call(quadratic_array_t.from_buffer(x.serialize()), c_uint8(int(y)), c_uint8(int(z))))
+	
+	def linearcircuit_call_bridge(lc, iv):
+		assert lc.input_size == len(iv)
+		
+		c_linearcircuit_call = engine.get_function_address(f'LinearCircuit.__call__{lc.output_size}_{lc.input_size}')
+		if not c_linearcircuit_call:
+			raise NotImplementedError(f'LinearCircuit.__call__{lc.output_size}_{lc.input_size}')
+		
+		lc_array_t = c_uint8 * (lc.output_size * lc.input_size * Field.field_power)
+		iv_array_t = c_uint8 * lc.input_size
+		ov_array_t = c_uint8 * lc.output_size
+		
+		linearcircuit_call = CFUNCTYPE(ov_array_t, lc_array_t, iv_array_t, ov_array_t)(c_linearcircuit_call)
+		
+		ov = Vector.zero(lc.output_size, lc.Array, lc.Field)
+		linearcircuit_call(lc_array_t.from_buffer(lc.serialize()), iv_array_t.from_buffer(iv.serialize()), ov_array_t.from_buffer(ov.serialize()))
+		return ov
+	LinearCircuit.__call__ = linearcircuit_call_bridge
+	
+	'''
+	def quadraticcircuit_call_bridge(qc, iv):
+		assert qc.input_size == len(iv)
+		
+		c_quadraticcircuit_call = engine.get_function_address(f'QuadraticCircuit.__call__{qc.output_size}_{qc.input_size}')
+		if not c_quadraticcircuit_call:
+			raise NotImplementedError(f'QuadraticCircuit.__call__{qc.output_size}_{qc.input_size}')
+		
+		qc_array_t = c_uint8 * (qc.output_size * qc.input_size**2 * Field.field_power**2)
+		iv_array_t = c_uint8 * qc.input_size
+		ov_array_t = c_uint8 * qc.output_size
+		
+		quadraticcircuit_call = CFUNCTYPE(ov_array_t, qc_array_t, iv_array_t, ov_array_t)(c_quadraticcircuit_call)
+		
+		ov = Vector.zero(qc.output_size, qc.Array, qc.Field)
+		quadraticcircuit_call(qc_array_t.from_buffer(qc.serialize()), iv_array_t.from_buffer(iv.serialize()), ov_array_t.from_buffer(ov.serialize()))
+		return ov
+	QuadraticCircuit.__call__ = quadraticcircuit_call_bridge
+	'''
+	
+	# Keep references to compiled code.
+	Field.__module = Linear.__module = Quadratic.__module = LinearCircuit.__module = QuadraticCircuit.__module = module
+	Field.__engine = Linear.__engine = Quadratic.__engine = LinearCircuit.__engine = QuadraticCircuit.__engine = engine
+	
+	#print(module)
+	
+	return Field, Linear, Quadratic, LinearCircuit, QuadraticCircuit
+
+
+def initialize_llvm():
+	initialize()
+	initialize_native_target()
+	initialize_native_asmprinter()
+
+
+if __name__ == '__main__':
+	from itertools import product
+	from random import randrange
+	
+	from fields import Galois
+	from linear import Linear, Quadratic, Vector
+	from machines import Automaton, LinearCircuit, QuadraticCircuit
+	from memory import Array, Table
+	#Array = list
+	#Table = dict
+
+	from pycallgraph2 import PyCallGraph
+	from pycallgraph2.output.graphviz import GraphvizOutput
+	
+	initialize_llvm()
+	
+	Field = Galois('Rijndael', 2, [1, 0, 0, 0, 1, 1, 0, 1, 1])
+	
+	test_vec_1 = [Field.random(randrange) for _n in range(Field.field_power)]
+	test_vec_2 = [Field.random(randrange), Field.random(randrange)]
+	test_vec_3 = [Field.random(randrange), randrange(Field.field_size)]
+	test_vec_4 = [Linear.random(Array, Field, randrange), Field.random(randrange)]
+	test_vec_5 = [Quadratic.random(Array, Linear, Field, randrange), Field.random(randrange), Field.random(randrange)]
+	
+	print(Field.sum(test_vec_1), test_vec_2[0] * test_vec_2[1], test_vec_3[0] ** test_vec_3[1], test_vec_4[0](test_vec_4[1]), test_vec_5[0](test_vec_5[1], test_vec_5[2]))
+	
+	Field, Linear, Quadratic, LinearCircuit, QuadraticCircuit = optimize(Field)
+	
+	print(Field.sum(test_vec_1), test_vec_2[0] * test_vec_2[1], test_vec_3[0] ** test_vec_3[1], test_vec_4[0](test_vec_4[1]), test_vec_5[0](test_vec_5[1], test_vec_5[2]))
+	
+	#input_size = output_size = 8
+	#lc = LinearCircuit({(_m, _n):Linear([Field(SymbolicValue._arg_list_uint(0, output_size * input_size * Field.field_power)[Field.field_power * input_size * _m + Field.field_power * _n + _k]) for _k in range(Field.field_power)]) for (_m, _n) in product(range(output_size), range(input_size))}, output_size=output_size, input_size=input_size)
+	#v = Vector([Field(_v) for _v in SymbolicValue._arg_list_uint(1, Field.field_power)])
+	#build_function(module, 'LinearCircuit.__call__', [..., ...], ..., trace(LinearCircuit.__call__, [lc, v]))
+
+
+	def random_stream(length, size, Array, Field, randbelow):
+		for n in range(length):
+			yield Vector.random(size, Array, Field, randbelow)
+	
+	m_impl = 'llvm'
+	
+	a = Automaton.random_linear_linear(8, 8, 12, Table, Array, Vector, LinearCircuit, Linear, Field, randrange)
+	with PyCallGraph(output=GraphvizOutput(output_file=f'{m_impl}_linear_linear_{Field.__name__}.png')):
+		print()
+		s = a.init_state[:]
+		print(s)
+		for n, x in enumerate(a(random_stream(1000, 8, Array, Field, randrange), s)):
+			print(n, x)
+		print(s)
+	
+	b = Automaton.random_linear_quadratic(4, 4, 8, Table, Array, Vector, QuadraticCircuit, LinearCircuit, Quadratic, Linear, Field, randrange)
+	with PyCallGraph(output=GraphvizOutput(output_file=f'{m_impl}_linear_quadratic_{Field.__name__}.png')):
+		print()
+		s = b.init_state[:]
+		print(s)
+		for n, x in enumerate(b(random_stream(10, 4, Array, Field, randrange), s)):
+			print(n, x)
+		print(s)
+	
+	c = Automaton.random_quadratic_linear(4, 4, 8, Table, Array, Vector, QuadraticCircuit, LinearCircuit, Quadratic, Linear, Field, randrange)
+	with PyCallGraph(output=GraphvizOutput(output_file=f'{m_impl}_quadratic_linear_{Field.__name__}.png')):
+		print()
+		s = c.init_state[:]
+		print(s)
+		for n, x in enumerate(c(random_stream(10, 4, Array, Field, randrange), s)):
+			print(n, x)
+		print(s)
+	
+	d = Automaton.random_quadratic_quadratic(1, 1, 16, Table, Array, Vector, QuadraticCircuit, Quadratic, Linear, Field, randrange)
+	with PyCallGraph(output=GraphvizOutput(output_file=f'{m_impl}_quadratic_quadratic_{Field.__name__}.png')):
+		print()
+		s = d.init_state[:]
+		print(s)
+		for n, x in enumerate(d(random_stream(10, 1, Array, Field, randrange), s)):
+			print(n, x)
+		print(s)
 
 
 
