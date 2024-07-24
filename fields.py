@@ -254,7 +254,7 @@ class FastGalois(Field):
 				raise ArithmeticError("Field zero to zero negative power.")
 			else:
 				return self
-		return self.exponent[(self.logarithm[self] * n) % (self.field_size - 1)]
+		return self.exponent[(self.logarithm[self] * n) % (self.field_size - 1)] # assumes Python semantics of modulus od negative values
 
 
 class BinaryGalois:
@@ -393,7 +393,7 @@ class BinaryGalois:
 				return self
 		
 		field_size = self.field_size
-		return self.__class__(self.exponent[(self.logarithm[self.__value] * abs(n)) % (field_size - 1)]) # FIXME: negative powers
+		return self.__class__(self.exponent[(self.logarithm[self.__value] * n) % (field_size - 1)]) # assumes Python semantics of modulus od negative values
 
 
 class Polynomial:
@@ -756,6 +756,20 @@ if __debug__:
 		if x != zero and x != one: assert one / x != one
 		if y: assert x / y == x * (one / y)
 		if z: assert (x + y) / z == x / z + y / z
+		
+		if x:
+			assert x ** 0 == one
+			assert x ** 1 == x
+			assert x ** 2 == x * x
+			assert x ** 3 == x * x * x
+			
+			assert one / x == x ** -1
+			
+			for m, n in product(range(5), range(5)):
+				(x ** m) * (x ** n) == x ** (m + n)
+		else:
+			for m in range(1, 5):
+				x ** m == zero
 	
 	def polynomial_axioms(x, y, z):
 		zero = x.__class__(0)
@@ -816,7 +830,7 @@ if __debug__ and __name__ == '__main__':
 	#profiler.start()
 	
 	for m in [2, 3, 5, 7, 11, 13, 17]:
-		print(m)
+		print("modular", m)
 		
 		class Modulo(Field):
 			modulus = m
@@ -830,7 +844,7 @@ if __debug__ and __name__ == '__main__':
 	#profiler.start()
 	
 	for m in [2, 3, 5]:
-		print(m)
+		print("polynomial", m)
 		
 		class Modulo(Field):
 			modulus = m
@@ -852,6 +866,14 @@ if __debug__ and __name__ == '__main__':
 	class Galois_7_3(Field):
 		modulus = PolynomialModulo_7(1, 3, 1)
 	
+	#print("galois", "7[1, 3, 1]", Galois_7_3.field_size)
+	
 	#for x, y, z in product(Galois_7_3.domain(), Galois_7_3.domain(), Galois_7_3.domain()):
 	#	field_axioms(x, y, z)
 
+	Rijndael = Galois('Rijndael', 2, [1, 0, 0, 0, 1, 1, 0, 1, 1])
+	
+	print("rijndael", Rijndael.field_size)
+	
+	for x, y, z in product(Rijndael.domain(), Rijndael.domain(), Rijndael.domain()):
+		field_axioms(x, y, z)

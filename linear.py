@@ -698,8 +698,8 @@ if __debug__ and __name__ == '__main__':
 					n = m.inverse()
 				except ArithmeticError:
 					continue
-				assert m @ n == i, str(m @ n)
-				assert n @ m == i, str(n @ m)
+				assert m @ n == i, f"{m} @ {n} = {m @ n}"
+				assert n @ m == i, f"{n} @ {m} = {n @ m}"
 				break
 		
 		for n in range(100):
