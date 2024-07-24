@@ -365,7 +365,6 @@ if __debug__ and __name__ == '__main__':
 	from machines import *
 	
 	from numpy import array, uint8, fromiter, bitwise_xor
-	from numba import jit
 	
 	PyArray = Array
 	PyTable = Table

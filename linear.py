@@ -78,7 +78,7 @@ class Linear:
 		return cls.factor(Field.random_nonzero(randbelow), Array)
 	
 	def __init__(self, coefficients):
-		"f[0] * x + f[1] * x**p + f[2] * x**(p * 2) + ... + f[k] * x**(p * k)"
+		"f[0] * x + f[1] * x**p + f[2] * x**(p ** 2) + ... + f[k] * x**(p ** k)"
 		
 		try:
 			self.__f = coefficients.__f
@@ -86,7 +86,7 @@ class Linear:
 			self.__f = coefficients
 		
 		if not len(self.__f) == self.Field.field_power:
-			raise ValueError(f"Linear function over {self.Field.__name__} needs {self.Field.field_power} parameters.")
+			raise ValueError(f"Linear function over {self.Field.__name__} needs {self.Field.field_power} parameters. (Got {len(self.__f)})")
 	
 	def __getnewargs__(self):
 		return (self.__f,)
@@ -96,6 +96,11 @@ class Linear:
 			return self.__f.serialize()
 		except AttributeError:
 			return map(int, self.__f)
+	
+	@classmethod
+	def deserialize(cls, Array, Field, data):
+		nArray = array_fallback(Array)		
+		return cls(nArray((Field.deserialize(data) for n in range(Field.field_power)), [None], [Field]))
 	
 	def linear_coefficient(self, i):
 		return self.__f[i]
@@ -231,11 +236,19 @@ class Quadratic:
 		if not len(self.__f) == self.Field.field_power:
 			raise ValueError(f"Linear function over {self.Field.__name__} needs {self.Field.field_power} parameters. (Got {len(self.__f)}.)")
 	
+	def __getnewargs__(self):
+		return (self.__f,)
+	
 	def serialize(self):
 		try:
 			return self.__f.serialize()
 		except AttributeError:
 			return chain.from_iterable(_v.serialize() for _v in self.__f)
+	
+	@classmethod
+	def deserialize(cls, Array, Linear, Field, data):
+		nArray = array_fallback(Array)
+		return cls(nArray((Linear.deserialize(Array, Field, data) for _i in range(Field.field_power)), [Field.field_power, None], [Linear, Field]))
 	
 	def quadratic_coefficient(self, i, j):
 		return self.__f[i].linear_coefficient(j)
@@ -245,6 +258,7 @@ class Quadratic:
 		p = Field.field_base
 		n = Field.field_power
 		f = self.__f
+		#print("calling:", type(f[0]).__name__, f[0].__call__)
 		return Field.sum(f[_k](x * y**(p ** _k)) for _k in range(n))
 	
 	def __add__(self, other):
@@ -348,11 +362,19 @@ class Vector:
 		self.__values = values
 		self.vector_length = len(values)
 	
+	def __getnewargs__(self):
+		return self.__values,
+	
 	def serialize(self):
 		try:
 			return self.__values.serialize()
 		except AttributeError:
 			return self.__values
+	
+	@classmethod
+	def deserialize(cls, length, Array, Field, data):
+		nArray = array_fallback(Array)
+		return cls(nArray((Field.deserialize(data) for _n in range(length)), [None], [Field]))
 	
 	def __repr__(self):
 		return f'{self.__class__.__name__}({{{ ", ".join(str(_n) + ": " + str(self.__values[_n]) for _n in self.keys()) }}})'

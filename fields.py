@@ -81,6 +81,10 @@ class Field:
 	def serialize(self):
 		yield self.__value
 	
+	@classmethod
+	def deserialize(cls, data):
+		return cls(next(data))
+	
 	def __str__(self):
 		try:
 			ss = subscript(self.modulus)
@@ -303,6 +307,10 @@ class BinaryGalois:
 	def serialize(self):
 		yield self.__value
 	
+	@classmethod
+	def deserialize(cls, data):
+		return cls(next(data))
+	
 	def __str__(self):
 		if not isinstance(self.__value, int):
 			return f"#({self.__value})"
@@ -349,7 +357,7 @@ class BinaryGalois:
 		except AttributeError:
 			return NotImplemented
 		
-		if not self:
+		if not self: # FIXME: constant time
 			return self
 		if not other:
 			return other
@@ -385,7 +393,7 @@ class BinaryGalois:
 				return self
 		
 		field_size = self.field_size
-		return self.__class__(self.exponent[(self.logarithm[self.__value] * abs(n)) % (field_size - 1)])
+		return self.__class__(self.exponent[(self.logarithm[self.__value] * abs(n)) % (field_size - 1)]) # FIXME: negative powers
 
 
 class Polynomial:

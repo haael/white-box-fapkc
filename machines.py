@@ -57,11 +57,19 @@ class LinearCircuit:
 		
 		self.__functions = functions
 	
+	def __getnewargs__(self):
+		return self.__functions, self.output_size, self.input_size
+	
 	def serialize(self):
 		try:
 			return self.__functions.serialize()
 		except AttributeError:
 			return chain.from_iterable(_v.serialize() for _v in self.__functions)
+	
+	@classmethod
+	def deserialize(cls, output_size, input_size, Table, Array, Linear, Field, data):
+		nTable = table_fallback(Table)
+		return cls(nTable((((_m, _n), Linear.deserialize(Array, Field, data)) for (_m, _n) in product(range(output_size), range(input_size))), [output_size, input_size], [Field.field_power, None], [Linear, Field], Array=Array))
 	
 	def __getitem__(self, index):
 		try:
@@ -190,17 +198,25 @@ class QuadraticCircuit:
 		
 		self.__functions = functions
 	
+	def __getnewargs__(self):
+		return self.__functions, self.output_size, self.input_size
+	
 	def serialize(self):
 		try:
 			return self.__functions.serialize()
 		except AttributeError:
 			return chain.from_iterable(_v.serialize() for _v in self.__functions)
 	
+	@classmethod
+	def deserialize(cls, output_size, input_size, Table, Array, Quadratic, Linear, Field, data):
+		nTable = table_fallback(Table)
+		return cls(nTable((((_m, _n, _o), Quadratic.deserialize(Array, Linear, Field, data)) for (_m, _n, _o) in product(range(output_size), range(input_size), range(input_size))), [output_size, input_size, input_size], [Field.field_power, Field.field_power, None], [Quadratic, Linear, Field], Array=Array))
+	
 	def __getitem__(self, index):
 		try:
 			m, n, o = index
 		except ValueError:
-			raise TypeError("QuadraticCircuit.__getitem__ expects 3 numeric indices.")
+			raise TypeError(f"QuadraticCircuit.__getitem__ expects 3 numeric indices. Got: {index}")
 		
 		return self.__functions[m, n, o]
 	
@@ -274,6 +290,39 @@ class Automaton:
 		self.out_transition = out_transition
 		self.state_transition = state_transition
 		self.init_state = init_state
+	
+	def serialize(self):
+		yield from self.out_transition.serialize()
+		yield from self.state_transition.serialize()
+		yield from self.init_state.serialize()
+	
+	@classmethod
+	def deserialize_linear_linear(cls, output_size, input_size, state_size, Dictionary, Array, Vector, LinearCircuit, Linear, Field, data):
+		out_transition = LinearCircuit.deserialize(output_size, input_size + state_size, Dictionary, Array, Linear, Field, data)
+		state_transition = LinearCircuit.deserialize(state_size, input_size + state_size, Dictionary, Array, Linear, Field, data)
+		init_state = Vector.deserialize(state_size, Array, Field, data)
+		return cls(out_transition, state_transition, init_state)
+	
+	@classmethod
+	def deserialize_linear_quadratic(cls, output_size, input_size, state_size, Dictionary, Array, Vector, QuadraticCircuit, LinearCircuit, Quadratic, Linear, Field, data):
+		out_transition = LinearCircuit.deserialize(output_size, input_size + state_size, Dictionary, Array, Linear, Field, data)
+		state_transition = QuadraticCircuit.deserialize(state_size, input_size + state_size, Dictionary, Array, Quadratic, Linear, Field, data)
+		init_state = Vector.deserialize(state_size, Array, Field, data)
+		return cls(out_transition, state_transition, init_state)
+	
+	@classmethod
+	def deserialize_quadratic_linear(cls, output_size, input_size, state_size, Dictionary, Array, Vector, QuadraticCircuit, LinearCircuit, Quadratic, Linear, Field, data):
+		out_transition = QuadraticCircuit.deserialize(output_size, input_size + state_size, Dictionary, Array, Quadratic, Linear, Field, data)
+		state_transition = LinearCircuit.deserialize(state_size, input_size + state_size, Dictionary, Array, Linear, Field, data)
+		init_state = Vector.deserialize(state_size, Array, Field, data)
+		return cls(out_transition, state_transition, init_state)
+	
+	@classmethod
+	def deserialize_quadratic_quadratic(cls, output_size, input_size, state_size, Dictionary, Array, Vector, QuadraticCircuit, Quadratic, Linear, Field, data):
+		out_transition = QuadraticCircuit.deserialize(output_size, input_size + state_size, Dictionary, Array, Quadratic, Linear, Field, data)
+		state_transition = QuadraticCircuit.deserialize(state_size, input_size + state_size, Dictionary, Array, Quadratic, Linear, Field, data)
+		init_state = Vector.deserialize(state_size, Array, Field, data)
+		return cls(out_transition, state_transition, init_state)
 	
 	def __call__(self, stream, state=None):
 		if state is None:
@@ -384,160 +433,53 @@ class MemoryAutomaton:
 	
 	QQ[0] = 1
 	
-	
-	o = sum(F[x, y](i[x], i[y]))
-	
-	F[0, 0](i[0], i[0]) + F[0, 1](i[0], i[1]) + F[1, 0](i[1], i[0]) + F[1, 1](i[1], i[1])
-	
-	A @ F[x, y] @ (B[x], C[y])
-	
-	a*x + b*x**2 + c*x**4 + d*x**8
-	
-	a[0] * b[0] + a[1] * b[7]**128 + a[2] * b[6]**64
-	
-	
-	
-	F[0, 0] @ ii[0]
-	F @ ii[1]
-	F @ ii[2]
-	F @ ii[3]
-	
-	
-	on = f(in)
-	in = g(on)
-	
-	
-	on = f(i)
-	
-	
-	
-	
-	
-	o0 = G(i0, i1)
-	i0 = Gi[i1](o0)
-
-	
-
-	
-	i**2 = o
-	
-	f(x) = x**128
-	
-	i**256 = o**128
-	i = o**128
-	
-	
-	i**2 = o**128 * i
-	
 
 
 
+	F[x, y] @ i[x] @ i[y]
 	
 	
-	m0 = o0 + N(o*) - M(m*)
-	o0 = m0 - N(o*) + M(m*)
-
-	m0 = i0 - O(i*) - P(m*)
-
-
-	o0 = i0 - O(i*) - P(m*) - N(o*) + M(i* - O(i**) - P(m**))
+	F[0, 0] @ i[0] @ i[0] + F[0, 1] @ i[0] @ i[1] + F[1, 0] @ i[1] @ i[0] + F[1, 1] @ i[1] @ i[1]
+	F[0, 0] @ i[1] @ i[1] + F[0, 1] @ i[1] @ i[2] + F[1, 0] @ i[2] @ i[1] + F[1, 1] @ i[2] @ i[2]
 	
+	i[0]**128 * i[0]**128
+	i[0]
 
-	o[0] = A0(m[0]) + A1(m[-1]) + A2(m[-2]) + A3(m[-3]) + ... + B1(o[-1]) + B2(o[-2]) + B3(o[-3]) + ...
-	m[0] = E0(o[0]) + E1(o[-1]) + E2(o[-2]) + E3(o[-3]) + ... + F1(m[-1]) + F2(m[-2]) + F3(m[-3]) + ...
-	m[0] = C0(i[0]) + C1(i[-1]) + C2(i[-2]) + C3(i[-3]) + ... + D1(m[-1]) + D2(m[-2]) + D3(m[-3]) + ...
 	
-	A0(m[ 0]) = A0@C0(i[ 0]) + A0@C1(i[-1]) + A0@C2(i[-2]) + A0@C3(i[-3]) + ... + A0@D1(m[-1]) + A0@D2(m[-2]) + A0@D3(m[-3]) + ...
-	A1(m[-1]) = A1@C0(i[-1]) + A1@C1(i[-2]) + A1@C2(i[-3]) + A1@C3(i[-4]) + ... + A1@D1(m[-2]) + A1@D2(m[-3]) + A1@D3(m[-4]) + ...
-	A2(m[-2]) = A2@C0(i[-2]) + A2@C1(i[-3]) + A2@C2(i[-4]) + A2@C3(i[-5]) + ... + A2@D1(m[-3]) + A2@D2(m[-4]) + A2@D3(m[-5]) + ...
-	A3(m[-3]) = A3@C0(i[-3]) + A3@C1(i[-4]) + A3@C2(i[-5]) + A3@C3(i[-6]) + ... + A3@D1(m[-4]) + A3@D2(m[-5]) + A3@D3(m[-6]) + ...
+	0 = i[0] + o[0] + G(i[1:], o[1:])
+	0 = sqr(i[0]) + sqr(o[0]) + F(i[1:], o[1:])
 	
+	sqr(o[0]) = -sqr(i[0]) - F(i[1:], o[1:])
+	sqr(i[0]) = -sqr(o[0]) - F(i[1:], o[1:])
+	
+	x**256 = x
+	x**128**2 = x
+	x**128 = sqrt(x)
 
 
-	o[0] = A0(m[0]) + A1(m[-1]) + A2(m[-2]) + A3(m[-3]) + ... + B1(o[-1]) + B2(o[-2]) + B3(o[-3]) + ...
 
-
-	A(m) = B(o)
-	C(i) = D(m)
-
-	A@C(ii) = A@D(mm)
-	A@D(mm) = B@D(oo)
-
-	A@C(ii) = B@D(oo)
-
-
-	B0@D0 B0@D1 B0@D2
-	B1@D0 B1@D1 B1@D2
-	B2@D0 B2@D1 B2@D2
-
-	Ei0 = (Bi @ Dj)**-1
-
-
-	o = A(m) + B(o*)
-	m = C(i) + D(m*)
-	A(m) = A@C(i) + A@D(m*)
-
-	o = A@C(i) + A@D(m*) + B(o*)
-	m = E(o) + F(m*)
-
-
-	m[-1] = U(o[-1]) + E1(o[-2]) + E2(o[-3]) + E3(o[-4]) + ... + F1(m[-2]) + F2(m[-3]) + F3(m[-4]) + ...
-
-	m[0] = U(o[0]) + E1(o[-1]) + E2(o[-2]) + E3(o[-3]) + ... + F1(m[-1]) + F2(m[-2]) + F3(m[-3]) + ...
-	m[0] = U(o[0]) + E1(o[-1]) + E2(o[-2]) + E3(o[-3]) + ... + F1(m[-1]) + F2(m[-2]) + F3(m[-3]) + ...
+	x**7 = x**6 * x = (x**3)**2 * x = (x**2 * x)**2 * x
+	
+	x
+	x**3
+	x**7
+	
+	B @ X @ A**-1
+	C @ Y @ B**-1
+	A @ Z @ C**-1
+	
+	A
+	A @ F @ A**-1
+	D @ A**-1
 	
 	
+	((k[i] - k[0]) * f(x)) + x
+	
 
-
-	o[0] = M0(m[0]) + Mij(m[-i], m[-j]) + ... + Nij(o[-i], o[-j]) + ...
-	m[0] = C0(i[0]) + Ck(i[-k]) + ... + Dk(m[-k]) + ...
-
-
-	o[0] = M0(m[0]) + Mij((C0(i[-i]) + Ck(i[-i-k]) + ... + Dk(m[-i-k]) + ...), C0(i[-j]) + Ck(i[-j-k]) + ... + Dk(m[-j-k]) + ...) + ... 
-+ Nij(o[-i], o[-j]) + ...
-
-	Ck(i[-i-k]) * Cl(i[-j-l])
-
-
-
-	E1
-	E2 @ (D2*) @ N @ D1
-	E1 @ D2
+	sum(M[k](i[k])) = sum(N[l](j[l]))
+	sum(O[k](j[k])) = sum(P[l](o[l]))
 	
-	y = d(x)
-	
-	if n == 12:
-		return x
-	else:
-		return 0
-	
-	x x**2 x**3
-	
-	q00(x0, x0)
-	q01(x0, x1)
-	q10(x1, x0)
-	q11(x1, x1)
-	
-	x0 := y0 + 1
-	y0 := x0
-	
-	x1 := y1 + y0
-	y1 := x1
-	
-	y01 := x0 * x1
-	x2 := y2 + y01
-	y2 := x2
-	
-	x3 := y3 + y2 * y01
-	y3 := x3
-	
-	a3 * x**4 + a2 * x**2 + a1 * x + a0
-	b3 * x**4 + b2 * x**2 + b1 * x + b0
-
-	1	2	4	8	16	32	64	128	256
-	3	6	12	24	48	
-	
-	x * y + x**2 * y
+	(R·N)·j = O·j
 	
 	'''
 
