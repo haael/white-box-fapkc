@@ -391,9 +391,14 @@ class BinaryGalois:
 				raise ArithmeticError("Field zero to negative power.")
 			else:
 				return self
+
+		if n >= 0:
+			base = self
+		else:
+			base = self.__class__(1) / self
 		
 		field_size = self.field_size
-		return self.__class__(self.exponent[(self.logarithm[self.__value] * n) % (field_size - 1)]) # assumes Python semantics of modulus od negative values
+		return self.__class__(self.exponent[(self.logarithm[base.__value] * abs(n)) % (field_size - 1)]) # assumes Python semantics of modulus od negative values
 
 
 class Polynomial:

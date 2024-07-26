@@ -339,80 +339,36 @@ class Automaton:
 		return self.__class__(out_transition, state_transition, init_state)
 
 
-class MemoryAutomaton:
-	@classmethod
-	def random_linear(cls, block_size, delay, Dictionary, Array, Vector, LinearCircuit, Linear, Field, randbelow):
-		word_transition = LinearCircuit.random(block_size, block_size, Dictionary, Array, Linear, Field, randbelow)
-		in_transition = LinearCircuit.random(block_size, block_size * delay, Dictionary, Array, Linear, Field, randbelow)
-		out_transition = LinearCircuit.random(block_size, block_size * delay, Dictionary, Array, Linear, Field, randbelow)
-		in_state = Vector.random(block_size * delay, Array, Field, randbelow)
-		out_state = Vector.random(block_size * delay, Array, Field, randbelow)
-		return cls(word_transition, in_transition, out_transition, in_state, out_state)
-	
-	@classmethod
-	def random_quadratic(cls, block_size, delay, Dictionary, Array, Vector, QuadraticCircuit, LinearCircuit, Quadratic, Linear, Field, randbelow):
-		word_transition = LinearCircuit.random(block_size, block_size, Dictionary, Array, Linear, Field, randbelow)
-		in_transition = QuadraticCircuit.random(block_size, block_size * delay, Dictionary, Array, Quadratic, Linear, Field, randbelow)
-		out_transition = QuadraticCircuit.random(block_size, block_size * delay, Dictionary, Array, Quadratic, Linear, Field, randbelow)
-		in_state = Vector.random(block_size * delay, Array, Field, randbelow)
-		out_state = Vector.random(block_size * delay, Array, Field, randbelow)
-		return cls(word_transition, in_transition, out_transition, in_state, out_state)
-	
-	def __init__(self, word_transition, in_transition, out_transition, in_init_state, out_init_state):
-		self.word_transition = word_transition
-		self.in_transition = in_transition
-		self.out_transition = out_transition
-		self.in_init_state = in_init_state
-		self.out_init_state = out_init_state
-	
-	def __call__(self, stream, in_state=None, out_state=None):
-		if in_state is None:
-			in_state = self.in_init_state[:]
-		
-		if out_state is None:
-			out_state = self.out_init_state[:]
-		
-		for word in stream:
-			result = self.word_transition(word)
-			
-			if self.in_transition is not None:
-				result += self.in_transition(in_state)
-			
-			if self.out_transition is not None:
-				result += self.out_transition(out_state)
-			
-			yield result
-			
-			in_state = (word | in_state)[:-len(word)]
-			out_state = (result | out_state)[:-len(result)]
-	
-	def __matmul__(self, other):
-		#mid = other.word_transition(in_) + other.in_transition(in_state) + other.out_transition(mid_state)
-		#out = self.word_transition(mid) + self.in_transition(mid_state) + self.out_transition(out_state)
-		
-		if not other.out_transition and not self.in_transition:
-			#mid = other.word_transition(in_) + other.in_transition(in_state)
-			#out = self.word_transition(mid) + self.out_transition(out_state)
-			return self.__class__(self.word_transition @ other.word_transition, self.word_transition @ other.in_transition, self.out_transition)
-		
-		elif not other.out_transition:
-			#mid = other.word_transition(in_) + other.in_transition(in_state)
-			#out = self.word_transition(mid) + self.in_transition(mid_state) + self.out_transition(out_state)
-			
-			mid_state_trn = LinearCircuit.zero(0, 2 * other.in_transition.input_size)
-			for i in range(0, self.in_transition.input_size, other.word_transition.input_size):
-				#mid_state_trn |= other.word_transition @ LinearCircuit.shift(i, other.word_transition.input_size, 2 * other.in_transition.input_size) + other.in_transition @ LinearCircuit.shift(i + other.word_transition.input_size, other.in_transition.input_size, 2 * other.in_transition.input_size)
-				mid_state_trn |= other.word_transition << (i, 2 * other.in_transition.input_size) + other.in_transition << (i + other.word_transition.input_size, 2 * other.in_transition.input_size)
-			
-			#in_transition = self.word_transition @ other.in_transition @ LinearCircuit.shift(0, other.in_transition.input_size, 2 * other.in_transition.input_size) + self.in_transition @ mid_state_trn
-			in_transition = self.word_transition @ other.in_transition << (0, 2 * other.in_transition.input_size) + self.in_transition @ mid_state_trn
-			
-			return self.__class__(self.word_transition @ other.word_transition, in_transition, self.out_transition)
-		
-		else:
-			raise NotImplementedError
 
-	'''	
+'''
+	
+	P @ m = Q @ o
+	M @ i = N @ m
+	
+	N` @ P @ m = P @ N @ m
+	N` @ P @ m = N` @ Q @ o
+	P  @ M @ i = N` @ Q @ o
+	
+	N  @ P @ m = P` @ N @ m	
+	P` @ M @ i = P` @ N @ m
+	P` @ M @ i = N  @ Q @ o
+	
+	
+	P @ m = (a * [0] + b * [1]) @ o
+	#P @ m = (1 * [0] + z * [1]) @ o
+	
+	(c * [0] + d * [1]) @ P @ m = (c * [0] + d * [1]) @ (a * [0] + b * [1]) @ o
+	(c * [0] + d * [1]) @ P @ m = (c * ((a * [0] + b * [1])) + d * ((a * [1] + b * [2]))) @ o
+	(c * [0] + d * [1]) @ P @ m = (c * a * [0] + c * b * [1] + d * a * [1] + d * b * [2]) @ o
+
+
+	(a * [0] + b * [1] + c * [2]) * (d * [0] + e * [1] + f * [2]) =
+	= (a * d * [0] + a * e * [1] + a * f * [2]) + (b * d * [1] + b * e * [2] + b * f * [3]) + (c * d * [2] + c * e * [3] + c * f * [4]) =
+	= a * d * [0] + (a * e + b * d) * [1] + (a * f + b * e + c * d) * [2] + 
+
+
+	c * b + d * a = 1
+	
 	
 	sum(M[k](i[k])) = sum(N[l](o[l]))
 	
@@ -433,6 +389,11 @@ class MemoryAutomaton:
 	
 	QQ[0] = 1
 	
+
+
+
+	F
+
 
 
 
@@ -481,10 +442,6 @@ class MemoryAutomaton:
 	
 	(R·N)·j = O·j
 	
-	'''
-
-
-	'''
 	def __matmul__(self, other):
 		mid[i] = other.W * in_[i] + sum(other.A[m] * in_[m + i] for m in range(1, delay))
 		out[0] = self.W * mid[0] + sum(self.A[n] * mid[n] for n in range(1, delay))
@@ -519,7 +476,7 @@ class MemoryAutomaton:
 
 
 		out[0] = self.W * mid[0]  + sum(self.A[n]  * mid[n] for n in range(1, delay))     + sum(self.B[n] * out[n] for n in range(1, delay))
-	'''
+'''
 
 
 
@@ -600,121 +557,4 @@ if __debug__ and __name__ == '__main__':
 		
 		if profile:
 			profiler.done()
-	
-	quit()
-	
-	'''
-	def random_stream(n, size, Array, Field, randbelow):
-		while n > 0:
-			n -= 1
-			yield Vector.random(size, Array, Field, randbelow)
-	
-	
-	def ascending_stream(n, size, Array, Field):
-		v = [0] * size
-		while n > 0:
-			n -= 1
-			yield Vector(Array(map(Field, v)))
-			
-			carry = True
-			for m in range(size):
-				if carry:
-					v[m] += 1
-				
-				if v[m] >= F.field_size:
-					v[m] = 0
-					carry = True
-				else:
-					carry = False
-	
-	
-	print()
-	a = Automaton.random_linear_linear(4, 3, 4, dict, list, Vector, LinearCircuit, Linear, F, randrange)
-	for n, x in enumerate(a(random_stream(32, 3, list, F, randrange))):
-		print(n, x)
-	
-	print()
-	b = Automaton.random_linear_quadratic(4, 3, 4, dict, list, Vector, QuadraticCircuit, LinearCircuit, Quadratic, Linear, F, randrange)
-	for n, x in enumerate(b(random_stream(32, 3, list, F, randrange))):
-		print(n, x)
-	
-	print()
-	c = Automaton.random_quadratic_linear(4, 3, 4, dict, list, Vector, QuadraticCircuit, LinearCircuit, Quadratic, Linear, F, randrange)
-	for n, x in enumerate(c(random_stream(32, 3, list, F, randrange))):
-		print(n, x)
-	
-	print()
-	d = Automaton.random_quadratic_quadratic(4, 3, 4, dict, list, Vector, QuadraticCircuit, Quadratic, Linear, F, randrange)
-	for n, x in enumerate(d(random_stream(32, 3, list, F, randrange))):
-		print(n, x)
-	
-	'''
-	
-	class Loopback:
-		def __init__(self):
-			self.__value = None
-			self.__stop = True
-		
-		def __iter__(self):
-			return self
-		
-		def __next__(self):
-			if self.__stop:
-				raise StopIteration
-			else:
-				self.__stop = True
-				return self.__value
-		
-		def push(self, value):
-			self.__value = value
-			self.__stop = False
-	
-	
-	class Random:
-		def __init__(self, n, out_size, Field, randrange):
-			self.__out_size = out_size
-			self.__Field = Field
-			self.__randrange = randrange
-			self.__n = n
-		
-		def __iter__(self):
-			return self
-		
-		def __next__(self):
-			if self.__n <= 0:
-				raise StopIteration
-			else:
-				self.__n -= 1
-				return Vector.random(self.__out_size, list, self.__Field, self.__randrange)	
-	
-	
-	F = Galois('Rijndael', 2, [1, 0, 0, 0, 1, 1, 0, 1, 1])
-	out_size = 2
-	#a = MemoryAutomaton.random_linear(out_size, out_size * 4, dict, list, Vector, LinearCircuit, Linear, F, randrange)
-	a = MemoryAutomaton.random_quadratic(out_size, out_size * 4, dict, list, Vector, QuadraticCircuit, LinearCircuit, Quadratic, Linear, F, randrange)
-	b = MemoryAutomaton.random_quadratic(out_size, out_size * 4, dict, list, Vector, QuadraticCircuit, LinearCircuit, Quadratic, Linear, F, randrange)
-	
-	print()
-	loopback1 = Loopback()
-	loopback2 = Loopback()
-	#loopback.push(Vector.random(out_size, list, F, randrange))
-	
-	if profile:
-		profiler = PyCallGraph(output=GraphvizOutput(output_file='quadratic_automaton_memory.png'))
-		profiler.start()
-	
-	z = Vector.random(out_size, list, F, randrange)
-	loopback1.push(z)
-	loopback2.push(z)
-	for n, x, y in enumerate(zip(a(b(loopback1)), (a @ b)(loopback2))):
-		print(n, x, y)
-		if n < 4:
-			z = Vector.random(out_size, list, F, randrange)
-			loopback1.push(z)
-			loopback2.push(z)
-	
-	if profile:
-		profiler.done()
-
-
 

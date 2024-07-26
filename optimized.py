@@ -11,9 +11,6 @@ from llvmlite.ir._utils import DuplicatedNameError
 from llvmlite.binding import initialize, initialize_native_target, initialize_native_asmprinter, parse_assembly, create_mcjit_compiler, Target, get_process_triple
 from collections import defaultdict
 from collections.abc import Iterable
-from itertools import chain, product
-import ast, inspect
-from functools import cmp_to_key
 
 from tracing import *
 
@@ -401,7 +398,9 @@ def build_function(module, name, args_t, return_t, int_t, size_t, expr):
 				
 				if expr._SymbolicValue__operands[0]._SymbolicValue__type != expr.Type.INT:
 					convert_args(args, expr._SymbolicValue__operands, builder)
-					return builder.urem(args[0], args[1]), builder # urem in Python semantics
+					p0 = builder.mul(args[1], args[1].type(255))
+					p1 = builder.add(args[0], p0)
+					return builder.urem(p1, args[1]), builder # urem in Python semantics
 				elif expr._SymbolicValue__operands[0]._SymbolicValue__type != expr.Type.UINT:
 					convert_args(args, expr._SymbolicValue__operands, builder)
 					return builder.urem(args[0], args[1]), builder
@@ -526,7 +525,7 @@ def build_function(module, name, args_t, return_t, int_t, size_t, expr):
 			var.add_incoming(out_result, loop_body[loop_no].block)
 
 
-def optimize(Field, Linear, Quadratic, LinearCircuit, QuadraticCircuit):
+def optimize(Field, Linear, Quadratic, LinearCircuit, QuadraticCircuit, linearcircuit_call_types=[], quadraticcircuit_call_types=[], debug=False):
 	module = Module()
 	
 	OptimizedField = type(Field.__name__, (Field,), {})
@@ -535,13 +534,15 @@ def optimize(Field, Linear, Quadratic, LinearCircuit, QuadraticCircuit):
 	OptimizedLinearCircuit = type('LinearCircuit', (LinearCircuit,), {})
 	OptimizedQuadraticCircuit = type('QuadraticCircuit', (QuadraticCircuit,), {})
 	
+	exp_table = OptimizedField.exponent
+	log_table = OptimizedField.logarithm
 	build_array(module, 'Field.exponent', byte_t, SymbolicValue(OptimizedField.exponent))
 	build_array(module, 'Field.logarithm', byte_t, SymbolicValue(OptimizedField.logarithm))
 	
 	OptimizedField.exponent = SymbolicValue._ptr_list_uint('Field.exponent', 256)
 	OptimizedField.logarithm = SymbolicValue._ptr_list_uint('Field.logarithm', 256)
 	
-	trees = open('trees.txt', 'w')
+	if debug: trees = open('trees.txt', 'w')
 	
 	field_sum_types = set()
 	orig_field_sum = OptimizedField.sum
@@ -562,47 +563,46 @@ def optimize(Field, Linear, Quadratic, LinearCircuit, QuadraticCircuit):
 	#Field.sum = field_sum_capture
 	OptimizedField.sum = lambda _l: OptimizedField(py_field_sum(SymbolicArray(symbolize(_l)[1], [None], [OptimizedField])))
 	
-	print("optimizing multiplication")
+	if debug: print("optimizing multiplication")
 	body = optimize_expr(symbolize(trace(transform(OptimizedField.__mul__, 'BinaryGalois'), [OptimizedField(SymbolicValue._arg_uint(0)), OptimizedField(SymbolicValue._arg_uint(1))]))[1])
-	print('Field.__mul__', file=trees)
-	body._print_tree(file=trees)
-	print(file=trees)
+	if debug: print('Field.__mul__', file=trees)
+	if debug: body._print_tree(file=trees)
+	if debug: print(file=trees)
 	build_function(module, 'Field.__mul__', [byte_t, byte_t], byte_t, short_t, long_t, body)
 	OptimizedField.__mul__ = lambda _a, _b: OptimizedField(SymbolicValue._fun_uint('Field.__mul__')(symbolize(_a)[1], symbolize(_b)[1]))
 	
-	print("optimizing exponentiation")
+	if debug: print("optimizing exponentiation")
 	body = optimize_expr(symbolize(trace(transform(OptimizedField.__pow__, 'BinaryGalois'), [OptimizedField(SymbolicValue._arg_uint(0)), SymbolicValue._arg_int(1)]))[1])
-	print('Field.__pow__', file=trees)
-	body._print_tree(file=trees)
-	print(file=trees)
+	if debug: print('Field.__pow__', file=trees)
+	if debug: body._print_tree(file=trees)
+	if debug: print(file=trees)
 	build_function(module, 'Field.__pow__', [byte_t, short_t], byte_t, short_t, long_t, body)
 	OptimizedField.__pow__ = lambda _a, _b: OptimizedField(SymbolicValue._fun_uint('Field.__pow__')(symbolize(_a)[1], symbolize(_b)[1]))
 	
-	print("optimizing linear")
+	if debug: print("optimizing linear")
 	py_linear_call = transform(OptimizedLinear.__call__, 'Linear')
 	body = optimize_expr(symbolize(trace(py_linear_call, [OptimizedLinear(SymbolicArray(SymbolicValue._arg_list_uint(0, OptimizedField.field_power), [None], [OptimizedField])), OptimizedField(SymbolicValue._arg_uint(1))]))[1])
-	print('Linear.__call__', file=trees)
-	body._print_tree(file=trees)
-	print(file=trees)
+	if debug: print('Linear.__call__', file=trees)
+	if debug: body._print_tree(file=trees)
+	if debug: print(file=trees)
 	build_function(module, 'Linear.__call__', [ArrayType(byte_t, OptimizedField.field_power).as_pointer(), byte_t], byte_t, short_t, long_t, body)
 	OptimizedLinear.__call__ = lambda _l, _f: OptimizedField(py_linear_call(_l, OptimizedField(symbolize(_f)[1])))
 	
-	print("optimizing quadratic")
+	if debug: print("optimizing quadratic")
 	body = optimize_expr(symbolize(trace(transform(OptimizedQuadratic.__call__, 'Quadratic'), [OptimizedQuadratic(SymbolicArray(SymbolicValue._arg_list_uint(0, OptimizedField.field_power**2), [OptimizedField.field_power, None], [OptimizedLinear, OptimizedField])), OptimizedField(SymbolicValue._arg_uint(1)), OptimizedField(SymbolicValue._arg_uint(2))]))[1])
-	print('Quadratic.__call__', file=trees)
-	body._print_tree(file=trees)
-	print(file=trees)
+	if debug: print('Quadratic.__call__', file=trees)
+	if debug: body._print_tree(file=trees)
+	if debug: print(file=trees)
 	build_function(module, 'Quadratic.__call__', [ArrayType(byte_t, OptimizedField.field_power**2).as_pointer(), byte_t, byte_t], byte_t, short_t, long_t, body)
 	OptimizedQuadratic.__call__ = lambda _q, _f1, _f2: OptimizedField(SymbolicValue._fun_uint('Quadratic.__call__')(symbolize(_q)[1], symbolize(_f1)[1], symbolize(_f2)[1]))
 	
-	print("optimizing linear circuit")
+	if debug: print("optimizing linear circuit")
 	linearcircuit_call_types = set()
 	orig_linearcircuit_call = OptimizedLinearCircuit.__call__
 	py_linearcircuit_call = OptimizedLinearCircuit.__call__
 	def linearcircuit_call_capture(lc, iv):
 		if not isinstance(lc, SymbolicValue):
 			lc = symbolize(lc)[1]
-			#lc = list(chain.from_iterable((SymbolicValue(lc[_o, _i].linear_coefficient(_k) for _k in range(OptimizedField.field_power))) for _o, _i in product(range(lc.output_size), range(lc.input_size))))
 		
 		if not isinstance(iv, SymbolicValue):
 			iv = symbolize(iv)[1]
@@ -618,7 +618,7 @@ def optimize(Field, Linear, Quadratic, LinearCircuit, QuadraticCircuit):
 		return SymbolicValue._fun_uint(f'LinearCircuit.__call__{len_ov}_{len_iv}')(lc, iv)
 	OptimizedLinearCircuit.__call__ = linearcircuit_call_capture
 	
-	for output_size, input_size in [(4, 12), (8, 12), (8, 20), (12, 20)]:
+	for output_size, input_size in linearcircuit_call_types:
 		lc = OptimizedLinearCircuit(SymbolicTable(SymbolicValue._arg_list_uint(0, OptimizedField.field_power * output_size * input_size), [output_size, input_size], [OptimizedField.field_power, None], [OptimizedLinear, OptimizedField]))
 		iv = Vector(SymbolicArray(SymbolicValue._arg_list_uint(1, input_size), [None], [OptimizedField]))
 		tr = lc(iv)
@@ -649,7 +649,7 @@ def optimize(Field, Linear, Quadratic, LinearCircuit, QuadraticCircuit):
 		return SymbolicValue._fun_uint(f'QuadraticCircuit.__call__{len_ov}_{len_iv}')(qc, iv)
 	OptimizedQuadraticCircuit.__call__ = quadraticcircuit_call_capture
 	
-	for output_size, input_size in [(8, 12), (4, 12), (1, 17), (16, 17)]:
+	for output_size, input_size in quadraticcircuit_call_types:
 		qc = OptimizedQuadraticCircuit(SymbolicTable(SymbolicValue._arg_list_uint(0, OptimizedField.field_power**2 * output_size * input_size**2), [output_size, input_size, input_size], [OptimizedField.field_power, OptimizedField.field_power, None], [OptimizedQuadratic, OptimizedLinear, OptimizedField]))
 		iv = Vector(SymbolicArray(SymbolicValue._arg_list_uint(1, input_size), [None], [OptimizedField]))
 		tr = qc(iv)
@@ -672,9 +672,9 @@ def optimize(Field, Linear, Quadratic, LinearCircuit, QuadraticCircuit):
 		assert lc.input_size == input_size
 		iv = Vector(SymbolicArray(SymbolicValue._arg_list_uint(1, input_size), [None], [OptimizedField]))
 		body = optimize_expr(symbolize(trace(transform(py_linearcircuit_call, 'LinearCircuit'), [lc, iv]))[1])
-		print(f'LinearCircuit.__call__{output_size}_{input_size}', file=trees)
-		body._print_tree(file=trees)
-		print(file=trees)
+		if debug: print(f'LinearCircuit.__call__{output_size}_{input_size}', file=trees)
+		if debug: body._print_tree(file=trees)
+		if debug: print(file=trees)
 		build_function(module, f'LinearCircuit.__call__{output_size}_{input_size}', [ArrayType(byte_t, input_size * output_size * OptimizedField.field_power).as_pointer(), ArrayType(byte_t, input_size).as_pointer(), ArrayType(byte_t, output_size).as_pointer()], ArrayType(byte_t, output_size).as_pointer(), short_t, long_t, body)
 	
 	for output_size, input_size in quadraticcircuit_call_types:
@@ -683,21 +683,22 @@ def optimize(Field, Linear, Quadratic, LinearCircuit, QuadraticCircuit):
 		assert qc.input_size == input_size
 		iv = Vector(SymbolicArray(SymbolicValue._arg_list_uint(1, input_size), [None], [OptimizedField]))
 		body = optimize_expr(symbolize(trace(transform(py_quadraticcircuit_call, 'QuadraticCircuit'), [qc, iv]))[1])
-		print(f'QuadraticCircuit.__call__{output_size}_{input_size}', file=trees)
-		body._print_tree(file=trees)
-		print(file=trees)
+		if debug: print(f'QuadraticCircuit.__call__{output_size}_{input_size}', file=trees)
+		if debug: body._print_tree(file=trees)
+		if debug: print(file=trees)
 		build_function(module, f'QuadraticCircuit.__call__{output_size}_{input_size}', [ArrayType(byte_t, input_size**2 * output_size * OptimizedField.field_power**2).as_pointer(), ArrayType(byte_t, input_size).as_pointer(), ArrayType(byte_t, output_size).as_pointer()], ArrayType(byte_t, output_size).as_pointer(), short_t, long_t, body)
 	
-	trees.close()
+	if debug: trees.close()
 	
-	with open('module.ll', 'w') as f:
-		print(module, file=f)
+	if debug:
+		with open('module.ll', 'w') as f:
+			print(module, file=f)
 	
-	print("compiling...")
+	if debug: print("compiling...")
 	engine = create_mcjit_compiler(parse_assembly(str(module)), Target.from_triple(get_process_triple()).create_target_machine())
 	engine.finalize_object()
 	engine.run_static_constructors()
-	print(" ready")
+	if debug: print(" ready")
 	
 	'''
 	def field_sum_bridge(l):
@@ -773,6 +774,9 @@ def optimize(Field, Linear, Quadratic, LinearCircuit, QuadraticCircuit):
 		quadraticcircuit_call(qc_array_t.from_buffer(qc.serialize()), iv_array_t.from_buffer(iv.serialize()), ov_array_t.from_buffer(ov.serialize()))
 		return ov
 	OptimizedQuadraticCircuit.__call__ = quadraticcircuit_call_bridge
+
+	OptimizedField.exponent = exp_table
+	OptimizedField.logarithm = log_table
 	
 	# Keep references to compiled code.
 	OptimizedField.__module = OptimizedLinear.__module = OptimizedQuadratic.__module = OptimizedLinearCircuit.__module = OptimizedQuadraticCircuit.__module = module
@@ -811,7 +815,7 @@ if __name__ == '__main__':
 	test_a = (Field.sum(test_vec_1), test_vec_2[0] * test_vec_2[1], test_vec_3[0] ** test_vec_3[1], test_vec_4[0](test_vec_4[1]), test_vec_5[0](test_vec_5[1], test_vec_5[2]))
 	#print(Field.sum(test_vec_1), test_vec_2[0] * test_vec_2[1], test_vec_3[0] ** test_vec_3[1], test_vec_4[0](test_vec_4[1]))
 	
-	FieldO, LinearO, QuadraticO, LinearCircuitO, QuadraticCircuitO = optimize(Field, Linear, Quadratic, LinearCircuit, QuadraticCircuit)
+	FieldO, LinearO, QuadraticO, LinearCircuitO, QuadraticCircuitO = optimize(Field, Linear, Quadratic, LinearCircuit, QuadraticCircuit, linearcircuit_call_types=[(4, 12), (8, 12), (8, 20), (12, 20)], quadraticcircuit_call_types=[(8, 12), (4, 12), (1, 17), (16, 17)], debug=True)
 	
 	test_b = (Field.sum(test_vec_1), test_vec_2[0] * test_vec_2[1], test_vec_3[0] ** test_vec_3[1], test_vec_4[0](test_vec_4[1]), test_vec_5[0](test_vec_5[1], test_vec_5[2]))
 	

@@ -395,7 +395,9 @@ class Vector:
 		yield from enumerate(self.__values)
 	
 	def __getitem__(self, index):
-		if index is Ellipsis or (hasattr(index, 'start') and hasattr(index, 'stop') and hasattr(index, 'step')):
+		if index is Ellipsis:
+			return self.__class__(self.Array(iter(self), [None], [self.Field]))
+		elif hasattr(index, 'start') and hasattr(index, 'stop') and hasattr(index, 'step'):
 			return self.__class__(self.__values[index])
 		else:
 			return self.__values[index]
