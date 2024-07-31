@@ -1,6 +1,9 @@
 #!/usr/bin/python3
 
 
+"Compiler of symbolic algorithm representation to LLVM representation. Provides optimized implementations of circuits and automata that are orders of magnitude faster than raw Python script."
+
+
 __all__ = 'initialize_llvm', 'optimize'
 
 
@@ -369,7 +372,7 @@ def build_function(module, name, args_t, return_t, int_t, size_t, expr):
 					if args[0].constant != 2:
 						raise NotImplementedError("Only power of 2 is supported.")
 				except AttributeError:
-					raise NotImplementedError("Only constant base powe is supported.")
+					raise NotImplementedError("Only constant base power is supported.")
 				
 				return builder.shl(args[0].type(1), builder.trunc(args[1], args[0].type)), builder # power is shift left
 			
@@ -795,7 +798,7 @@ if __name__ == '__main__':
 	from random import randrange
 	
 	from fields import Galois
-	from linear import Linear, Quadratic, Vector
+	from algebra import Linear, Quadratic, Vector
 	from machines import Automaton, LinearCircuit, QuadraticCircuit
 	from memory import Array, Table
 	

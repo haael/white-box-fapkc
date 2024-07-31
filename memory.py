@@ -361,7 +361,7 @@ if __debug__ and __name__ == '__main__':
 	
 	from random import randrange
 	from fields import Galois
-	from linear import *
+	from algebra import *
 	from machines import *
 	
 	from numpy import array, uint8, fromiter, bitwise_xor

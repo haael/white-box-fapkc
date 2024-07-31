@@ -1,6 +1,9 @@
 #!/usr/bin/python3
 
 
+"Tracing simple Python algorithms, producing symbolic representation that can be optimized."
+
+
 __all__ = 'SymbolicValue', 'SymbolicArray', 'SymbolicTable', 'transform', 'optimize_expr', 'symbolize', 'trace'
 
 

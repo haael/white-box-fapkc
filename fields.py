@@ -1,6 +1,9 @@
 #!/usr/bin/python3
 
 
+"Implementation of finite field arithmetics, incl. modular fields, Galois fields, binary field optimization (xor in place of addition) and fast multiplication algorithm. Also includes polynomial class with Euclidea division algorithm."
+
+
 __all__ = 'Field', 'Binary', 'Polynomial', 'gcd', 'Galois'
 
 
@@ -50,6 +53,14 @@ class Field:
 			yield cls(*values)
 	
 	@classmethod
+	def zero(cls):
+		return cls(0)
+	
+	@classmethod
+	def one(cls):
+		return cls(1)
+	
+	@classmethod
 	def random(cls, randbelow):
 		return cls(randbelow(cls.field_size))
 	
@@ -59,7 +70,7 @@ class Field:
 	
 	@classmethod
 	def sum(cls, values):
-		return sum(values, cls(0))
+		return sum(values, cls.zero())
 	
 	def __init__(self, *values):
 		if len(values) == 1:
@@ -140,7 +151,7 @@ class Field:
 		if not self:
 			return self
 		
-		one = self.__class__(1)
+		one = self.one()
 		for r in self.domain():
 			if r * other == self:
 				return r
@@ -151,14 +162,14 @@ class Field:
 		if n >= 0:
 			if n == 0 and not self:
 				raise ArithmeticError("Field zero to zero power.")
-			r = self.__class__(1)
+			r = self.one()
 			for m in range(n):
 				r *= self
 			return r
 		else:
 			if not self:
 				raise ArithmeticError("Field zero to zero negative power.")
-			r = self.__class__(1)
+			r = self.one()
 			b = r / self
 			for m in range(-n):
 				r *= b
@@ -172,7 +183,7 @@ class Binary(Field):
 	
 	@classmethod
 	def random_nonzero(cls, randbelow):
-		return cls(1)
+		return cls.one() # one is the only nonzero value
 	
 	@property
 	def __value(self):
@@ -257,7 +268,7 @@ class FastGalois(Field):
 		return self.exponent[(self.logarithm[self] * n) % (self.field_size - 1)] # assumes Python semantics of modulus od negative values
 
 
-class BinaryGalois:
+class BinaryGalois: # does not inherit from `Field` class, every method must be reimplemented
 	"Fast binary Galois field. Needs `field_power` attribute determining its size and irreducible polynomial `modulus` of the right degree."
 	
 	@classmethod
@@ -283,6 +294,14 @@ class BinaryGalois:
 	def domain(cls):
 		for value in range(cls.field_size):
 			yield cls(value)
+	
+	@classmethod
+	def zero(cls):
+		return cls(0)
+	
+	@classmethod
+	def one(cls):
+		return cls(1)
 	
 	@classmethod
 	def random(cls, randbelow):
@@ -395,14 +414,17 @@ class BinaryGalois:
 		if n >= 0:
 			base = self
 		else:
-			base = self.__class__(1) / self
+			base = self.one() / self
 		
 		field_size = self.field_size
-		return self.__class__(self.exponent[(self.logarithm[base.__value] * abs(n)) % (field_size - 1)]) # assumes Python semantics of modulus od negative values
+		return self.__class__(self.exponent[(self.logarithm[base.__value] * abs(n)) % (field_size - 1)]) # assumes Python semantics of modulus of negative values
 
 
 class Polynomial:
-	"Univariate polynomial ring. Needs `Field` class attribute that may be a finite field or `Fraction`. Constructor accepts coefficients starting from the highest power."
+	"""
+	Univariate polynomial ring. Needs `Field` class attribute that may be a finite field or `Fraction`. Constructor accepts coefficients starting from the highest power.
+	This is an "abstract" polynomial, meaning all formal powers of the X element are unequal. It is not assumed that there exists some N so that P**N = P.
+	"""
 	
 	@classmethod
 	def domain(cls, degree, base=None):
@@ -411,7 +433,20 @@ class Polynomial:
 		
 		for values in product(range(base), repeat=degree):
 			yield cls(*values)
+
+	@classmethod
+	def zero(cls):
+		return cls()
 	
+	@classmethod
+	def one(cls):
+		return cls(cls.Field.one())
+	
+	@classmethod
+	def ident(cls):
+		return cls(cls.Field.one(), cls.Field.zero())
+	
+	'''
 	@classmethod
 	def random(cls, degree, randbelow):
 		return cls(randbelow(cls.Field.field_size) for _n in range(degree))
@@ -446,6 +481,7 @@ class Polynomial:
 			values.append(f)
 		
 		return cls(values)
+	'''
 	
 	def __init__(self, *values):
 		if len(values) == 1:
@@ -464,12 +500,10 @@ class Polynomial:
 			
 			try:
 				r, m = divmod(value, self.Field.field_size)
-				#print(value, r, m)
 				v = [m]
 				while r:
 					r, m = divmod(r, self.Field.field_size)
 					v.append(m)
-				#print(v)
 				self.__values = {_n:self.Field(_v) for (_n, _v) in enumerate(v) if _v}
 				return
 			except (AttributeError, TypeError):
@@ -485,7 +519,7 @@ class Polynomial:
 		if n in values:
 			return values[n]
 		else:
-			return self.Field(0)
+			return self.Field.zero()
 	
 	def __iter__(self):
 		try:
@@ -539,7 +573,7 @@ class Polynomial:
 		return hash((self.__class__.__name__, tuple(self.keys()), tuple(self.items())))
 	
 	def __call__(self, x):
-		r = self.Field(0)
+		r = self.Field.zero()
 		for n, v in self.items():
 			if n == 0:
 				r += v
@@ -574,7 +608,7 @@ class Polynomial:
 		if not other:
 			return other
 		
-		rvalues = defaultdict(lambda: self.Field(0))
+		rvalues = defaultdict(lambda: self.Field.zero())
 		for m, v in self.items():
 			for n, w in other.items():
 				rvalues[m + n] += v * w
@@ -720,8 +754,8 @@ def Galois(name, prime, coefficients):
 
 if __debug__:
 	def ring_axioms(x, y, z):
-		zero = x.__class__(0)
-		one = x.__class__(1)
+		zero = x.zero()
+		one = x.one()
 		
 		assert not zero
 		assert one
@@ -745,8 +779,8 @@ if __debug__:
 		assert x * (y + z) == x * y + x * z
 	
 	def field_axioms(x, y, z):
-		zero = x.__class__(0)
-		one = x.__class__(1)
+		zero = x.zero()
+		one = x.one()
 		
 		ring_axioms(x, y, z)
 		
@@ -777,8 +811,8 @@ if __debug__:
 				x ** m == zero
 	
 	def polynomial_axioms(x, y, z):
-		zero = x.__class__(0)
-		one = x.__class__(1)
+		zero = x.zero()
+		one = x.one()
 		
 		try:
 			zero.degree
@@ -825,6 +859,8 @@ if __debug__ and __name__ == '__main__':
 	
 	class PolynomialRational(Polynomial):
 		Field = Fraction
+		Field.zero = lambda: Fraction(0)
+		Field.one = lambda: Fraction(1)
 	
 	for x, y, z in product(PolynomialRational.domain(2, 3), PolynomialRational.domain(2, 3), PolynomialRational.domain(2, 3)):
 		polynomial_axioms(x, y, z)

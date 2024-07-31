@@ -1,13 +1,16 @@
 #!/usr/bin/python3
 
 
+"Computational 'machines', i.e. circuits and automata that allow for fast calculations of large amounts of elements of finite fields."
+
+
 __all__ = 'LinearCircuit', 'QuadraticCircuit', 'Automaton'
 
 
 from itertools import product, chain
 from collections import defaultdict
 
-from linear import *
+from algebra import *
 from utils import superscript, cached, table_fallback
 
 
@@ -337,147 +340,6 @@ class Automaton:
 		state_transition = (self.state_transition @ other.out_transition) | other.state_transition
 		init_state = other.state_transition | self.state_transition
 		return self.__class__(out_transition, state_transition, init_state)
-
-
-
-'''
-	
-	P @ m = Q @ o
-	M @ i = N @ m
-	
-	N` @ P @ m = P @ N @ m
-	N` @ P @ m = N` @ Q @ o
-	P  @ M @ i = N` @ Q @ o
-	
-	N  @ P @ m = P` @ N @ m	
-	P` @ M @ i = P` @ N @ m
-	P` @ M @ i = N  @ Q @ o
-	
-	
-	P @ m = (a * [0] + b * [1]) @ o
-	#P @ m = (1 * [0] + z * [1]) @ o
-	
-	(c * [0] + d * [1]) @ P @ m = (c * [0] + d * [1]) @ (a * [0] + b * [1]) @ o
-	(c * [0] + d * [1]) @ P @ m = (c * ((a * [0] + b * [1])) + d * ((a * [1] + b * [2]))) @ o
-	(c * [0] + d * [1]) @ P @ m = (c * a * [0] + c * b * [1] + d * a * [1] + d * b * [2]) @ o
-
-
-	(a * [0] + b * [1] + c * [2]) * (d * [0] + e * [1] + f * [2]) =
-	= (a * d * [0] + a * e * [1] + a * f * [2]) + (b * d * [1] + b * e * [2] + b * f * [3]) + (c * d * [2] + c * e * [3] + c * f * [4]) =
-	= a * d * [0] + (a * e + b * d) * [1] + (a * f + b * e + c * d) * [2] + 
-
-
-	c * b + d * a = 1
-	
-	
-	sum(M[k](i[k])) = sum(N[l](o[l]))
-	
-	M[0] @ i[0] + M[1] @ i[1] + M[2] @ i[2] + M[3] @ i[3] = N[0] @ o[0] + N[1] @ o[1] + N[2] @ o[2] + N[3] @ o[3]
-	M[0] @ i[1] + M[1] @ i[2] + M[2] @ i[3] + M[3] @ i[4] = N[0] @ o[1] + N[1] @ o[2] + N[2] @ o[3] + N[3] @ o[4]
-	M[0] @ i[2] + M[1] @ i[3] + M[2] @ i[4] + M[3] @ i[5] = N[0] @ o[2] + N[1] @ o[3] + N[2] @ o[4] + N[3] @ o[5]
-	M[0] @ i[3] + M[1] @ i[4] + M[2] @ i[5] + M[3] @ i[6] = N[0] @ o[3] + N[1] @ o[4] + N[2] @ o[5] + N[3] @ o[6]
-	
-	M[0] @ i[0] + M[1] @ i[1] + M[2] @ i[2] + M[3] @ i[3] = sum(Q[0, k] @ N[k]) @ o[0] + sum(Q[1, k] @ N[k]) @ o[1] + sum(Q[2, k] @ N[k]) @ o[2] + sum(Q[3, k] @ N[k]) @ o[3]
-	M[0] @ i[1] + M[1] @ i[2] + M[2] @ i[3] + M[3] @ i[4] = sum(Q[0, k] @ N[k]) @ o[1] + sum(Q[1, k] @ N[k]) @ o[2] + sum(Q[2, k] @ N[k]) @ o[3] + sum(Q[3, k] @ N[k]) @ o[4]
-	M[0] @ i[2] + M[1] @ i[3] + M[2] @ i[4] + M[3] @ i[5] = sum(Q[0, k] @ N[k]) @ o[2] + sum(Q[1, k] @ N[k]) @ o[3] + sum(Q[2, k] @ N[k]) @ o[4] + sum(Q[3, k] @ N[k]) @ o[5]
-	M[0] @ i[3] + M[1] @ i[4] + M[2] @ i[5] + M[3] @ i[6] = sum(Q[0, k] @ N[k]) @ o[3] + sum(Q[1, k] @ N[k]) @ o[4] + sum(Q[2, k] @ N[k]) @ o[5] + sum(Q[3, k] @ N[k]) @ o[6]
-	
-	QQ[x] = sum(Q[x, z] @ N[z])
-	
-	1 = sum(Q[0, z] @ N[z])
-	sum(Q[ya, z] @ N[z]) = sum(Q[yb, z] @ N[z]))
-	
-	QQ[0] = 1
-	
-
-
-
-	F
-
-
-
-
-	F[x, y] @ i[x] @ i[y]
-	
-	
-	F[0, 0] @ i[0] @ i[0] + F[0, 1] @ i[0] @ i[1] + F[1, 0] @ i[1] @ i[0] + F[1, 1] @ i[1] @ i[1]
-	F[0, 0] @ i[1] @ i[1] + F[0, 1] @ i[1] @ i[2] + F[1, 0] @ i[2] @ i[1] + F[1, 1] @ i[2] @ i[2]
-	
-	i[0]**128 * i[0]**128
-	i[0]
-
-	
-	0 = i[0] + o[0] + G(i[1:], o[1:])
-	0 = sqr(i[0]) + sqr(o[0]) + F(i[1:], o[1:])
-	
-	sqr(o[0]) = -sqr(i[0]) - F(i[1:], o[1:])
-	sqr(i[0]) = -sqr(o[0]) - F(i[1:], o[1:])
-	
-	x**256 = x
-	x**128**2 = x
-	x**128 = sqrt(x)
-
-
-
-	x**7 = x**6 * x = (x**3)**2 * x = (x**2 * x)**2 * x
-	
-	x
-	x**3
-	x**7
-	
-	B @ X @ A**-1
-	C @ Y @ B**-1
-	A @ Z @ C**-1
-	
-	A
-	A @ F @ A**-1
-	D @ A**-1
-	
-	
-	((k[i] - k[0]) * f(x)) + x
-	
-
-	sum(M[k](i[k])) = sum(N[l](j[l]))
-	sum(O[k](j[k])) = sum(P[l](o[l]))
-	
-	(R·N)·j = O·j
-	
-	def __matmul__(self, other):
-		mid[i] = other.W * in_[i] + sum(other.A[m] * in_[m + i] for m in range(1, delay))
-		out[0] = self.W * mid[0] + sum(self.A[n] * mid[n] for n in range(1, delay))
-
-		out[0] = self.W * mid[0] + sum(self.A[n] * (other.W * in_[n] + sum(other.A[m] * in_[m + n] for m in range(1, delay))) for n in range(1, delay))
-
-		out[0] = self.W * mid[0] + sum((self.A[n] * other.W * in_[n] + self.A[n] * sum(other.A[m] * in_[m + n] for m in range(1, delay))) for n in range(1, delay))
-		out[0] = self.W * mid[0] + sum(self.A[n] * other.W * in_[n] for n in range(1, delay)) + sum(self.A[n] * sum(other.A[m] * in_[m + n] for m in range(1, delay)) for n in range(1, delay))
-
-		AA[k] = sum(self.A[k] * other.A[k - l] for l in range(1, delay))
-
-		out[0] = self.W * mid[0] + sum(self.A[n] * other.W * in_[n] for n in range(1, delay)) + sum(AA[n] * in_[n] for n in range(1, delay))
-
-		out = (self.W @ other.W)(in_) + (self.A * other.W)(in_state) + (self.W * other.A)(in_state) + (self.A @ other.A)(in_state)
-
-		W = self.W @ other.W
-		A = self.A * other.W + self.W * other.A + self.A @ other.A
-		B = self.B
-
-		mid[i] = other.W * in_[i] + sum(other.A[m] * in_[m + i] for m in range(1, delay)) + sum(other.B[m] * mid[m + i] for m in range(1, delay))
-		mid[i] = inverse.W * out[i] + sum(inverse.A[m] * out[m + i] for m in range(1, delay)) + sum(inverse.B[m] * mid[m + i] for m in range(1, delay))
-		other.W * in_[i] + sum(other.A[m] * in_[m + i] for m in range(1, delay)) - inverse.W * out[i] - sum(inverse.A[m] * out[m + i] for m in range(1, delay)) = sum(inverse.B[m] * mid[m + i] for m in range(1, delay)) - sum(other.B[m] * mid[m + i] for m in range(1, delay))
-		other.W * in_[i] + sum(other.A[m] * in_[m + i] for m in range(1, delay)) - inverse.W * out[i] - sum(inverse.A[m] * out[m + i] for m in range(1, delay)) = sum(inverse.B[m] * mid[m + i] - other.B[m] * mid[m + i] for m in range(1, delay))
-		other.W * in_[i] + sum(other.A[m] * in_[m + i] for m in range(1, delay)) - inverse.W * out[i] - sum(inverse.A[m] * out[m + i] for m in range(1, delay)) = sum((inverse.B[m] - other.B[m]) * mid[m + i] for m in range(1, delay))
-
-
-		W = self.W @ other.W + self.A @ (inverse.B - other.B).invert() @ other.W
-		A = self.A * other.W + self.W * other.A + self.A @ other.A + self.A @ (self.B.invert() - other.B).invert() @ other.A
-		B = self.B - self.A @ (self.B.invert() - other.B).invert() @ self.A.invert()
-
-		self.A @ (inverse.B - other.B).invert() @ inverse.W = 0
-
-
-		out[0] = self.W * mid[0]  + sum(self.A[n]  * mid[n] for n in range(1, delay))     + sum(self.B[n] * out[n] for n in range(1, delay))
-'''
-
 
 
 if __debug__ and __name__ == '__main__':

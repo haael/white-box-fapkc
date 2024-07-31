@@ -1,10 +1,13 @@
 #!/usr/bin/python3
 
 
+"Implementations of some composable operations over finite fields: vectors, matrices, quasilinear functions and quasiquadratic functions."
+
+
 __all__ = 'Linear', 'Quadratic', 'Vector', 'Matrix'
 
 
-from itertools import zip_longest, product, chain
+from itertools import zip_longest, product, chain, permutations
 from math import sqrt, ceil
 from collections import defaultdict
 
@@ -12,7 +15,7 @@ from utils import superscript, cached, array_fallback, table_fallback
 
 
 class Linear:
-	"Additive (uniform) function of single argument. `F(x + y) = F(x) + F(y); F(0) = 0`. The name 'linear' comes from analogy to matrices."
+	"Quasilinear function of single argument. `F(x + y) = F(x) + F(y); F(0) = 0`. The name 'linear' comes from analogy to matrices."
 	
 	@property
 	@cached
@@ -29,21 +32,29 @@ class Linear:
 	def Array(self):
 		return array_fallback(self.__f.__class__)
 	
+	def zero_element(self):
+		return self.Field.zero()
+	
+	def one_element(self):
+		return self.Field.one()
+	
 	@classmethod
 	def zero(cls, Array, Field):
 		nArray = array_fallback(Array)		
-		return cls(nArray((Field(0) for _n in range(Field.field_power)), [None], [Field]))
+		return cls(nArray((Field.zero() for _n in range(Field.field_power)), [None], [Field]))
 	
 	@classmethod
 	def one(cls, Array, Field):
 		nArray = array_fallback(Array)		
-		return cls(nArray(chain([Field(1)], (Field(0) for _n in range(Field.field_power - 1))), [None], [Field]))
+		return cls(nArray(chain([Field.one()], (Field.zero() for _n in range(Field.field_power - 1))), [None], [Field]))
+	
+	ident = one
 	
 	@classmethod
 	def factor(cls, value, Array):
 		nArray = array_fallback(Array)		
 		Field = value.__class__
-		return cls(nArray(chain([value], (Field(0) for _n in range(Field.field_power - 1))), [None], [Field]))
+		return cls(nArray(chain([value], (Field.zero() for _n in range(Field.field_power - 1))), [None], [Field]))
 	
 	@classmethod
 	def random(cls, Array, Field, randbelow):
@@ -69,6 +80,7 @@ class Linear:
 		
 		return cls(nArray(f, [None], [Field]))
 	
+	'''
 	@classmethod
 	def random_factor(cls, Array, Field, randbelow):
 		return cls.factor(Field.random(randbelow), Array)
@@ -76,6 +88,7 @@ class Linear:
 	@classmethod
 	def random_factor_nonzero(cls, Array, Field, randbelow):
 		return cls.factor(Field.random_nonzero(randbelow), Array)
+	'''
 	
 	def __init__(self, coefficients):
 		"f[0] * x + f[1] * x**p + f[2] * x**(p ** 2) + ... + f[k] * x**(p ** k)"
@@ -118,23 +131,25 @@ class Linear:
 		f = self.__f
 		return Field.sum(f[_n] * x**(p ** _n) for _n in range(n))
 	
-	#def left_inverse(self):
-	#	'''
-	#	sum(f[n] * x**(p ** n) for n in P) @ sum(g[m] * x**(p ** m) for m in P) = x
-	#	sum(f[n] * sum(g[m] * x**(p ** m))**(p ** n)) = x
-	#	sum(f[n] * sum(g[m]**(p ** n) * x**(p ** m)**(p ** n))) = x
-	#	
-	#	sum(sum(f[n] * g[m]**(p ** n) * x**(p ** (m + n)))) = x
-
-	#	sum(f[0] * g[m]) * x = x
-	#	sum(f[n] * g[0]**(p ** n)) * x = x
-
-
-	#
-	#	sum(f[n] * g[-n]**(p ** n)) = 1
-	#	sum(f[n] * g[k-n]**(p ** n)) = 0
-	#
-	#	'''
+	def inverse(self, Table=dict):
+		size = self.Field.field_power
+		mat = Matrix.zero(size, size, Table, self.Array, self.Field)
+		
+		for m, n in product(range(size), range(size)):
+			mat[n, m] = self.__f[(m - n) % size]**(self.Field.field_base ** n)
+		w = mat.determinant()
+		
+		result = []
+		for n in range(size):
+			for m in range(size):
+				mat[n, m] = self.Field.one() if m == 0 else self.Field.zero()
+			
+			result.append(mat.determinant() / w)
+			
+			for m in range(size):
+				mat[n, m] = self.__f[(m - n) % size]**(self.Field.field_base ** n)
+		
+		return self.__class__(self.Array(result, [size], [self.Field]))
 	
 	def __add__(self, other):
 		try:
@@ -147,6 +162,9 @@ class Linear:
 			return self.__class__(self.Array((_a - _b for (_a, _b) in zip(self.__f, other.__f)), [None], [self.Field]))
 		except AttributeError:
 			return NotImplemented
+	
+	def __neg__(self):
+		return self.__class__(self.Array((-_a for _a in self.__f), [None], [self.Field]))
 	
 	def __mul__(self, other):
 		try:
@@ -172,7 +190,7 @@ class Linear:
 	
 	def __matmul__(self, other):
 		try:
-			f = [self.Field(0)] * self.Field.field_power
+			f = [self.Field.zero()] * self.Field.field_power
 			
 			for m in range(self.Field.field_power):
 				for n in range(other.Field.field_power):
@@ -182,10 +200,16 @@ class Linear:
 		
 		except AttributeError:
 			return NotImplemented
+	
+	def __eq__(self, other):
+		try:
+			return self.__f == other.__f
+		except AttributeError:
+			return NotImplemented
 
 
 class Quadratic:
-	"Class of functions of 2 variables, containing the product `f(x, y) = x * y` and closed over linear transformations."
+	"Class of functions of 2 variables, containing the product `f(x, y) = x * y` and closed over quasilinear transformations."
 	
 	@property
 	@cached
@@ -221,6 +245,8 @@ class Quadratic:
 	def random(cls, Array, Linear, Field, randbelow):
 		nArray = array_fallback(Array)
 		return cls(nArray((Linear.random(Array, Field, randbelow) for _i in range(Field.field_power)), [Field.field_power, None], [Linear, Field]))
+	
+	# TODO: ident, random_nonzero
 	
 	def __init__(self, coefficients):
 		"f[0](x * y) + f[1](x * y**p) + f[2](x * y ** (p ** 2)) + f[3](x * y ** (p ** 3)) + ... + f[k](x * y ** (p ** k))"
@@ -290,7 +316,7 @@ class Quadratic:
 		m = self.Field.field_power
 		p = self.Field.field_base
 		
-		d = defaultdict(lambda: self.Field(0))
+		d = defaultdict(lambda: self.Field.zero())
 		for (i, j, k, l) in product(range(m), repeat=4):
 			d[(i + l) % m, (j + k - i) % m] += self.quadratic_coefficient(k, l) * b.linear_coefficient(i)**(p**l) * c.linear_coefficient(j)**(p ** ((k + l) % m))
 		
@@ -304,6 +330,12 @@ class Quadratic:
 		"Composition of quasilinear operation with quadratic operation. `(l @ q)(x, y) = l(q(x, y))`"
 		
 		return self.__class__(self.Array((other @ _f for _f in self.__f), [self.Field.field_power, None], [self.Linear, self.Field]))
+	
+	def __eq__(self, other):
+		try:
+			return self.__f == other.__f
+		except AttributeError:
+			return NotImplemented
 
 
 class Vector:
@@ -319,7 +351,11 @@ class Vector:
 	
 	@cached
 	def zero_element(self):
-		return self.Field(0)
+		return self.Field.zero()
+	
+	@cached
+	def one_element(self):
+		return self.Field.one()
 	
 	@classmethod
 	def random(cls, length, Array, Field, randbelow):
@@ -348,7 +384,7 @@ class Vector:
 	@classmethod
 	def zero(cls, length, Array, Field):
 		nArray = array_fallback(Array)
-		return cls(nArray((Field(0) for _n in range(length)), [None], [Field]))
+		return cls(nArray((Field.zero() for _n in range(length)), [None], [Field]))
 	
 	def __init__(self, values):
 		try:
@@ -497,7 +533,11 @@ class Matrix:
 	
 	@cached
 	def zero_element(self):
-		return self.Field(0)
+		return self.Field.zero()
+	
+	@cached
+	def one_element(self):
+		return self.Field.one()
 	
 	@classmethod
 	def random(cls, height, width, Table, Array, Field, randbelow):
@@ -507,14 +547,16 @@ class Matrix:
 	@classmethod
 	def zero(cls, height, width, Table, Array, Field):
 		nTable = table_fallback(Table)
-		return cls(nTable((((_m, _n), Field(0)) for (_m, _n) in product(range(height), range(width))), [height, width], [None], [Field], Array=Array))
+		return cls(nTable((((_m, _n), Field.zero()) for (_m, _n) in product(range(height), range(width))), [height, width], [None], [Field], Array=Array))
 	
 	@classmethod
 	def one(cls, height, width, Table, Array, Field):
 		if height != width:
 			raise ValueError("Unit matrix height must be equal to width.")
 		nTable = table_fallback(Table)
-		return cls(nTable((((_m, _n), Field(1 if _m == _n else 0)) for (_m, _n) in product(range(height), range(width))), [height, width], [None], [Field], Array=Array))
+		return cls(nTable((((_m, _n), (Field.one() if _m == _n else Field.zero())) for (_m, _n) in product(range(height), range(width))), [height, width], [None], [Field], Array=Array))
+	
+	ident = one
 	
 	def __init__(self, values):		
 		try:
@@ -559,6 +601,13 @@ class Matrix:
 		except ValueError:
 			raise IndexError
 		return self.__values[m, n]
+	
+	def __setitem__(self, index, value):
+		try:
+			m, n = index
+		except ValueError:
+			raise IndexError
+		self.__values[m, n] = value
 	
 	def __eq__(self, other):
 		try:
@@ -617,60 +666,41 @@ class Matrix:
 			return NotImplemented
 	
 	def inverse(self):
-		# https://www.geeksforgeeks.org/doolittle-algorithm-lu-decomposition/
+		if self.matrix_width != self.matrix_height:
+			raise ValueError
 		
-		def cached(f):
-			c = {}
-			def g(i, j):
-				if (i, j) in c:
-					return c[i, j]
-				else:
-					y = f(i, j)
-					c[i, j] = y
-					return y
-			return g
+		l, u, perm = self.__ldup()
 		
-		@cached
-		def u(i, j):
-			if i > j:
-				return self.zero_element() 
-			elif i == 0:
-				return self[i, j]
-			else:
-				return self[i, j] - self.Field.sum(l(i, k) @ u(k, j) for k in range(i))
-		
-		@cached
-		def l(i, j):
-			if i < j:
-				return self.zero_element() 
-			elif j == 0:
-				return self[i, j] @ u(j, j)**-1
-			else:
-				return (self[i, j] - self.Field.sum(l(i, k) @ u(k, j) for k in range(j))) @ u(j, j)**-1
-		
-		L_less_1 = self.__class__(self.Table((((i, j), self.zero_element() if i == j else l(i, j)) for (i, j) in self.keys()), [self.matrix_height, self.matrix_width], [None], [self.Field], Array=self.Array))
-		D_inv = self.__class__(self.Table((((i, j), u(i, j)**-1 if i == j else self.zero_element()) for (i, j) in self.keys()), [self.matrix_height, self.matrix_width], [None], [self.Field], Array=self.Array))
-		U_less_1 = self.__class__(self.Table((((i, j), self.zero_element() if i == j else u(i, j) @ u(i, i)**-1) for (i, j) in self.keys()), [self.matrix_height, self.matrix_width], [None], [self.Field], Array=self.Array))
+		while True:
+			try:
+				L_less_1 = self.__class__(self.Table((((i, j), self.zero_element() if i == j else l(i, j)) for (i, j) in self.keys()), [self.matrix_height, self.matrix_width], [None], [self.Field], Array=self.Array))
+				D_inv = self.__class__(self.Table((((i, j), u(i, j)**-1 if i == j else self.zero_element()) for (i, j) in self.keys()), [self.matrix_height, self.matrix_width], [None], [self.Field], Array=self.Array))
+				U_less_1 = self.__class__(self.Table((((i, j), self.zero_element() if i == j else u(i, j) @ u(i, i)**-1) for (i, j) in self.keys()), [self.matrix_height, self.matrix_width], [None], [self.Field], Array=self.Array))
+				P_inv = self.__class__(self.Table((((i, j), self.one_element() if perm[i] == j else self.zero_element()) for (i, j) in self.keys()), [self.matrix_height, self.matrix_width], [None], [self.Field], Array=self.Array))
+				break
+			
+			except self.__PermutationNeeded as pn:
+				pn.advance()
 		
 		# https://mobiusfunction.wordpress.com/2010/12/08/the-inverse-of-triangular-matrix-as-a-binomial-series/
 		
 		L_inv = self.zero(self.matrix_height, self.matrix_width, self, self, self.Field)
 		L_pow = self.one(self.matrix_height, self.matrix_width, self, self, self.Field)
-		F_sgn = self.Field(1)
+		F_sgn = self.Field.one()
 		while L_pow: # will converge to 0
 			L_inv += F_sgn @ L_pow
 			L_pow @= L_less_1
 			F_sgn = -F_sgn
-				
+		
 		U_inv = self.zero(self.matrix_height, self.matrix_width, self, self, self.Field)
 		U_pow = self.one(self.matrix_height, self.matrix_width, self, self, self.Field)
-		F_sgn = self.Field(1)
+		F_sgn = self.Field.one()
 		while U_pow: # will converge to 0
 			U_inv += F_sgn @ U_pow
 			U_pow @= U_less_1
 			F_sgn = -F_sgn
 		
-		return U_inv @ D_inv @ L_inv
+		return U_inv @ D_inv @ L_inv @ P_inv
 	
 	def __pow__(self, n):
 		result = self.one(self.matrix_height, self.matrix_width, self, self, self.Field)
@@ -682,13 +712,403 @@ class Matrix:
 			for i in range(abs(n)):
 				result @= inv
 		return result
+	
+	class __PermutationNeeded(BaseException):
+		def __init__(self, row, perm, avoid, mat, l, u):
+			self.row = row
+			self.perm = perm
+			self.avoid = avoid
+			self.mat = mat
+			self.l = l
+			self.u = u
+		
+		def advance(self):
+			self.l.clear_cache()
+			self.u.clear_cache()
+			
+			perm = self.perm
+			mat = self.mat
+			r = self.row
+			avoid = self.avoid
+			size = len(perm)
+			
+			k = None
+			
+			for kk in range(r, size):
+				#print(perm[kk], r, mat[perm[kk], r], mat[perm[r], r], [mat[perm[kk], _i] for _i in range(size)])
+				if mat[perm[kk], r] != mat[perm[r], r] and perm[kk] != kk:
+					k = kk
+					break
+			else:
+				k = None
+			
+			#if k is None:
+			#	if r != 0:
+			#		print("reset", r)
+			#		for i in range(size):
+			#			perm[i] = i
+			#		k = 0
+			
+			#if k is None:
+			#	for kk in range(1, size):
+			#		k = (r + kk) % size
+			#		if perm[k] == k:
+			#			break
+			#	else:
+			#		k = None
+			
+			#if k is None:
+			#	for kk in range(1, size):
+			#		k = (r + kk) % size
+			#		if mat[perm[k], k] != avoid:
+			#			break
+			#	else:
+			#		k = None
+			
+			if k is None:
+				#print(perm)
+				raise ArithmeticError("Could not decompose.")
+			
+			#print(r, k)
+			
+			perm[r], perm[k] = perm[k], perm[r]
+	
+	def __ldup(self):
+		if self.matrix_width != self.matrix_height:
+			raise ValueError
+		
+		size = self.matrix_width
+		perm = [_n for _n in range(size)]
+		
+		def cached(f):
+			c = {}
+			def g(i, j):
+				if (i, j) in c:
+					return c[i, j]
+				else:
+					y = f(i, j)
+					c[i, j] = y
+					return y
+			
+			def clear_cache():
+				c.clear()
+			g.clear_cache = clear_cache
+			
+			return g
+		
+		perm = [_n for _n in range(size)]
+		
+		# https://www.geeksforgeeks.org/doolittle-algorithm-lu-decomposition/
+		
+		@cached
+		def u(i, j):
+			if i > j:
+				return self.zero_element()
+			
+			return self[perm[i], j] - self.Field.sum(l(i, k) @ u(k, j) for k in range(i))
+		
+		@cached
+		def l(i, j):
+			if i < j:
+				return self.zero_element()
+			
+			e = self[perm[i], j] - self.Field.sum(l(i, k) @ u(k, j) for k in range(j))
+			if not e:
+				return e
+			
+			d = u(j, j)
+			if not d:
+				raise self.__PermutationNeeded(j, perm, self.Field.sum(l(j, k) @ u(k, j) for k in range(j)), self, l, u)
+			
+			return e @ d**-1
+		
+		return l, u, perm
+	
+	def ldup_decomposition(self):
+		if self.matrix_width != self.matrix_height:
+			raise ValueError
+		size = self.matrix_width
+		
+		l, u, perm = self.__ldup()
+		while True:
+			try:
+				L = self.__class__(self.Table((((i, j), self.one_element() if i == j else l(i, j)) for (i, j) in self.keys()), [size, size], [None], [self.Field], Array=self.Array))
+				D = self.__class__(self.Table((((i, j), u(i, j) if i == j else self.zero_element()) for (i, j) in self.keys()), [size, size], [None], [self.Field], Array=self.Array))
+				U = self.__class__(self.Table((((i, j), self.one_element() if i == j else u(i, j) @ u(i, i)**-1) for (i, j) in self.keys()), [size, size], [None], [self.Field], Array=self.Array))
+				P = self.__class__(self.Table((((i, j), self.one_element() if perm[i] == j else self.zero_element()) for (i, j) in self.keys()), [size, size], [None], [self.Field], Array=self.Array))
+				return L, D, U, P
+			
+			except self.__PermutationNeeded as pn:
+				pn.advance()
+	
+	def determinant(self):
+		if self.matrix_width != self.matrix_height:
+			raise ValueError
+		size = self.matrix_width
+				
+		l, u, perm = self.__ldup()
+		
+		while True:
+			try:
+				d = self.Field.one()
+				for i in range(size):
+					d *= u(i, i)
+				break
+			
+			except self.__PermutationNeeded as pn:
+				pn.advance()
+		
+		for m in range(size):
+			for n in range(m + 1, size):
+				if perm[m] > perm[n]:
+					d = -d
+		
+		return d
+
+
+'''
+class Polynomial(AbstractPolynomial):
+	def __init__(self, *coefficients):
+		self.Field = coefficients[0].Field
+		
+		if len(coefficients) > self.Field.field_size:
+			short = coefficients[:self.Field.field_size]
+			for n, x in enumerate(coefficients[self.Field.field_size:]):
+				short[n % self.Field.field_size] += x
+			super().__init__(*short)
+		else:
+			super().__init__(*coefficients)
+'''
+
+
+'''
+class Polynomial:
+	@property
+	@cached
+	def Field(self):
+		return self.__values[0].Field
+	
+	@property
+	@cached
+	def Array(self):
+		return array_fallback(self.__values.__class__)
+	
+	@classmethod
+	def zero(cls, Array, Field):
+		nArray = array_fallback(Array)
+		return cls(nArray((Field.zero() for _n in range(Field.field_size)), [None], [Field]))
+	
+	@classmethod
+	def ident(cls, Array, Field):
+		nArray = array_fallback(Array)
+		return cls(nArray((Field.one() if _n == 1 else Field.zero() for _n in range(Field.field_size)), [None], [Field]))
+	
+	@classmethod
+	def random(cls, Array, Field, randbelow):
+		nArray = array_fallback(Array)
+		return cls(nArray((randbelow(Field.field_size) for _n in range(Field.field_size)), [None], [Field]))
+	
+	def __init__(self, *values):
+		if len(values) == 1:
+			value = values[0]
+			
+			if isinstance(value, dict):
+				assert all(((0 <= _k) and _v) for (_k, _v) in value.items())
+				self.__values = value
+				return
+			
+			try:
+				self.__values = values[0].__values
+				return
+			except AttributeError:
+				pass
+			
+			try:
+				r, m = divmod(value, self.Field.field_size)
+				v = [m]
+				while r:
+					r, m = divmod(r, self.Field.field_size)
+					v.append(m)
+				self.__values = {_n:self.Field(_v) for (_n, _v) in enumerate(v) if _v}
+				return
+			except (AttributeError, TypeError):
+				pass
+		
+		self.__values = {_n:self.Field(_v) for (_n, _v) in enumerate(reversed(values)) if _v}
+	
+	def serialize(self):
+		try:
+			return self.__values.serialize()
+		except AttributeError:
+			return self.__values
+	
+	def __getitem__(self, n):
+		values = self.__values
+		if n in values:
+			return values[n]
+		else:
+			return self.Field.zero()
+	
+	def __iter__(self):
+		try:
+			od = self.degree
+		except ValueError:
+			yield self[0]
+		else:
+			for n in range(od + 1):
+				yield self[n]
+	
+	def items(self):
+		for key in self.keys():
+			yield key, self[key]
+	
+	def keys(self):
+		return sorted(self.__values.keys())
+	
+	@property
+	def degree(self):
+		if self.__values:
+			return max(self.__values.keys())
+		else:
+			raise ValueError("Zero polynomial does not have a degree.")
+	
+	@cached
+	def __str__(self):
+		if self:
+			return " + ".join(reversed([f"{str(_v)}·x{superscript(_n)}" for (_n, _v) in self.items()]))
+		else:
+			return f"0{subscript(self.Field.field_base)}·x⁰"
+	
+	@cached
+	def __repr__(self):
+		return f'{self.__class__.__name__}({", ".join(repr(_value) for _value in self)})'
+	
+	def __bool__(self):
+		return bool(self.__values)
+	
+	def __int__(self):
+		r = 0
+		for n, v in self.items():
+			r += int(v) * self.Field.field_size ** n
+		return int(r)
+	
+	@cached
+	def __hash__(self):
+		try:
+			od = self.degree + 1
+		except ValueError:
+			od = 0
+		return hash((self.__class__.__name__, tuple(self.keys()), tuple(self.items())))
+	
+	def __call__(self, x):
+		r = self.Field.zero()
+		for n, v in self.items():
+			if n == 0:
+				r += v
+			else:
+				r += v * (x ** n)
+		return r
+	
+	def __eq__(self, other):
+		try:
+			return self.keys() == other.keys() and all(self[_n] == other[_n] for _n in self.keys())
+		except (AttributeError, TypeError):
+			return NotImplemented
+	
+	def __neg__(self):
+		return self.__class__({_n:-_value for (_n, _value) in self.items()})
+	
+	def __add__(self, other):
+		try:
+			return self.__class__({_n:(self[_n] + other[_n]) for _n in frozenset().union(self.keys(), other.keys()) if self[_n] + other[_n]})
+		except AttributeError:
+			return NotImplemented
+	
+	def __sub__(self, other):
+		try:
+			return self.__class__({_n:(self[_n] - other[_n]) for _n in frozenset().union(self.keys(), other.keys()) if self[_n] - other[_n]})
+		except AttributeError:
+			return NotImplemented
+	
+	def __mul__(self, other):
+		if not self:
+			return self
+		if not other:
+			return other
+		
+		rvalues = defaultdict(lambda: self.Field.zero())
+		for m, v in self.items():
+			for n, w in other.items():
+				rvalues[m + n] += v * w
+		
+		fvalues = {}
+		for n, v in rvalues.items():
+			if v:
+				fvalues[n] = v
+		
+		return self.__class__(fvalues)
+	
+	def __divmod__(self, other):
+		if not other:
+			raise ZeroDivisionError("Division by zero polynomial.")
+		
+		if not self:
+			return self, self
+		
+		od = other.degree
+		r = other[od]
+		quotient = self.__class__()
+		remainder = self
+		
+		while remainder and (n := remainder.degree) >= od:
+			d = remainder[n]
+			if not d: continue
+			q = self.__class__({(n - od):(d / r)})
+			remainder -= q * other
+			quotient += q
+		
+		assert (not remainder) or (other and (remainder.degree < other.degree))
+		
+		return quotient, remainder
+	
+	def __floordiv__(self, other):
+		q, r = divmod(self, other)
+		return q
+	
+	def __mod__(self, other):
+		q, r = divmod(self, other)
+		return r
+'''
+
+
 
 
 if __debug__ and __name__ == '__main__':
 	from fields import Galois
 	from random import randrange
 	
+	
 	fields = Galois('Binary', 2, [1, 1]), Galois('F3', 3, [1, 0, 2, 1]), Galois('Rijndael', 2, [1, 0, 0, 0, 1, 1, 0, 1, 1])
+	#fields = Galois('Rijndael', 2, [1, 0, 0, 0, 1, 1, 0, 1, 1]),
+
+	#l = Linear([fields[2](0), fields[2](0), fields[2](2), fields[2](0), fields[2](0), fields[2](0), fields[2](0), fields[2](0)])
+	#l = Linear([fields[2](252), fields[2](0), fields[2](182), fields[2](82), fields[2](64), fields[2](9), fields[2](183), fields[2](183)])
+	#l = Linear.one(list, fields[2])
+	#l = Linear([fields[2](0), fields[2](0), fields[2](20), fields[2](0), fields[2](0), fields[2](0), fields[2](10), fields[2](0)])
+	
+	#l = Linear.random(list, fields[0], randrange)
+	#li = l.inverse()
+
+	#for x in fields[0].domain():
+	#	assert l(li(x)) == x
+	#	assert li(l(x)) == x
+	
+	#print(l)
+	#print(li)
+	
+	#quit()
+	
+	
 	for F in fields:
 		print("field", F)
 		
@@ -696,10 +1116,30 @@ if __debug__ and __name__ == '__main__':
 			i = Matrix.one(w, w, dict, list, F)
 			while True:
 				m = Matrix.random(w, w, dict, list, F, randrange)
+				
+				try:
+					l, d, u, p = m.ldup_decomposition()
+				except ArithmeticError:
+					continue
+				
+				for ii, jj in l.keys():
+					assert l[ii, jj] == m.one_element() if ii == jj else True
+					assert l[ii, jj] == m.zero_element() if ii < jj else True
+				
+				for ii, jj in d.keys():
+					assert d[ii, jj] == m.zero_element() if ii != jj else True
+				
+				for ii, jj in u.keys():
+					assert u[ii, jj] == m.one_element() if ii == jj else True
+					assert u[ii, jj] == m.zero_element() if ii > jj else True
+				
+				assert l @ d @ u == p @ m
+				
 				try:
 					n = m.inverse()
 				except ArithmeticError:
 					continue
+				
 				assert m @ n == i, f"{m} @ {n} = {m @ n}"
 				assert n @ m == i, f"{n} @ {m} = {n @ m}"
 				break
@@ -839,6 +1279,8 @@ if __debug__ and __name__ == '__main__':
 				
 				assert (m1 @ n1) @ vh1 == m1 @ (n1 @ vh1)
 				assert (n2 @ m2) @ vw1 == n2 @ (m2 @ vw1)
-
+				
+				if w == h and F.field_size != 2: # FIXME
+					assert (m1 @ n1).determinant() == m1.determinant() * n1.determinant()
 
 

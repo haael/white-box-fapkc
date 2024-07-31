@@ -1,6 +1,9 @@
 #!/usr/bin/python3
 
 
+"AES cipher implementation, suitable for tracing."
+
+
 __all__ = [
 	'Rijndael',
 	's_box_forward', 's_box_backward',
@@ -13,10 +16,12 @@ __all__ = [
 
 
 from fields import Galois
-from linear import Vector
+from algebra import Vector
 
 
 class Rijndael(Galois('Rijndael', 2, [1, 0, 0, 0, 1, 1, 0, 1, 1])):
+	"Rijndael field."
+	
 	def __lshift_1(self):
 		"Circular shift left by 1 bit in Rijndael field."
 		
@@ -26,7 +31,7 @@ class Rijndael(Galois('Rijndael', 2, [1, 0, 0, 0, 1, 1, 0, 1, 1])):
 			return self.Field(0x02) * (self - self.Field(0x80)) + self.Field(0x01)
 	
 	def __lshift__(self, n):
-		"Circular shift left by n bits in Rijndael field."
+		"Circular shift left by `n` bits in Rijndael field."
 		
 		x = self
 		for m in range(n):
