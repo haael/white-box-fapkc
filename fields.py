@@ -121,6 +121,9 @@ class Field:
 		except AttributeError:
 			return NotImplemented
 	
+	def __pos__(self):
+		return self
+	
 	def __neg__(self):
 		return self.__class__((-self.__value) % self.modulus)
 	
@@ -357,6 +360,9 @@ class BinaryGalois: # does not inherit from `Field` class, every method must be 
 		except AttributeError:
 			return NotImplemented
 	
+	def __pos__(self):
+		return self
+	
 	def __neg__(self):
 		return self
 	
@@ -587,6 +593,9 @@ class Polynomial:
 		except (AttributeError, TypeError):
 			return NotImplemented
 	
+	def __pos__(self):
+		return self
+	
 	def __neg__(self):
 		return self.__class__({_n:-_value for (_n, _value) in self.items()})
 	
@@ -700,6 +709,7 @@ def Galois(name, prime, coefficients):
 		while True:
 			Fast.exponent = [0] * Slow.field_size
 			Fast.logarithm = [0] * Slow.field_size
+			Fast.logarithm[0] = Slow.field_size - 1
 			
 			gg += 1
 			if gg >= Slow.field_size:
@@ -718,7 +728,7 @@ def Galois(name, prime, coefficients):
 		
 		assert Fast.exponent[-1] == 0
 		assert Fast.exponent[0] == 1, str(Fast.exponent)
-		assert Fast.logarithm[0] == 0
+		assert Fast.logarithm[0] == (-1) % Fast.field_size, str(Fast.logarithm)
 	
 	else:
 		class Fast(FastGalois):
@@ -804,11 +814,22 @@ if __debug__:
 			
 			assert one / x == x ** -1
 			
-			for m, n in product(range(5), range(5)):
-				(x ** m) * (x ** n) == x ** (m + n)
+			assert x ** (x.field_size - 1) == one
+			
+			m = int(y)
+			n = int(z)
+			#print("**", x.field_size, m, n, m + n, (m + n) % x.field_size)
+			assert (x ** m) * (x ** n) == x ** (m + n) == x ** ((m + n) % (x.field_size - 1))
+			assert (x ** m) * (x ** -n) == x ** (m - n) == x ** ((m - n) % (x.field_size - 1))
+			assert (x ** -m) * (x ** n) == x ** (-m + n) == x ** ((-m + n) % (x.field_size - 1))
+			assert (x ** -m) * (x ** -n) == x ** (-m - n) == x ** ((-m + -n) % (x.field_size - 1))
+		
 		else:
-			for m in range(1, 5):
+			m = int(y)
+			try:
 				x ** m == zero
+			except ArithmeticError:
+				assert not m
 	
 	def polynomial_axioms(x, y, z):
 		zero = x.zero()
@@ -845,6 +866,8 @@ if __debug__:
 
 
 if __debug__ and __name__ == '__main__':
+	from random import sample
+	
 	#from pycallgraph2 import PyCallGraph
 	#from pycallgraph2.output.graphviz import GraphvizOutput
 	
@@ -897,6 +920,12 @@ if __debug__ and __name__ == '__main__':
 			polynomial_axioms(x, y, z)
 	
 	#profiler.done()
+
+	F3 = Galois('F3', 3, [1, 0, 2, 1])
+	print("F3", F3.field_size)
+	for x, y, z in product(F3.domain(), F3.domain(), F3.domain()):
+		#print(x, y, z)
+		field_axioms(x, y, z)
 	
 	class Modulo_7(Field):
 		modulus = 7
@@ -907,14 +936,18 @@ if __debug__ and __name__ == '__main__':
 	class Galois_7_3(Field):
 		modulus = PolynomialModulo_7(1, 3, 1)
 	
-	#print("galois", "7[1, 3, 1]", Galois_7_3.field_size)
+	print("galois", "7[1, 3, 1]", Galois_7_3.field_size)
 	
-	#for x, y, z in product(Galois_7_3.domain(), Galois_7_3.domain(), Galois_7_3.domain()):
-	#	field_axioms(x, y, z)
-
+	sample_size = 7
+	for x, y, z in product(sample(sorted(Galois_7_3.domain(), key=int), sample_size), sample(sorted(Galois_7_3.domain(), key=int), sample_size), sample(sorted(Galois_7_3.domain(), key=int), sample_size)):
+		field_axioms(x, y, z)
+	
 	Rijndael = Galois('Rijndael', 2, [1, 0, 0, 0, 1, 1, 0, 1, 1])
 	
 	print("rijndael", Rijndael.field_size)
 	
-	for x, y, z in product(Rijndael.domain(), Rijndael.domain(), Rijndael.domain()):
+	sample_size = 32
+	for x, y, z in product(sample(sorted(Rijndael.domain(), key=int), sample_size), sample(sorted(Rijndael.domain(), key=int), sample_size), sample(sorted(Rijndael.domain(), key=int), sample_size)):
 		field_axioms(x, y, z)
+
+

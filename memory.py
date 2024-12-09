@@ -356,8 +356,10 @@ class Table:
 
 
 if __debug__ and __name__ == '__main__':
-	from pycallgraph2 import PyCallGraph
-	from pycallgraph2.output.graphviz import GraphvizOutput
+	profile = False
+	if profile:
+		from pycallgraph2 import PyCallGraph
+		from pycallgraph2.output.graphviz import GraphvizOutput
 	
 	from random import randrange
 	from fields import Galois
@@ -494,40 +496,57 @@ if __debug__ and __name__ == '__main__':
 					yield Vector.random(size, Array, Field, randbelow)
 			
 			a = Automaton.random_linear_linear(4, 4, 8, Table, Array, Vector, LinearCircuit, Linear, F, randrange)
-			with PyCallGraph(output=GraphvizOutput(output_file=f'{m_impl}_linear_linear_{F.__name__}.png')):
-				print()
-				s = a.init_state[:]
-				print(s)
-				for n, x in enumerate(a(random_stream(10, 4, Array, F, randrange), s)):
-					print(n, x)
-				print(s)
+			
+			if profile:
+				profiler = PyCallGraph(output=GraphvizOutput(output_file=f'{m_impl}_linear_linear_{F.__name__}.png'))
+				profiler.start()
+			print()
+			s = a.init_state[:]
+			print(s)
+			for n, x in enumerate(a(random_stream(10, 4, Array, F, randrange), s)):
+				print(n, x)
+			print(s)
+			if profile:
+				profiler.done()
 			
 			b = Automaton.random_linear_quadratic(4, 4, 8, Table, Array, Vector, QuadraticCircuit, LinearCircuit, Quadratic, Linear, F, randrange)
-			with PyCallGraph(output=GraphvizOutput(output_file=f'{m_impl}_linear_quadratic_{F.__name__}.png')):
-				print()
-				s = b.init_state[:]
-				print(s)
-				for n, x in enumerate(b(random_stream(10, 4, Array, F, randrange), s)):
-					print(n, x)
-				print(s)
+			if profile:
+				profiler = PyCallGraph(output=GraphvizOutput(output_file=f'{m_impl}_linear_quadratic_{F.__name__}.png'))
+				profiler.start()
+			print()
+			s = b.init_state[:]
+			print(s)
+			for n, x in enumerate(b(random_stream(10, 4, Array, F, randrange), s)):
+				print(n, x)
+			print(s)
+			if profile:
+				profiler.done()
 			
 			c = Automaton.random_quadratic_linear(4, 4, 8, Table, Array, Vector, QuadraticCircuit, LinearCircuit, Quadratic, Linear, F, randrange)
-			with PyCallGraph(output=GraphvizOutput(output_file=f'{m_impl}_quadratic_linear_{F.__name__}.png')):
-				print()
-				s = c.init_state[:]
-				print(s)
-				for n, x in enumerate(c(random_stream(10, 4, Array, F, randrange), s)):
-					print(n, x)
-				print(s)
+			if profile:
+				profiler = PyCallGraph(output=GraphvizOutput(output_file=f'{m_impl}_quadratic_linear_{F.__name__}.png'))
+				profiler.start()
+			print()
+			s = c.init_state[:]
+			print(s)
+			for n, x in enumerate(c(random_stream(10, 4, Array, F, randrange), s)):
+				print(n, x)
+			print(s)
+			if profile:
+				profiler.done()
 			
 			d = Automaton.random_quadratic_quadratic(4, 4, 8, Table, Array, Vector, QuadraticCircuit, Quadratic, Linear, F, randrange)
-			with PyCallGraph(output=GraphvizOutput(output_file=f'{m_impl}_quadratic_quadratic_{F.__name__}.png')):
-				print()
-				s = d.init_state[:]
-				print(s)
-				for n, x in enumerate(d(random_stream(10, 4, Array, F, randrange), s)):
-					print(n, x)
-				print(s)
+			if profile:
+				profiler = PyCallGraph(output=GraphvizOutput(output_file=f'{m_impl}_quadratic_quadratic_{F.__name__}.png'))
+				profiler.start()
+			print()
+			s = d.init_state[:]
+			print(s)
+			for n, x in enumerate(d(random_stream(10, 4, Array, F, randrange), s)):
+				print(n, x)
+			print(s)
+			if profile:
+				profiler.done()
 
 
 

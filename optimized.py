@@ -802,8 +802,10 @@ if __name__ == '__main__':
 	from machines import Automaton, LinearCircuit, QuadraticCircuit
 	from memory import Array, Table
 	
-	from pycallgraph2 import PyCallGraph
-	from pycallgraph2.output.graphviz import GraphvizOutput
+	profile = False
+	if profile:
+		from pycallgraph2 import PyCallGraph
+		from pycallgraph2.output.graphviz import GraphvizOutput
 		
 	initialize_llvm()
 	
@@ -842,7 +844,9 @@ if __name__ == '__main__':
 	a_str = list(random_stream(10, 8, Array, Field, randrange))	
 	au = Automaton.random_linear_linear(8, 8, 12, Table, Array, Vector, LinearCircuit, Linear, Field, randrange)
 	ao = Automaton.deserialize_linear_linear(8, 8, 12, Table, Array, Vector, LinearCircuitO, LinearO, FieldO, au.serialize())
-	#with PyCallGraph(output=GraphvizOutput(output_file=f'{m_impl}_linear_linear_{Field.__name__}.png')):
+	if profile:
+		profiler = PyCallGraph(output=GraphvizOutput(output_file=f'{m_impl}_linear_linear_{Field.__name__}.png'))
+		profiler.start()
 	su = au.init_state[:]
 	so = ao.init_state[:]
 	print(su, so)
@@ -852,12 +856,16 @@ if __name__ == '__main__':
 		assert xu == xo
 	print(su, so)
 	assert su == so
+	if profile:
+		profiler.done()
 	
 	print()
 	b_str = list(random_stream(10, 4, Array, Field, randrange))	
 	bu = Automaton.random_linear_quadratic(4, 4, 8, Table, Array, Vector, QuadraticCircuit, LinearCircuit, Quadratic, Linear, Field, randrange)
 	bo = Automaton.deserialize_linear_quadratic(4, 4, 8, Table, Array, Vector, QuadraticCircuitO, LinearCircuitO, QuadraticO, LinearO, FieldO, bu.serialize())
-	#with PyCallGraph(output=GraphvizOutput(output_file=f'{m_impl}_linear_quadratic_{Field.__name__}.png')):
+	if profile:
+		profiler = PyCallGraph(output=GraphvizOutput(output_file=f'{m_impl}_linear_quadratic_{Field.__name__}.png'))
+		profiler.start()
 	su = bu.init_state[:]
 	so = bo.init_state[:]
 	print(su, so)
@@ -867,12 +875,16 @@ if __name__ == '__main__':
 		assert xu == xo
 	print(su, so)
 	assert su == so
+	if profile:
+		profiler.done()
 	
 	print()
 	c_str = list(random_stream(10, 4, Array, Field, randrange))	
 	cu = Automaton.random_quadratic_linear(4, 4, 8, Table, Array, Vector, QuadraticCircuit, LinearCircuit, Quadratic, Linear, Field, randrange)
 	co = Automaton.deserialize_quadratic_linear(4, 4, 8, Table, Array, Vector, QuadraticCircuitO, LinearCircuitO, QuadraticO, LinearO, FieldO, cu.serialize())
-	#with PyCallGraph(output=GraphvizOutput(output_file=f'{m_impl}_quadratic_linear_{Field.__name__}.png')):
+	if profile:
+		profiler = PyCallGraph(output=GraphvizOutput(output_file=f'{m_impl}_quadratic_linear_{Field.__name__}.png'))
+		profiler.start()
 	su = cu.init_state[:]
 	so = co.init_state[:]
 	print(su, so)
@@ -882,12 +894,16 @@ if __name__ == '__main__':
 		assert xu == xo
 	print(su, so)
 	assert su == so
+	if profile:
+		profiler.done()
 	
 	print()
 	d_str = list(random_stream(10, 1, Array, Field, randrange))
 	du = Automaton.random_quadratic_quadratic(1, 1, 16, Table, Array, Vector, QuadraticCircuit, Quadratic, Linear, Field, randrange)
 	do = Automaton.deserialize_quadratic_quadratic(1, 1, 16, Table, Array, Vector, QuadraticCircuitO, QuadraticO, LinearO, FieldO, du.serialize())
-	#with PyCallGraph(output=GraphvizOutput(output_file=f'{m_impl}_quadratic_quadratic_{Field.__name__}.png')):
+	if profile:
+		profiler = PyCallGraph(output=GraphvizOutput(output_file=f'{m_impl}_quadratic_quadratic_{Field.__name__}.png'))
+		profiler.start()
 	su = du.init_state[:]
 	so = do.init_state[:]
 	print(su, so)
@@ -897,5 +913,7 @@ if __name__ == '__main__':
 		assert xu == xo
 	print(su, so)
 	assert su == so
+	if profile:
+		profiler.done()
 
 

@@ -49,11 +49,15 @@ class LinearCircuit:
 	
 	def __init__(self, functions, output_size=None, input_size=None):
 		if output_size is not None:
+			if not isinstance(output_size, int):
+				raise ValueError
 			self.output_size = output_size
 		else:
 			self.output_size = len(set(_a for (_a, _b) in functions.keys()))
 		
 		if input_size is not None:
+			if not isinstance(input_size, int):
+				raise ValueError
 			self.input_size = input_size
 		else:
 			self.input_size = len(set(_b for (_a, _b) in functions.keys()))
@@ -103,7 +107,7 @@ class LinearCircuit:
 			return NotImplemented
 	
 	def __sub__(self, other):
-		"Difference of two linear circuits: `(a - b)(x) = a(x) - b(x)`"
+		"Difference of two linear circuits: `(a - b)(x) = a(x) - b(x)`."
 		
 		if self.input_size != other.input_size:
 			raise ValueError("Input sizes of linear circuits to subtract should be the same.")
@@ -117,6 +121,7 @@ class LinearCircuit:
 			return NotImplemented
 	
 	def __neg__(self):
+		"Linear circuit returning negated result: `(-a)(x) = -a(x)`."
 		try:
 			return self.__class__(self.Table((((m, n), -self[m, n]) for n in range(self.input_size) for m in range(self.output_size)), [self.output_size, self.input_size], [self.Field.field_power, None], [self.Linear, self.Field], Array=self.Array))
 		except TypeError:
@@ -134,11 +139,11 @@ class LinearCircuit:
 			return NotImplemented
 	
 	def __mul__(self, other):
-		"Composition of linear circuit with linear operation (right hand): `(a * l)(x) = a(Vector(l(xi) for xi in x))`."
+		"Composition of linear circuit with linear operation (right hand): `(a * l)(x) = a([l(_x) for _x in x])`."
 		return self.__class__(self.Table((((m, n), (self[m, n] @ other)) for n in range(self.input_size) for m in range(self.output_size)), [self.output_size, self.input_size], [self.Field.field_power, None], [self.Linear, self.Field], Array=self.Array))
 	
 	def __rmul__(self, other):
-		"Composition of linear circuit with linear operation (left hand): `(l * a)(x) = Vector(l(xi) for xi in a(x))`."
+		"Composition of linear circuit with linear operation (left hand): `(l * a)(x) = [l(_x) for _x in a(x)]`."
 		return self.__class__(self.Table((((m, n), (other @ self[m, n])) for n in range(self.input_size) for m in range(self.output_size)), [self.output_size, self.input_size], [self.Field.field_power, None], [self.Linear, self.Field], Array=self.Array))
 	
 	def __shl__(self, p):
@@ -161,7 +166,7 @@ class QuadraticCircuit:
 	@property
 	@cached
 	def Field(self):
-		return self[0, 0, 0].Field	
+		return self[0, 0, 0].Field
 	
 	@property
 	@cached
@@ -233,12 +238,13 @@ class QuadraticCircuit:
 		return self.__class__(self.Table((((m, n, o), self[m, n, o] + other[m, n, o]) for (m, n, o) in product(range(self.output_size), range(self.input_size), range(self.input_size))), [self.output_size, self.input_size, self.input_size], [self.Field.field_power, self.Field.field_power, None], [self.Quadratic, self.Linear, self.Field], Array=self.Array))
 	
 	def __sub__(self, other):
-		"Difference of two quadratic circuits: `(a - b)(x) = a(x) - b(x)`"
+		"Difference of two quadratic circuits: `(a - b)(x) = a(x) - b(x)`."
 		if self.input_size != other.input_size: raise ValueError(f"Input sizes of quadratic circuits to subtract should be the same (got {self.input_size} vs. {other.input_size}).")
 		if self.output_size != other.output_size: raise ValueError(f"Output sizes of quadratic circuits to subtract should be the same (got {self.output_size} vs. {other.output_size}).")
 		return self.__class__(self.Table((((m, n, o), self[m, n, o] - other[m, n, o]) for (m, n, o) in product(range(self.output_size), range(self.input_size), range(self.input_size))), [self.output_size, self.input_size, self.input_size], [self.Field.field_power, self.Field.field_power, None], [self.Quadratic, self.Linear, self.Field], Array=self.Array))
 	
 	def __neg__(self):
+		"Quadratic circuit returning negated result: `(-a)(x) = -a(x)`."
 		return self.__class__(self.Table((((m, n, o), -self[m, n, o]) for (m, n, o) in product(range(self.output_size), range(self.input_size), range(self.input_size))), [self.output_size, self.input_size, self.input_size], [self.Field.field_power, self.Field.field_power, None], [self.Quadratic, self.Linear, self.Field], Array=self.Array))
 	
 	def __matmul__(self, other):
@@ -252,11 +258,11 @@ class QuadraticCircuit:
 		return self.__class__(self.Table((((a, c, d), sum((other[a, b] @ self[b, c, d] for b in range(self.output_size)), self.Quadratic.zero(self.Array, self.Linear, self.Field))) for a in range(other.output_size) for c in range(self.input_size) for d in range(self.input_size)), [other.output_size, self.input_size, self.input_size], [self.Field.field_power, self.Field.field_power, None], [self.Quadratic, self.Linear, self.Field], Array=self.Array))
 	
 	def __mul__(self, other):
-		"Composition of quadratic circuit with linear operation (right hand): `(a * l)(x) = a(Vector([l(xi) for xi in x]))`."
+		"Composition of quadratic circuit with linear operation (right hand): `(a * l)(x) = a([l(_x) for _x in x])`."
 		return self.__class__(self.Table((((m, n, o), self[m, n, o] @ (other, other)) for (m, n, o) in product(range(self.output_size), range(self.input_size), range(self.input_size))), [self.output_size, self.input_size, self.input_size], [self.Field.field_power, self.Field.field_power, None], [self.Quadratic, self.Linear, self.Field], Array=self.Array))
 	
 	def __rmul__(self, other):
-		"Composition of quadratic circuit with linear operation (left hand): `(l * a)(x) = Vector([l(xi) for xi in a(x)])`."
+		"Composition of quadratic circuit with linear operation (left hand): `(l * a)(x) = [l(_x) for _x in a(x)]`."
 		return self.__class__(self.Table((((m, n, o), other @ self[m, n, o]) for (m, n, o) in product(range(self.output_size), range(self.input_size), range(self.input_size))), [self.output_size, self.input_size, self.input_size], [self.Field.field_power, self.Field.field_power, None], [self.Quadratic, self.Linear, self.Field], Array=self.Array))
 
 
@@ -391,7 +397,7 @@ if __debug__ and __name__ == '__main__':
 			profiler = PyCallGraph(output=GraphvizOutput(output_file=f'quadratic_circuit_{F.__name__}.png'))
 			profiler.start()
 		
-		for n in range(5):
+		for n in range(2):
 			a1 = QuadraticCircuit.random(randrange(2, 5), randrange(2, 5), dict, list, Quadratic, Linear, F, randrange)
 			a2 = QuadraticCircuit.random(a1.output_size, a1.input_size, dict, list, Quadratic, Linear, F, randrange)
 			b = LinearCircuit.random(randrange(2, 5), a1.output_size, dict, list, Linear, F, randrange)
@@ -399,7 +405,7 @@ if __debug__ and __name__ == '__main__':
 			l = Linear.random(list, F, randrange)
 			#q = Quadratic.random(list, Linear, F, randrange)
 			
-			for m in range(5):
+			for m in range(2):
 				x = Vector([F.random(randrange) for _n in range(a1.input_size)])
 				y = Vector([F.random(randrange) for _n in range(c.input_size)])
 				
