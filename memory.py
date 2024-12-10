@@ -363,7 +363,8 @@ if __debug__ and __name__ == '__main__':
 	
 	from random import randrange
 	from fields import Galois
-	from algebra import *
+	from vectors import *
+	from operations import *
 	from machines import *
 	
 	from numpy import array, uint8, fromiter, bitwise_xor
@@ -377,7 +378,7 @@ if __debug__ and __name__ == '__main__':
 		
 		def __eq__(self, other):
 			try:
-				return (self.serialize() == other.serialize()).all()
+				return (self._Array__storage[self._Array__start:self._Array__stop] == other._Array__storage[other._Array__start:other._Array__stop]).all()
 			except AttributeError:
 				return NotImplemented
 	
@@ -387,11 +388,18 @@ if __debug__ and __name__ == '__main__':
 		
 		def __eq__(self, other):
 			try:
-				return (self.serialize() == other.serialize()).all()
+				return (self._Array__storage[self._Array__start:self._Array__stop] == other._Array__storage[other._Array__start:other._Array__stop]).all()
 			except AttributeError:
 				return NotImplemented
 	
 	for m_impl in ('py', 'np', 'np+'):
+		if m_impl == 'py':
+			print("Testing implementation: plain Python")
+		elif m_impl == 'np':
+			print("Testing implementation: numpy with Python summation")
+		elif m_impl == 'np+':
+			print("Testing implementation: numpy with native summation")
+		
 		if m_impl == 'py':
 			Array = PyArray
 			Table = PyTable
@@ -413,6 +421,7 @@ if __debug__ and __name__ == '__main__':
 				F = Field
 			
 			a1 = Array([F(0), F(1), F(2), F(3)], [None], [F])
+			print("storage", type(a1._Array__storage))
 			
 			a1s = a1[1:4]
 			assert a1s[0] == F(1)
@@ -430,12 +439,16 @@ if __debug__ and __name__ == '__main__':
 			assert isinstance(a2[0], F)
 			
 			ans = an[1:3]
+			#print(repr(an), an._Array__storage, an._Array__start, an._Array__stop, an.serialize())
+			#print(repr(an[1]), an[1]._Array__storage, an[1]._Array__start, an[1]._Array__stop, an[1].serialize())
+			#print(repr(ans), ans._Array__storage, ans._Array__start, ans._Array__stop, ans.serialize())
+			#print(repr(ans[0]), ans[0]._Array__storage, ans[0]._Array__start, ans[0]._Array__stop, ans[0].serialize())
+			#print(repr(ans[0] == an[1]))
 			assert ans[0] == an[1]
 			assert ans[1] == an[2]
 			assert ans[2] == an[3]
 			
 			an1 = Array([a1, a2, a3], [4, None], [Array, F])
-			print("storage", type(an1._Array__storage), repr(an1._Array__storage))
 			an2 = Array([a3, a1, a2], [4, None], [Array, F])
 			
 			ann = Array([an1, an2], [3, 4, None], [Array, Array, F])
@@ -461,17 +474,17 @@ if __debug__ and __name__ == '__main__':
 			assert ann[1][1][2] == F(3)
 			
 			l1 = Linear(Array([F(_n + 1) for _n in range(F.field_power)], [None], [F]))
-			print("l1", l1._Linear__f)
+			#print("l1", l1._Linear__f)
 			l2 = Linear.random(Array, F, randrange)
-			print(l1, l2, l1 + l2)
+			#print(l1, l2, l1 + l2)
 			
 			q1 = Quadratic(Array([Linear(Array([F((_n + _m * F.field_power + 1)  % F.field_size) for _n in range(F.field_power)], [None], [F])) for _m in range(F.field_power)], [F.field_power, None], [Linear, F]))
 			q2 = Quadratic.random(Array, Linear, F, randrange)
-			print(q1, q2, q1 + q2)
+			#print(q1, q2, q1 + q2)
 			
 			v1 = Vector(Array([F(1), F(2), F(3), F(4)], [None], [F]))
 			v2 = Vector.random(4, Array, F, randrange)
-			print(v1, v2, v1 + v2)
+			#print(v1, v2, v1 + v2)
 			
 			t1 = Table([((0, 0), F(0)), ((0, 1), F(1)), ((0, 2), F(2)), ((0, 3), F(3)), ((1, 0), F(4)), ((1, 1), F(5)), ((1, 2), F(6)), ((1, 3), F(7)), ((2, 0), F(8)), ((2, 1), F(9)), ((2, 2), F(10)), ((2, 3), F(11))], [3, 4], [None], [F])
 			t2 = Table([((0, 0), F(12)), ((0, 1), F(13)), ((0, 2), F(14)), ((0, 3), F(15)), ((1, 0), F(16)), ((1, 1), F(17)), ((1, 2), F(18)), ((1, 3), F(19)), ((2, 0), F(20)), ((2, 1), F(21)), ((2, 2), F(22)), ((2, 3), F(23))], [3, 4], [None], [F])
@@ -484,11 +497,11 @@ if __debug__ and __name__ == '__main__':
 			assert tn[0, 0][1, 2] == F(6)
 			
 			ta = Table([((0, 0), v1), ((0, 1), v1), ((1, 0), v1), ((1, 1), v2)], [2, 2], [4, None], [Vector, F], Array=Array)
-			print(v1, v2)
-			print(ta[0, 0])
-			print(ta[0, 1])
-			print(ta[1, 0])
-			print(ta[1, 1])
+			#print(v1, v2)
+			#print(ta[0, 0])
+			#print(ta[0, 1])
+			#print(ta[1, 0])
+			#print(ta[1, 1])
 			assert ta[1, 1] == v2
 			
 			def random_stream(length, size, Array, Field, randbelow):
@@ -500,12 +513,13 @@ if __debug__ and __name__ == '__main__':
 			if profile:
 				profiler = PyCallGraph(output=GraphvizOutput(output_file=f'{m_impl}_linear_linear_{F.__name__}.png'))
 				profiler.start()
-			print()
+			#print()
 			s = a.init_state[:]
-			print(s)
+			#print(s)
 			for n, x in enumerate(a(random_stream(10, 4, Array, F, randrange), s)):
-				print(n, x)
-			print(s)
+				#print(n, x)
+				(n, x)
+			#print(s)
 			if profile:
 				profiler.done()
 			
@@ -513,12 +527,13 @@ if __debug__ and __name__ == '__main__':
 			if profile:
 				profiler = PyCallGraph(output=GraphvizOutput(output_file=f'{m_impl}_linear_quadratic_{F.__name__}.png'))
 				profiler.start()
-			print()
+			#print()
 			s = b.init_state[:]
-			print(s)
+			#print(s)
 			for n, x in enumerate(b(random_stream(10, 4, Array, F, randrange), s)):
-				print(n, x)
-			print(s)
+				(n, x)
+				#print(n, x)
+			#print(s)
 			if profile:
 				profiler.done()
 			
@@ -526,12 +541,13 @@ if __debug__ and __name__ == '__main__':
 			if profile:
 				profiler = PyCallGraph(output=GraphvizOutput(output_file=f'{m_impl}_quadratic_linear_{F.__name__}.png'))
 				profiler.start()
-			print()
+			#print()
 			s = c.init_state[:]
-			print(s)
+			#print(s)
 			for n, x in enumerate(c(random_stream(10, 4, Array, F, randrange), s)):
-				print(n, x)
-			print(s)
+				#print(n, x)
+				(n, x)
+			#print(s)
 			if profile:
 				profiler.done()
 			
@@ -539,12 +555,13 @@ if __debug__ and __name__ == '__main__':
 			if profile:
 				profiler = PyCallGraph(output=GraphvizOutput(output_file=f'{m_impl}_quadratic_quadratic_{F.__name__}.png'))
 				profiler.start()
-			print()
+			#print()
 			s = d.init_state[:]
-			print(s)
+			#print(s)
 			for n, x in enumerate(d(random_stream(10, 4, Array, F, randrange), s)):
-				print(n, x)
-			print(s)
+				#print(n, x)
+				(n, x)
+			#print(s)
 			if profile:
 				profiler.done()
 

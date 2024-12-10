@@ -382,10 +382,8 @@ class BinaryGalois: # does not inherit from `Field` class, every method must be 
 		except AttributeError:
 			return NotImplemented
 		
-		if not self: # FIXME: constant time
-			return self
-		if not other:
-			return other
+		if not self.__value * other.__value:
+			return self.zero()
 		
 		field_size = self.field_size
 		return self.__class__(self.exponent[(self.logarithm[self.__value] + self.logarithm[other.__value]) % (field_size - 1)])
@@ -416,14 +414,9 @@ class BinaryGalois: # does not inherit from `Field` class, every method must be 
 				raise ArithmeticError("Field zero to negative power.")
 			else:
 				return self
-
-		if n >= 0:
-			base = self
-		else:
-			base = self.one() / self
 		
 		field_size = self.field_size
-		return self.__class__(self.exponent[(self.logarithm[base.__value] * abs(n)) % (field_size - 1)]) # assumes Python semantics of modulus of negative values
+		return self.__class__(self.exponent[(self.logarithm[self.__value] * (n  % (field_size - 1))) % (field_size - 1)]) # assumes Python semantics of modulus of negative values
 
 
 class Polynomial:
@@ -946,6 +939,7 @@ if __debug__ and __name__ == '__main__':
 	
 	print("rijndael", Rijndael.field_size)
 	
+	#for x, y, z in product(Rijndael.domain(), Rijndael.domain(), Rijndael.domain()):
 	sample_size = 32
 	for x, y, z in product(sample(sorted(Rijndael.domain(), key=int), sample_size), sample(sorted(Rijndael.domain(), key=int), sample_size), sample(sorted(Rijndael.domain(), key=int), sample_size)):
 		field_axioms(x, y, z)

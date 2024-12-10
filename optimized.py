@@ -21,7 +21,8 @@ from tracing import *
 bool_t = IntType(1)
 byte_t = IntType(8)
 short_t = IntType(16)
-long_t = IntType(32)
+word_t = IntType(32)
+long_t = IntType(64)
 
 
 def build_array(module, name, int_t, array):
@@ -38,7 +39,7 @@ def build_function(module, name, args_t, return_t, int_t, size_t, expr):
 	args_t - list of function arg types
 	return_t - function return type
 	int_t - type for arithmetics, should be 2 times bigger than args and return
-	size_t - type for list indices, should be bigger than the biggest array and number of loop iterations, plus 1 sign bit
+	size_t - type for list indices, should be bigger than the length of the biggest array and number of loop iterations, plus 1 sign bit
 	expr - SymbolicValue, function body
 	
 	int_t, size_t and expr may be None, in that case a declaration will be created
@@ -386,10 +387,10 @@ def build_function(module, name, args_t, return_t, int_t, size_t, expr):
 				if expr._SymbolicValue__operands[1]._SymbolicValue__type != expr.Type.UINT:
 					raise NotImplementedError(str(expr._SymbolicValue__operands[1]._SymbolicValue__type))
 				
-				if expr._SymbolicValue__operands[0]._SymbolicValue__type != expr.Type.INT:
+				if expr._SymbolicValue__operands[0]._SymbolicValue__type == expr.Type.INT:
 					convert_args(args, expr._SymbolicValue__operands, builder)
 					return builder.udiv(args[0], args[1]), builder # udiv in Python semantics
-				elif expr._SymbolicValue__operands[0]._SymbolicValue__type != expr.Type.UINT:
+				elif expr._SymbolicValue__operands[0]._SymbolicValue__type == expr.Type.UINT:
 					convert_args(args, expr._SymbolicValue__operands, builder)
 					return builder.udiv(args[0], args[1]), builder
 				else:
@@ -399,14 +400,14 @@ def build_function(module, name, args_t, return_t, int_t, size_t, expr):
 				if expr._SymbolicValue__operands[1]._SymbolicValue__type != expr.Type.UINT:
 					raise NotImplementedError(str(expr._SymbolicValue__operands[1]._SymbolicValue__type))
 				
-				if expr._SymbolicValue__operands[0]._SymbolicValue__type != expr.Type.INT:
+				if expr._SymbolicValue__operands[0]._SymbolicValue__type == expr.Type.INT:
 					convert_args(args, expr._SymbolicValue__operands, builder)
-					p0 = builder.mul(args[1], args[1].type(255))
+					p0 = builder.mul(args[1], args[1].type(128)) # FIXME: integer overflow
 					p1 = builder.add(args[0], p0)
-					return builder.urem(p1, args[1]), builder # urem in Python semantics
-				elif expr._SymbolicValue__operands[0]._SymbolicValue__type != expr.Type.UINT:
+					return builder.urem(p1, args[1]), builder # urem in Python semantics # FIXME
+				elif expr._SymbolicValue__operands[0]._SymbolicValue__type == expr.Type.UINT:
 					convert_args(args, expr._SymbolicValue__operands, builder)
-					return builder.urem(args[0], args[1]), builder
+					return builder.urem(args[0], args[1]), builder # FIXME
 				else:
 					raise NotImplementedError(str(expr._SymbolicValue__operands[0]._SymbolicValue__type))
 			
@@ -531,39 +532,43 @@ def build_function(module, name, args_t, return_t, int_t, size_t, expr):
 def optimize(Field, Linear, Quadratic, LinearCircuit, QuadraticCircuit, linearcircuit_call_types=[], quadraticcircuit_call_types=[], debug=False):
 	module = Module()
 	
+	"Create symbols of appropriate types."
 	OptimizedField = type(Field.__name__, (Field,), {})
 	OptimizedLinear = type('Linear', (Linear,), {})
 	OptimizedQuadratic = type('Quadratic', (Quadratic,), {})
 	OptimizedLinearCircuit = type('LinearCircuit', (LinearCircuit,), {})
 	OptimizedQuadraticCircuit = type('QuadraticCircuit', (QuadraticCircuit,), {})
 	
+	"Create exp and log tables; substitute to relevant classes."
 	exp_table = OptimizedField.exponent
 	log_table = OptimizedField.logarithm
 	build_array(module, 'Field.exponent', byte_t, SymbolicValue(OptimizedField.exponent))
 	build_array(module, 'Field.logarithm', byte_t, SymbolicValue(OptimizedField.logarithm))
-	
-	OptimizedField.exponent = SymbolicValue._ptr_list_uint('Field.exponent', 256)
-	OptimizedField.logarithm = SymbolicValue._ptr_list_uint('Field.logarithm', 256)
+	OptimizedField.exponent = SymbolicValue._ptr_list_uint('Field.exponent', len(Field.exponent))
+	OptimizedField.logarithm = SymbolicValue._ptr_list_uint('Field.logarithm', len(Field.logarithm))
 	
 	if debug: trees = open('trees.txt', 'w')
 	
-	field_sum_types = set()
+	"Unlike other functions, Field.sum is always inlined."
+	#field_sum_types = set()
+	#orig_field_sum = OptimizedField.sum
+	#py_field_sum = Field.sum
+	#def field_sum_capture(l):
+	#	if not isinstance(l, SymbolicValue):
+	#		l = symbolize(l)[1]
+	#	
+	#	if not isinstance(l, SymbolicValue):
+	#		tl = [symbolize(_a) for _a in l]
+	#		t, l = zip(*tl)
+	#	
+	#	if len(l) not in field_sum_types:
+	#		field_sum_types.add(len(l))
+	#		build_function(module, f'Field.sum_{len(l)}', [ArrayType(byte_t, len(l)).as_pointer()], byte_t, None, None, None)
+	#	return SymbolicValue._fun_uint(f'Field.sum_{len(l)}')(l)
+	#Field.sum = field_sum_capture
+	
 	orig_field_sum = OptimizedField.sum
 	py_field_sum = transform(OptimizedField.sum, 'BinaryGalois')
-	#py_field_sum = Field.sum
-	def field_sum_capture(l):
-		if not isinstance(l, SymbolicValue):
-			l = symbolize(l)[1]
-		
-		if not isinstance(l, SymbolicValue):
-			tl = [symbolize(_a) for _a in l]
-			t, l = zip(*tl)
-		
-		if len(l) not in field_sum_types:
-			field_sum_types.add(len(l))
-			build_function(module, f'Field.sum_{len(l)}', [ArrayType(byte_t, len(l)).as_pointer()], byte_t, None, None, None)
-		return SymbolicValue._fun_uint(f'Field.sum_{len(l)}')(l)
-	#Field.sum = field_sum_capture
 	OptimizedField.sum = lambda _l: OptimizedField(py_field_sum(SymbolicArray(symbolize(_l)[1], [None], [OptimizedField])))
 	
 	if debug: print("optimizing multiplication")
@@ -571,7 +576,7 @@ def optimize(Field, Linear, Quadratic, LinearCircuit, QuadraticCircuit, linearci
 	if debug: print('Field.__mul__', file=trees)
 	if debug: body._print_tree(file=trees)
 	if debug: print(file=trees)
-	build_function(module, 'Field.__mul__', [byte_t, byte_t], byte_t, short_t, long_t, body)
+	build_function(module, 'Field.__mul__', [byte_t, byte_t], byte_t, short_t, word_t, body)
 	OptimizedField.__mul__ = lambda _a, _b: OptimizedField(SymbolicValue._fun_uint('Field.__mul__')(symbolize(_a)[1], symbolize(_b)[1]))
 	
 	if debug: print("optimizing exponentiation")
@@ -579,7 +584,7 @@ def optimize(Field, Linear, Quadratic, LinearCircuit, QuadraticCircuit, linearci
 	if debug: print('Field.__pow__', file=trees)
 	if debug: body._print_tree(file=trees)
 	if debug: print(file=trees)
-	build_function(module, 'Field.__pow__', [byte_t, short_t], byte_t, short_t, long_t, body)
+	build_function(module, 'Field.__pow__', [byte_t, short_t], byte_t, short_t, word_t, body)
 	OptimizedField.__pow__ = lambda _a, _b: OptimizedField(SymbolicValue._fun_uint('Field.__pow__')(symbolize(_a)[1], symbolize(_b)[1]))
 	
 	if debug: print("optimizing linear")
@@ -588,7 +593,7 @@ def optimize(Field, Linear, Quadratic, LinearCircuit, QuadraticCircuit, linearci
 	if debug: print('Linear.__call__', file=trees)
 	if debug: body._print_tree(file=trees)
 	if debug: print(file=trees)
-	build_function(module, 'Linear.__call__', [ArrayType(byte_t, OptimizedField.field_power).as_pointer(), byte_t], byte_t, short_t, long_t, body)
+	build_function(module, 'Linear.__call__', [ArrayType(byte_t, OptimizedField.field_power).as_pointer(), byte_t], byte_t, short_t, word_t, body)
 	OptimizedLinear.__call__ = lambda _l, _f: OptimizedField(py_linear_call(_l, OptimizedField(symbolize(_f)[1])))
 	
 	if debug: print("optimizing quadratic")
@@ -596,11 +601,11 @@ def optimize(Field, Linear, Quadratic, LinearCircuit, QuadraticCircuit, linearci
 	if debug: print('Quadratic.__call__', file=trees)
 	if debug: body._print_tree(file=trees)
 	if debug: print(file=trees)
-	build_function(module, 'Quadratic.__call__', [ArrayType(byte_t, OptimizedField.field_power**2).as_pointer(), byte_t, byte_t], byte_t, short_t, long_t, body)
+	build_function(module, 'Quadratic.__call__', [ArrayType(byte_t, OptimizedField.field_power**2).as_pointer(), byte_t, byte_t], byte_t, short_t, word_t, body)
 	OptimizedQuadratic.__call__ = lambda _q, _f1, _f2: OptimizedField(SymbolicValue._fun_uint('Quadratic.__call__')(symbolize(_q)[1], symbolize(_f1)[1], symbolize(_f2)[1]))
 	
 	if debug: print("optimizing linear circuit")
-	linearcircuit_call_types = set()
+	linearcircuit_call_types = set(linearcircuit_call_types)
 	orig_linearcircuit_call = OptimizedLinearCircuit.__call__
 	py_linearcircuit_call = OptimizedLinearCircuit.__call__
 	def linearcircuit_call_capture(lc, iv):
@@ -626,8 +631,8 @@ def optimize(Field, Linear, Quadratic, LinearCircuit, QuadraticCircuit, linearci
 		iv = Vector(SymbolicArray(SymbolicValue._arg_list_uint(1, input_size), [None], [OptimizedField]))
 		tr = lc(iv)
 	
-	#print("optimizing quadratic circuit")
-	quadraticcircuit_call_types = set()
+	print("optimizing quadratic circuit")
+	quadraticcircuit_call_types = set(quadraticcircuit_call_types)
 	orig_quadraticcircuit_call = OptimizedQuadraticCircuit.__call__
 	py_quadraticcircuit_call = OptimizedQuadraticCircuit.__call__
 	def quadraticcircuit_call_capture(qc, iv):
@@ -678,7 +683,7 @@ def optimize(Field, Linear, Quadratic, LinearCircuit, QuadraticCircuit, linearci
 		if debug: print(f'LinearCircuit.__call__{output_size}_{input_size}', file=trees)
 		if debug: body._print_tree(file=trees)
 		if debug: print(file=trees)
-		build_function(module, f'LinearCircuit.__call__{output_size}_{input_size}', [ArrayType(byte_t, input_size * output_size * OptimizedField.field_power).as_pointer(), ArrayType(byte_t, input_size).as_pointer(), ArrayType(byte_t, output_size).as_pointer()], ArrayType(byte_t, output_size).as_pointer(), short_t, long_t, body)
+		build_function(module, f'LinearCircuit.__call__{output_size}_{input_size}', [ArrayType(byte_t, input_size * output_size * OptimizedField.field_power).as_pointer(), ArrayType(byte_t, input_size).as_pointer(), ArrayType(byte_t, output_size).as_pointer()], ArrayType(byte_t, output_size).as_pointer(), short_t, word_t, body)
 	
 	for output_size, input_size in quadraticcircuit_call_types:
 		qc = OptimizedQuadraticCircuit(SymbolicTable(SymbolicValue._arg_list_uint(0, OptimizedField.field_power**2 * output_size * input_size**2), [output_size, input_size, input_size], [OptimizedField.field_power, OptimizedField.field_power, None], [OptimizedQuadratic, OptimizedLinear, OptimizedField]))
@@ -689,7 +694,7 @@ def optimize(Field, Linear, Quadratic, LinearCircuit, QuadraticCircuit, linearci
 		if debug: print(f'QuadraticCircuit.__call__{output_size}_{input_size}', file=trees)
 		if debug: body._print_tree(file=trees)
 		if debug: print(file=trees)
-		build_function(module, f'QuadraticCircuit.__call__{output_size}_{input_size}', [ArrayType(byte_t, input_size**2 * output_size * OptimizedField.field_power**2).as_pointer(), ArrayType(byte_t, input_size).as_pointer(), ArrayType(byte_t, output_size).as_pointer()], ArrayType(byte_t, output_size).as_pointer(), short_t, long_t, body)
+		build_function(module, f'QuadraticCircuit.__call__{output_size}_{input_size}', [ArrayType(byte_t, input_size**2 * output_size * OptimizedField.field_power**2).as_pointer(), ArrayType(byte_t, input_size).as_pointer(), ArrayType(byte_t, output_size).as_pointer()], ArrayType(byte_t, output_size).as_pointer(), short_t, word_t, body)
 	
 	if debug: trees.close()
 	
@@ -722,6 +727,7 @@ def optimize(Field, Linear, Quadratic, LinearCircuit, QuadraticCircuit, linearci
 		return Field(field_sum(l))
 	#Field.sum = field_sum_bridge
 	'''
+	
 	OptimizedField.sum = orig_field_sum
 	
 	field_mul = CFUNCTYPE(c_uint8, c_uint8, c_uint8)(engine.get_function_address('Field.__mul__'))
@@ -797,19 +803,48 @@ def initialize_llvm():
 if __name__ == '__main__':
 	from random import randrange
 	
-	from fields import Galois
-	from algebra import Linear, Quadratic, Vector
+	from fields import Galois, field_axioms
+	from operations import Linear, Quadratic
+	from vectors import Vector
 	from machines import Automaton, LinearCircuit, QuadraticCircuit
 	from memory import Array, Table
+	from itertools import product
+	from time import time
 	
 	profile = False
 	if profile:
 		from pycallgraph2 import PyCallGraph
 		from pycallgraph2.output.graphviz import GraphvizOutput
-		
+	
 	initialize_llvm()
 	
 	Field = Galois('Rijndael', 2, [1, 0, 0, 0, 1, 1, 0, 1, 1])
+	FieldO, LinearO, QuadraticO, LinearCircuitO, QuadraticCircuitO = optimize(Field, Linear, Quadratic, LinearCircuit, QuadraticCircuit, linearcircuit_call_types=[(4, 12), (8, 12), (8, 20), (12, 20)], quadraticcircuit_call_types=[(8, 12), (4, 12), (1, 17), (16, 17)], debug=True)
+	
+	
+	#print(Field(2), Field(1) / Field(2), Field(2) ** -1)
+	#print(FieldO(2), FieldO(1) / FieldO(2), FieldO(2) ** -1)
+	#print(Field(3), Field(1) / Field(3), Field(3) ** -1)
+	#print(FieldO(3), FieldO(1) / FieldO(3), FieldO(3) ** -1)
+	#print(Field(7), Field(7) ** (Field.field_size - 1), Field(1))
+	#print(FieldO(7), FieldO(7) ** (FieldO.field_size - 1), FieldO(1))
+	
+	assert not FieldO(0)
+	
+	assert Field(7) ** (Field.field_size - 1) == Field(1)
+	assert FieldO(7) ** (FieldO.field_size - 1) == FieldO(1)
+	
+	for x in FieldO.domain():
+		if x:
+			assert x ** (x.field_size - 1) == FieldO(1), f"{x} ::: {x ** (x.field_size - 1)}"
+	
+	assert Field(1) / Field(2) == Field(2) ** -1
+	assert FieldO(1) / FieldO(2) == FieldO(2) ** -1
+
+	#for x, y, z in product(FieldO.domain(), FieldO.domain(), FieldO.domain()):
+	#	field_axioms(x, y, z)
+	
+	#quit()
 	
 	test_vec_1 = [Field.random(randrange) for _n in range(Field.field_power)]
 	test_vec_2 = [Field.random(randrange), Field.random(randrange)]
@@ -820,12 +855,11 @@ if __name__ == '__main__':
 	test_a = (Field.sum(test_vec_1), test_vec_2[0] * test_vec_2[1], test_vec_3[0] ** test_vec_3[1], test_vec_4[0](test_vec_4[1]), test_vec_5[0](test_vec_5[1], test_vec_5[2]))
 	#print(Field.sum(test_vec_1), test_vec_2[0] * test_vec_2[1], test_vec_3[0] ** test_vec_3[1], test_vec_4[0](test_vec_4[1]))
 	
-	FieldO, LinearO, QuadraticO, LinearCircuitO, QuadraticCircuitO = optimize(Field, Linear, Quadratic, LinearCircuit, QuadraticCircuit, linearcircuit_call_types=[(4, 12), (8, 12), (8, 20), (12, 20)], quadraticcircuit_call_types=[(8, 12), (4, 12), (1, 17), (16, 17)], debug=True)
 	
 	test_b = (Field.sum(test_vec_1), test_vec_2[0] * test_vec_2[1], test_vec_3[0] ** test_vec_3[1], test_vec_4[0](test_vec_4[1]), test_vec_5[0](test_vec_5[1], test_vec_5[2]))
 	
-	print(test_a)
-	print(test_b)
+	#print(test_a)
+	#print(test_b)
 	assert test_a == test_b
 	#print(Field.sum(test_vec_1), test_vec_2[0] * test_vec_2[1], test_vec_3[0] ** test_vec_3[1], test_vec_4[0](test_vec_4[1]))
 	
@@ -838,15 +872,10 @@ if __name__ == '__main__':
 		for n in range(length):
 			yield Vector.random(size, Array, Field, randbelow)
 	
-	m_impl = 'llvm'
-	
 	print()
 	a_str = list(random_stream(10, 8, Array, Field, randrange))	
 	au = Automaton.random_linear_linear(8, 8, 12, Table, Array, Vector, LinearCircuit, Linear, Field, randrange)
 	ao = Automaton.deserialize_linear_linear(8, 8, 12, Table, Array, Vector, LinearCircuitO, LinearO, FieldO, au.serialize())
-	if profile:
-		profiler = PyCallGraph(output=GraphvizOutput(output_file=f'{m_impl}_linear_linear_{Field.__name__}.png'))
-		profiler.start()
 	su = au.init_state[:]
 	so = ao.init_state[:]
 	print(su, so)
@@ -856,16 +885,32 @@ if __name__ == '__main__':
 		assert xu == xo
 	print(su, so)
 	assert su == so
+	
 	if profile:
-		profiler.done()
+		print()
+		am_str = list(random_stream(10, 8, Array, Field, randrange))	
+		am = Automaton.random_linear_linear(8, 8, 12, Table, Array, Vector, LinearCircuit, Linear, Field, randrange)
+		s = am.init_state[:]
+		st = time()
+		with PyCallGraph(output=GraphvizOutput(output_file=f'py_linear_linear_{Field.__name__}.png')):
+			for n, x in enumerate(am(am_str, s)):
+				print(n, x)
+		print(time() - st)
+		
+		print()
+		am_str = list(random_stream(10, 8, Array, FieldO, randrange))	
+		am = Automaton.random_linear_linear(8, 8, 12, Table, Array, Vector, LinearCircuitO, LinearO, FieldO, randrange)
+		s = am.init_state[:]
+		st = time()
+		with PyCallGraph(output=GraphvizOutput(output_file=f'llvm_linear_linear_{Field.__name__}.png')):
+			for n, x in enumerate(am(am_str, s)):
+				print(n, x)
+		print(time() - st)
 	
 	print()
 	b_str = list(random_stream(10, 4, Array, Field, randrange))	
 	bu = Automaton.random_linear_quadratic(4, 4, 8, Table, Array, Vector, QuadraticCircuit, LinearCircuit, Quadratic, Linear, Field, randrange)
 	bo = Automaton.deserialize_linear_quadratic(4, 4, 8, Table, Array, Vector, QuadraticCircuitO, LinearCircuitO, QuadraticO, LinearO, FieldO, bu.serialize())
-	if profile:
-		profiler = PyCallGraph(output=GraphvizOutput(output_file=f'{m_impl}_linear_quadratic_{Field.__name__}.png'))
-		profiler.start()
 	su = bu.init_state[:]
 	so = bo.init_state[:]
 	print(su, so)
@@ -875,16 +920,32 @@ if __name__ == '__main__':
 		assert xu == xo
 	print(su, so)
 	assert su == so
+
 	if profile:
-		profiler.done()
+		print()
+		am_str = list(random_stream(10, 4, Array, Field, randrange))	
+		am = Automaton.random_linear_quadratic(4, 4, 8, Table, Array, Vector, QuadraticCircuit, LinearCircuit, Quadratic, Linear, Field, randrange)
+		s = am.init_state[:]
+		st = time()
+		with PyCallGraph(output=GraphvizOutput(output_file=f'py_linear_quadratic_{Field.__name__}.png')):
+			for n, x in enumerate(am(am_str, s)):
+				print(n, x)
+		print(time() - st)
+
+		print()
+		am_str = list(random_stream(10, 4, Array, FieldO, randrange))	
+		am = Automaton.random_linear_quadratic(4, 4, 8, Table, Array, Vector, QuadraticCircuitO, LinearCircuitO, QuadraticO, LinearO, FieldO, randrange)
+		s = am.init_state[:]
+		st = time()
+		with PyCallGraph(output=GraphvizOutput(output_file=f'llvm_linear_quadratic_{Field.__name__}.png')):
+			for n, x in enumerate(am(am_str, s)):
+				print(n, x)
+		print(time() - st)
 	
 	print()
 	c_str = list(random_stream(10, 4, Array, Field, randrange))	
 	cu = Automaton.random_quadratic_linear(4, 4, 8, Table, Array, Vector, QuadraticCircuit, LinearCircuit, Quadratic, Linear, Field, randrange)
 	co = Automaton.deserialize_quadratic_linear(4, 4, 8, Table, Array, Vector, QuadraticCircuitO, LinearCircuitO, QuadraticO, LinearO, FieldO, cu.serialize())
-	if profile:
-		profiler = PyCallGraph(output=GraphvizOutput(output_file=f'{m_impl}_quadratic_linear_{Field.__name__}.png'))
-		profiler.start()
 	su = cu.init_state[:]
 	so = co.init_state[:]
 	print(su, so)
@@ -894,16 +955,32 @@ if __name__ == '__main__':
 		assert xu == xo
 	print(su, so)
 	assert su == so
+	
 	if profile:
-		profiler.done()
+		print()
+		am_str = list(random_stream(10, 4, Array, Field, randrange))	
+		am = Automaton.random_quadratic_linear(4, 4, 8, Table, Array, Vector, QuadraticCircuit, LinearCircuit, Quadratic, Linear, Field, randrange)
+		s = am.init_state[:]
+		st = time()
+		with PyCallGraph(output=GraphvizOutput(output_file=f'py_quadratic_linear_{Field.__name__}.png')):
+			for n, x in enumerate(am(am_str, s)):
+				print(n, x)
+		print(time() - st)
+
+		print()
+		am_str = list(random_stream(10, 4, Array, FieldO, randrange))	
+		am = Automaton.random_quadratic_linear(4, 4, 8, Table, Array, Vector, QuadraticCircuitO, LinearCircuitO, QuadraticO, LinearO, FieldO, randrange)
+		s = am.init_state[:]
+		st = time()
+		with PyCallGraph(output=GraphvizOutput(output_file=f'llvm_quadratic_linear_{Field.__name__}.png')):
+			for n, x in enumerate(am(am_str, s)):
+				print(n, x)
+		print(time() - st)
 	
 	print()
 	d_str = list(random_stream(10, 1, Array, Field, randrange))
 	du = Automaton.random_quadratic_quadratic(1, 1, 16, Table, Array, Vector, QuadraticCircuit, Quadratic, Linear, Field, randrange)
 	do = Automaton.deserialize_quadratic_quadratic(1, 1, 16, Table, Array, Vector, QuadraticCircuitO, QuadraticO, LinearO, FieldO, du.serialize())
-	if profile:
-		profiler = PyCallGraph(output=GraphvizOutput(output_file=f'{m_impl}_quadratic_quadratic_{Field.__name__}.png'))
-		profiler.start()
 	su = du.init_state[:]
 	so = do.init_state[:]
 	print(su, so)
@@ -913,7 +990,25 @@ if __name__ == '__main__':
 		assert xu == xo
 	print(su, so)
 	assert su == so
+	
 	if profile:
-		profiler.done()
-
+		print()
+		am_str = list(random_stream(10, 1, Array, Field, randrange))	
+		am = Automaton.random_quadratic_quadratic(1, 1, 16, Table, Array, Vector, QuadraticCircuit, Quadratic, Linear, Field, randrange)
+		s = am.init_state[:]
+		st = time()
+		with PyCallGraph(output=GraphvizOutput(output_file=f'py_quadratic_quadratic_{Field.__name__}.png')):
+			for n, x in enumerate(am(am_str, s)):
+				print(n, x)
+		print(time() - st)
+		
+		print()
+		am_str = list(random_stream(10, 1, Array, FieldO, randrange))	
+		am = Automaton.random_quadratic_quadratic(1, 1, 16, Table, Array, Vector, QuadraticCircuitO, QuadraticO, LinearO, FieldO, randrange)
+		s = am.init_state[:]
+		st = time()
+		with PyCallGraph(output=GraphvizOutput(output_file=f'llvm_quadratic_quadratic_{Field.__name__}.png')):
+			for n, x in enumerate(am(am_str, s)):
+				print(n, x)
+		print(time() - st)
 

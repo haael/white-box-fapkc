@@ -16,7 +16,7 @@ __all__ = [
 
 
 from fields import Galois
-from algebra import Vector
+from vectors import Vector
 
 
 class Rijndael(Galois('Rijndael', 2, [1, 0, 0, 0, 1, 1, 0, 1, 1])):

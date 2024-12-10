@@ -10,7 +10,10 @@ __all__ = 'LinearCircuit', 'QuadraticCircuit', 'Automaton'
 from itertools import product, chain
 from collections import defaultdict
 
-from algebra import *
+from vectors import *
+from operations import *
+from polynomials import *
+
 from utils import superscript, cached, table_fallback
 
 

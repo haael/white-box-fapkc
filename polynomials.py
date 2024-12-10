@@ -13,6 +13,54 @@ from operator import __mul__
 from utils import superscript, cached, array_fallback, table_fallback
 
 
+
+def karatsuba(z, a, b):
+	"Karatsuba's „divide and conquer” polynomial multiplication algorithm."
+	
+	if len(a) != len(b):
+		raise ValueError("Input sequences must be of equal length.")
+
+	if len(a) == 0:
+		raise ValueError("Sequences must not be empty.")
+	
+	if len(a) == 1:
+		return [a[0] * b[0], z]
+	
+	if len(a) % 2 != 0:
+		raise ValueError("Sequences' length must be a power of 2.")
+	
+	n = len(a) // 2
+	
+	al = a[:n]
+	ar = a[n:]
+	if len(al) < len(ar):
+		al.append(z)
+	
+	bl = b[:n]
+	br = b[n:]
+	if len(bl) < len(br):
+		bl.append(z)
+	
+	aa = [_x + _y for _x, _y in zip(al, ar)]
+	bb = [_x + _y for _x, _y in zip(bl, br)]
+	
+	ll = karatsuba(z, al, bl)
+	mm = karatsuba(z, aa, bb)
+	rr = karatsuba(z, ar, br)
+	
+	if len(ll) < len(a):
+		ll.append(z)
+	if len(rr) < len(a):
+		rr.append(z)
+	
+	result = ll + rr
+	for i, (l, m, r) in enumerate(zip(ll, mm, rr)):
+		result[i + n] -= l - m + r
+	
+	assert len(result) == 2 * len(a)
+	return result
+
+
 class UnivariatePolynomial:
 	@property
 	@cached
@@ -131,28 +179,43 @@ class UnivariatePolynomial:
 			return NotImplemented
 		except TypeError:
 			return self.__class__(self.Array((other - self[_n] if _n == 0 else -self[_n] for _n in range(self.Field.field_size - 1)), [None], [self.Field]))
-	
+		
 	def __mul__(self, other):
 		try:
 			if other.Field != self.Field:
 				return NotImplemented
 			
-			return self.__class__(self.Array((self.Field.sum(self[_n] * other[(_m - _n) % (self.Field.field_size - 1)] for _n in range(self.Field.field_size - 1)) for _m in range(self.Field.field_size - 1)), [None], [self.Field]))
-		except AttributeError:
-			return NotImplemented
-		except TypeError:
-			return self.__class__(self.Array((self[_n] * other for _n in range(self.Field.field_size - 1)), [None], [self.Field]))
+			if self.Field.field_base != 2:
+				return self.__class__(self.Array((self.Field.sum(self[_n] * other[(_m - _n) % (self.Field.field_size - 1)] for _n in range(self.Field.field_size - 1)) for _m in range(self.Field.field_size - 1)), [None], [self.Field]))
+			
+			z = self.Field.zero()
+			a = [z] + self.__values[1:] + [self.__values[0]]
+			b = [z] + other.__values[1:] + [other.__values[0]]
+			r = karatsuba(z, a, b)
+
+			assert len(r) == 2 * self.Field.field_size
+			assert r[0] == z
+			assert r[1] == z
+			assert r[2 * self.Field.field_size - 1] == z
+			
+			r[0] = r[-2]
+			r[1] = r[-1]
+			
+			f = [r[_n] + r[_n + self.Field.field_size - 1] for _n in range(self.Field.field_size - 1)]
+			#print(len(f), f)
+			#raise NotImplementedError
+
+			return self.__class__(self.Array(f, [None], [self.Field]))
+
+
+		except (AttributeError, TypeError):
+			try:
+				return self.__class__(self.Array((self[_n] * other for _n in range(self.Field.field_size - 1)), [None], [self.Field]))
+			except TypeError:
+				return NotImplemented
 	
 	def __rmul__(self, other):
-		try:
-			if other.Field != self.Field:
-				return NotImplemented
-			
-			return self.__class__(self.Array((self.Field.sum(other[_n] * self[(_m - _n) % (self.Field.field_size - 1)] for _n in range(self.Field.field_size - 1)) for _m in range(self.Field.field_size - 1)), [None], [self.Field]))
-		except AttributeError:
-			return NotImplemented
-		except TypeError:
-			return self.__class__(self.Array((other * self[_n] for _n in range(self.Field.field_size - 1)), [None], [self.Field]))
+		return self.__class__(self.Array((other * self[_n] for _n in range(self.Field.field_size - 1)), [None], [self.Field]))
 	
 	@cached
 	def __pow__(self, exponent):
@@ -387,6 +450,22 @@ class NonUniform:
 if __debug__ and __name__ == '__main__':
 	from fields import Galois
 	from random import randrange
+	from pycallgraph2 import PyCallGraph
+	from pycallgraph2.output.graphviz import GraphvizOutput
+	
+	'''
+	Rijndael = Galois('Rijndael', 2, [1, 0, 0, 0, 1, 1, 0, 1, 1])
+	a = UnivariatePolynomial.random(list, Rijndael, randrange)
+	b = UnivariatePolynomial.random(list, Rijndael, randrange)
+	
+	with PyCallGraph(output=GraphvizOutput(output_file=f'polynomial_multiplication.png')):
+		c = a * b
+	
+	with PyCallGraph(output=GraphvizOutput(output_file=f'polynomial_exponentiation.png')):
+		c = a ** 10
+	
+	quit()
+	'''
 	
 	#fields = Galois('Binary', 2, [1, 1]), Galois('F3', 3, [1, 0, 2, 1]), Galois('Rijndael', 2, [1, 0, 0, 0, 1, 1, 0, 1, 1])
 	fields = Galois('Binary', 2, [1, 1]), Galois('Rijndael', 2, [1, 0, 0, 0, 1, 1, 0, 1, 1])
@@ -446,8 +525,8 @@ if __debug__ and __name__ == '__main__':
 			assert ab(_0) == _0
 			assert ba(_0) == _0
 			
-			for m in range(20):
-				print("test")
+			for m in range(5):
+				#print("test")
 				x = F.random(randrange)
 				y = F.random(randrange)
 				e = randrange(0, 1000)
@@ -469,7 +548,7 @@ if __debug__ and __name__ == '__main__':
 				if e:
 					assert a ** e == reduce(__mul__, [a] * e), f"{a} ** {e}"
 				if e and f:
-					assert a ** (e + f) == a**e * a**f
+					assert a ** (e + f) == a**e * a**f, f"a ** ({e} + {f}) == a**{e} * a**{f}"
 					assert a ** (e * f) == (a**e)**f
 				if a and e:
 					assert (a ** e)(x) == a(x) ** e

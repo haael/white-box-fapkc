@@ -154,6 +154,13 @@ class SymbolicValue:
 	
 	@classmethod
 	def _if(cls, c, yes, no):
+		#print("if", yes, no)
+		
+		if isinstance(yes, int):
+			yes = cls(yes)
+		if isinstance(no, int):
+			no = cls(no)
+		
 		if yes.__type != no.__type:
 			raise ValueError
 		return cls(cls.Mnemonic.IF, yes.__type, yes.__length, [c, yes, no])
@@ -355,8 +362,11 @@ class SymbolicValue:
 		elif self.__type != self.Type.INT:
 			raise TypeError
 		
-		r = self.__class__._if(self >= self.__class__(0), self, -self)
-		return self.__class__(r.__mnemonic, self.Type.UINT, r.__length, r.__operands)
+		sign = self.__class__(2) * self.__class__(self.Mnemonic.GE, self.Type.UINT, None, [self, self.__class__(0)]) - self.__class__(1)
+		result = sign * self
+		#return result
+		#r = self.__class__._if(self >= self.__class__(0), self, -self)
+		return self.__class__(result.__mnemonic, self.Type.UINT, result.__length, result.__operands)
 	
 	def __neg__(self):
 		return self.__class__(-1) * self
@@ -1153,6 +1163,7 @@ def optimize_expr_single(expr):
 	     expr._SymbolicValue__operands[1] == expr._SymbolicValue__operands[0]._SymbolicValue__operands[1]:
 		return expr._SymbolicValue__operands[0]._SymbolicValue__operands[0]
 	
+	"Optimize some typical index operations."
 	if expr._SymbolicValue__mnemonic == expr.Mnemonic.INDEX and \
 	    expr._SymbolicValue__operands[0]._SymbolicValue__mnemonic == expr.Mnemonic.LOOP_OUT and \
 	     expr._SymbolicValue__operands[0]._SymbolicValue__operands[2]._SymbolicValue__mnemonic == expr.Mnemonic.STORE and \
