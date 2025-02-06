@@ -60,6 +60,20 @@ def table_fallback(Table):
 		return lambda items, ksize, sizes, types, Array: Table(items)
 
 
+def singleton(symbol):
+	return symbol()
+
+
+def sm_range(n):
+	return range(n)
+
+
+def set_sm_range(f):
+	global sm_range
+	sm_range = f
+	return f
+
+
 '''
 def sm_range(*args):
 	if len(args) == 1 and hasattr(args[0], 'sm_range'):

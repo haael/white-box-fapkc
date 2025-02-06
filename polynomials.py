@@ -112,17 +112,17 @@ class UnivariatePolynomial:
 		return self.__values[n]
 	
 	@cached
-	def __str__(self):
+	def __str__(self) -> str:
 		if self:
 			return " + ".join(f"{str(self[_n])}·x{superscript(_n if _n else (self.Field.field_size - 1))}" for _n in range(self.Field.field_size - 1))
 		else:
 			return f"{self.Field.zero()}·x{superscript(self.Field.field_size - 1)}"
 	
 	@cached
-	def __repr__(self):
+	def __repr__(self) -> str:
 		return f'{self.__class__.__name__}({repr(self.__values)})'
 	
-	def __bool__(self):
+	def __bool__(self) -> bool:
 		return any(self.__values)
 	
 	def __call__(self, x):
@@ -179,7 +179,7 @@ class UnivariatePolynomial:
 			return NotImplemented
 		except TypeError:
 			return self.__class__(self.Array((other - self[_n] if _n == 0 else -self[_n] for _n in range(self.Field.field_size - 1)), [None], [self.Field]))
-		
+	
 	def __mul__(self, other):
 		try:
 			if other.Field != self.Field:
@@ -206,8 +206,7 @@ class UnivariatePolynomial:
 			#raise NotImplementedError
 
 			return self.__class__(self.Array(f, [None], [self.Field]))
-
-
+		
 		except (AttributeError, TypeError):
 			try:
 				return self.__class__(self.Array((self[_n] * other for _n in range(self.Field.field_size - 1)), [None], [self.Field]))
@@ -218,7 +217,7 @@ class UnivariatePolynomial:
 		return self.__class__(self.Array((other * self[_n] for _n in range(self.Field.field_size - 1)), [None], [self.Field]))
 	
 	@cached
-	def __pow__(self, exponent):
+	def __pow__(self, exponent:int):
 		if exponent < 0: # negative power
 			raise ArithmeticError
 		

@@ -82,7 +82,10 @@ class Array:
 			if stop is not None:
 				self.__stop = stop
 			else:
-				self.__stop = len(self.__storage)
+				try:
+					self.__stop = self.__storage.symbolic_length()
+				except AttributeError:
+					self.__stop = len(self.__storage)
 			
 			if step is not None:
 				self.__step = step
@@ -93,9 +96,11 @@ class Array:
 			#print(self.__step)
 			raise NotImplementedError
 		
-		#assert len(self) == len(self.serialize())
-		assert len(self.__storage) % self.__element_size() == 0
-		assert (self.__stop - self.__start) % self.__element_size() == 0
+		try:
+			assert len(self.__storage) % self.__element_size() == 0
+			assert (self.__stop - self.__start) % self.__element_size() == 0
+		except TypeError:
+			pass
 	
 	@cached
 	def __element_size(self):
@@ -116,6 +121,9 @@ class Array:
 	
 	def serialize(self):
 		return memoryview(self.__storage)[self.__start:self.__stop]
+	
+	def symbolic_length(self):
+		return self.__storage.symbolic_length()
 	
 	def __getitem__(self, index):
 		if index is Ellipsis or (hasattr(index, 'start') and hasattr(index, 'stop') and hasattr(index, 'step')):

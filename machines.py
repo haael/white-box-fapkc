@@ -74,7 +74,10 @@ class LinearCircuit:
 		try:
 			return self.__functions.serialize()
 		except AttributeError:
-			return chain.from_iterable(_v.serialize() for _v in self.__functions)
+			#print("serialize:", self.__functions, sorted(self.__functions.keys()))
+			#for key in sorted(self.__functions.keys()):
+			#	print("", key, type(self.__functions[key]))
+			return chain.from_iterable(self.__functions[_k].serialize() for _k in sorted(self.__functions.keys()))
 	
 	@classmethod
 	def deserialize(cls, output_size, input_size, Table, Array, Linear, Field, data):

@@ -5,8 +5,12 @@ __all__ = 'Vector', 'Matrix'
 
 
 from itertools import product, chain
+from typing import TypeVar, Iterable
 
 from utils import cached, array_fallback, table_fallback
+
+
+Scalar = TypeVar('Scalar')
 
 
 class Vector:
@@ -72,7 +76,7 @@ class Vector:
 	def __getnewargs__(self):
 		return self.__values,
 	
-	def serialize(self):
+	def serialize(self) -> Iterable[int]:
 		try:
 			return self.__values.serialize()
 		except AttributeError:
@@ -83,13 +87,13 @@ class Vector:
 		nArray = array_fallback(Array)
 		return cls(nArray((Field.deserialize(data) for _n in range(length)), [None], [Field]))
 	
-	def __repr__(self):
+	def __repr__(self) -> str:
 		return f'{self.__class__.__name__}({{{ ", ".join(str(_n) + ": " + str(self.__values[_n]) for _n in self.keys()) }}})'
 	
-	def __str__(self):
+	def __str__(self) -> str:
 		return "Vector[" + ", ".join([str(_v) for _v in self.__values]) + "]"
 	
-	def __len__(self):
+	def __len__(self) -> int:
 		return self.vector_length
 	
 	def keys(self):
@@ -101,7 +105,7 @@ class Vector:
 	def items(self):
 		yield from enumerate(self.__values)
 	
-	def __getitem__(self, index):
+	def __getitem__(self, index:int) -> Scalar:
 		if index is Ellipsis:
 			return self.__class__(self.Array(iter(self), [None], [self.Field]))
 		elif hasattr(index, 'start') and hasattr(index, 'stop') and hasattr(index, 'step'):
@@ -109,7 +113,7 @@ class Vector:
 		else:
 			return self.__values[index]
 	
-	def __setitem__(self, index, value):
+	def __setitem__(self, index:int, value:Scalar) -> None:
 		if index is Ellipsis or (hasattr(index, 'start') and hasattr(index, 'stop') and hasattr(index, 'step')):
 			if hasattr(value, '_Vector__values'):
 				self.__values[index] = value.__values
@@ -118,7 +122,7 @@ class Vector:
 		else:
 			self.__values[index] = value
 	
-	def __eq__(self, other):
+	def __eq__(self, other) -> bool:
 		try:
 			return len(self) == len(other) and all(self[_n] == other[_n] for _n in self.keys())
 		except (TypeError, AttributeError):
@@ -232,7 +236,7 @@ class Matrix:
 	
 	ident = one
 	
-	def __init__(self, values):		
+	def __init__(self, values):
 		try:
 			self.__values = values.__values
 			self.matrix_height = values.matrix_height
@@ -254,10 +258,10 @@ class Matrix:
 		self.matrix_height = height
 		self.matrix_width = width
 	
-	def __bool__(self):
+	def __bool__(self) -> bool:
 		return any(self.values())
 	
-	def __str__(self):
+	def __str__(self) -> str:
 		return 'Matrix[' + ', '.join('[' + ', '.join(str(self[_m, _n]) for _n in range(self.matrix_width)) + ']' for _m in range(self.matrix_height)) + ']'
 	
 	def keys(self):
@@ -269,7 +273,7 @@ class Matrix:
 	def items(self):
 		yield from self.__values.items()
 	
-	def __getitem__(self, index):
+	def __getitem__(self, index:tuple[int, int]) -> Scalar:
 		try:
 			m, n = index
 		except ValueError:
@@ -283,7 +287,7 @@ class Matrix:
 		
 		return self.__values[m, n]
 	
-	def __setitem__(self, index, value):
+	def __setitem__(self, index:tuple[int, int], value:Scalar) -> None:
 		try:
 			m, n = index
 		except ValueError:
@@ -297,7 +301,7 @@ class Matrix:
 		
 		self.__values[m, n] = value
 	
-	def __eq__(self, other):
+	def __eq__(self, other) -> bool:
 		try:
 			return self.matrix_width == other.matrix_width and self.matrix_height == other.matrix_height and all(self[_m, _n] == other[_m, _n] for (_m, _n) in self.keys())
 		except (IndexError, AttributeError):
@@ -402,7 +406,7 @@ class Matrix:
 		
 		return U_inv @ D_inv @ L_inv @ P_inv
 	
-	def __pow__(self, n):
+	def __pow__(self, n:int):
 		result = self.one(self.matrix_height, self.matrix_width, self, self, self.Field)
 		if n > 0:
 			for i in range(n):

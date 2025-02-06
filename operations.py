@@ -9,9 +9,14 @@ __all__ = 'Linear', 'Quadratic'
 
 from itertools import product, chain, repeat
 from collections import defaultdict
+from typing import TypeVar, Iterable
+from collections.abc import Sequence
 
-from utils import superscript, cached, array_fallback, table_fallback
+from utils import superscript, cached, array_fallback, table_fallback, sm_range
 from vectors import Matrix
+
+
+Scalar = TypeVar('Scalar')
 
 
 class Linear:
@@ -80,7 +85,7 @@ class Linear:
 		
 		return cls(nArray(f, [None], [Field]))
 	
-	def __init__(self, coefficients):
+	def __init__(self, coefficients:Sequence[Scalar]):
 		"f[0] * x + f[1] * x**p + f[2] * x**(p ** 2) + ... + f[k] * x**(p ** k)"
 		
 		try:
@@ -97,32 +102,35 @@ class Linear:
 	def __getnewargs__(self):
 		return (self.__f,)
 	
-	def serialize(self):
+	def serialize(self) -> Iterable[int]:
 		try:
 			return self.__f.serialize()
 		except AttributeError:
-			return map(int, self.__f)
+			return iter(self.__f)
 	
 	@classmethod
 	def deserialize(cls, Array, Field, data):
-		nArray = array_fallback(Array)		
+		nArray = array_fallback(Array)
 		return cls(nArray((Field.deserialize(data) for n in range(Field.field_power)), [None], [Field]))
 	
-	def linear_coefficient(self, i):
+	def linear_coefficient(self, i:int) -> Scalar:
 		return self.__f[i]
 	
-	def __str__(self):
+	def __str__(self) -> str:
 		return " + ".join(f"{self.__f[_n]}·x{superscript(self.Field.field_base ** _n)}" for _n in range(self.Field.field_power))
 	
-	def __repr__(self):
-		return self.__class__.__name__ + '(' + ", ".join([repr(_f) for _f in self.__f]) + ')'
+	def __repr__(self) -> str:
+		try:
+			return self.__class__.__name__ + '(' + ", ".join([repr(_f) for _f in self.__f]) + ')'
+		except AttributeError:
+			return '<' + "Unfinished construction of " + self.__class__.__qualname__ + '>'
 	
-	def __call__(self, x):
+	def __call__(self, x:Scalar) -> Scalar:
 		Field = self.Field
 		p = Field.field_base
 		n = Field.field_power
 		f = self.__f
-		return Field.sum(f[_n] * x**(p ** _n) for _n in range(n))
+		return Field.sum(f[_n] * x**(p ** _n) for _n in sm_range(n))
 	
 	def inverse(self, Table=dict):
 		"Find inverse operation to this one, i.e.: `a.inverse()(a(x)) == x`. Argument `Table` is passed to `vectors.Matrix` constructor."
@@ -215,16 +223,16 @@ class Linear:
 		except AttributeError:
 			return NotImplemented
 	
-	def pow_base(self, n):
+	def pow_base(self, n:int):
 		return self.__class__(self.Array((self.__f[(_m - n) % self.Field.field_power] ** (self.Field.field_base ** n) for _m in range(self.Field.field_power)), [None], [self.Field]))
 	
-	def __eq__(self, other):
+	def __eq__(self, other) -> bool:
 		try:
 			return self.__f == other.__f
 		except AttributeError:
 			return NotImplemented
 	
-	def __bool__(self):
+	def __bool__(self) -> bool:
 		return any(self.__f)
 
 
@@ -268,7 +276,7 @@ class Quadratic:
 	
 	# TODO: ident, random_nonzero
 	
-	def __init__(self, coefficients):
+	def __init__(self, coefficients:Sequence[Linear]):
 		"f[0](x * y) + f[1](x * y**p) + f[2](x * y ** (p ** 2)) + f[3](x * y ** (p ** 3)) + ... + f[k](x * y ** (p ** k))"
 		
 		try:
@@ -285,7 +293,7 @@ class Quadratic:
 	def __getnewargs__(self):
 		return (self.__f,)
 	
-	def serialize(self):
+	def serialize(self) -> Iterable[int]:
 		try:
 			return self.__f.serialize()
 		except AttributeError:
@@ -296,21 +304,20 @@ class Quadratic:
 		nArray = array_fallback(Array)
 		return cls(nArray((Linear.deserialize(Array, Field, data) for _i in range(Field.field_power)), [Field.field_power, None], [Linear, Field]))
 	
-	def __str__(self):
+	def __str__(self) -> str:
 		return " + ".join(f"{self.quadratic_coefficient(_i, _j)}·x{superscript(self.Field.field_base ** _i)}·y{superscript(self.Field.field_base ** ((_i + _j) % self.Field.field_power))}" for (_i, _j) in product(range(self.Field.field_power), range(self.Field.field_power)))
 	
-	def __repr__(self):
+	def __repr__(self) -> str:
 		return self.__class__.__name__ + '(' + ", ".join([repr(_f) for _f in self.__f]) + ')'
 	
-	def quadratic_coefficient(self, i, j):
+	def quadratic_coefficient(self, i:int, j:int) -> Scalar:
 		return self.__f[i].linear_coefficient(j)
 	
-	def __call__(self, x, y):
+	def __call__(self, x:Scalar, y:Scalar) -> Scalar:
 		Field = self.Field
 		p = Field.field_base
 		n = Field.field_power
 		f = self.__f
-		#print("calling:", type(f[0]).__name__, f[0].__call__)
 		return Field.sum(f[_k](x * y**(p ** _k)) for _k in range(n))
 	
 	def __add__(self, other):
@@ -357,13 +364,13 @@ class Quadratic:
 		
 		return self.__class__(self.Array((other @ _f for _f in self.__f), [self.Field.field_power, None], [self.Linear, self.Field]))
 	
-	def __eq__(self, other):
+	def __eq__(self, other) -> bool:
 		try:
 			return self.__f == other.__f
 		except AttributeError:
 			return NotImplemented
 	
-	def __bool__(self):
+	def __bool__(self) -> bool:
 		return any(self.__f)
 	
 	def __pos__(self):

@@ -205,7 +205,7 @@ def aes_128_decrypt(backward_key, data):
 	return data
 
 
-if __name__ == '__main__':
+if False and __name__ == '__main__':
 	from random import randrange
 	
 	_0 = Rijndael(0)
@@ -244,9 +244,28 @@ if __name__ == '__main__':
 	
 	assert out_vec == aes_128_encrypt(forward_key=key, data=in_vec)
 	assert in_vec == aes_128_decrypt(backward_key=key, data=out_vec)
+
+
+if __name__ == '__main__':
+	from tracing import *
 	
-
-
+	Rijndael = type(Rijndael.__name__ + '_symbolic', (Rijndael,), {})
+	Rijndael.exponent = SymbolicValue._ptr_list_uint('Rijndael.exponent', len(Rijndael.exponent))
+	Rijndael.logarithm = SymbolicValue._ptr_list_uint('Rijndael.logarithm', len(Rijndael.logarithm))
+	
+	key = Vector([symbolize(Rijndael(_x))[1] for _x in bytes.fromhex('00000000000000000000000000000000')])
+	in_vec = Vector([symbolize(Rijndael(SymbolicValue._arg_uint(_n)))[1] for _n in range(16)])
+	
+	shift_rows_forward_trace = optimize_expr(symbolize(trace(transform(shift_rows_forward, 'shift_rows_forward'), [in_vec]))[1])
+	shift_rows_forward_trace._print_tree()
+	
+	#aes_128_encrypt_trace = optimize_expr(symbolize(trace(transform(aes_128_encrypt, 'aes_128_encrypt'), [key, in_vec]))[1])
+	#aes_128_encrypt_trace._print_tree()
+	
+	
+	#s_box_forward_trace = optimize_expr(symbolize(trace(transform(s_box_forward, 's_box_forward'), [RijndaelO(SymbolicValue._arg_uint(0))]))[1])
+	
+	#aes_trace._print_tree()
 
 
 

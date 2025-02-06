@@ -11,6 +11,7 @@ from itertools import zip_longest, product
 from math import sqrt, ceil
 from collections import defaultdict
 from fractions import Fraction
+from typing import Self, Iterable
 
 from utils import *
 
@@ -69,7 +70,7 @@ class Field:
 		return cls(randbelow(cls.field_size - 1) + 1)
 	
 	@classmethod
-	def sum(cls, values):
+	def sum(cls, values:Iterable[Self]):
 		return sum(values, cls.zero())
 	
 	def __init__(self, *values):
@@ -89,33 +90,33 @@ class Field:
 	def __getnewargs__(self):
 		return (self.__value,)
 	
-	def serialize(self):
+	def serialize(self) -> Iterable[int]:
 		yield self.__value
 	
 	@classmethod
 	def deserialize(cls, data):
 		return cls(next(data))
 	
-	def __str__(self):
+	def __str__(self) -> str:
 		try:
 			ss = subscript(self.modulus)
 		except TypeError:
 			ss = ""
 		return str(self.__value) + ss
 	
-	def __repr__(self):
+	def __repr__(self) -> str:
 		return f'{self.__class__.__name__}({repr(self.__value)})'
 	
-	def __bool__(self):
+	def __bool__(self) -> bool:
 		return bool(self.__value)
 	
-	def __int__(self):
+	def __int__(self) -> int:
 		return int(self.__value)
 	
-	def __hash__(self):
+	def __hash__(self) -> int:
 		return hash((self.__value, self.field_power, self.field_base))
 	
-	def __eq__(self, other):
+	def __eq__(self, other) -> bool:
 		try:
 			return self.__value == other.__value
 		except AttributeError:
@@ -193,7 +194,7 @@ class Binary(Field):
 		return self._Field__value
 	
 	@classmethod
-	def sum(cls, values):
+	def sum(cls, values:Iterable[Self]):
 		r = 0
 		for v in values:
 			r ^= v.__value
@@ -224,7 +225,7 @@ class Binary(Field):
 		else:
 			return self
 	
-	def __pow__(self, n):
+	def __pow__(self, n:int):
 		if n == 0 and not self:
 			raise ArithmeticError("Field zero to zero power.")
 		elif n < 0 and not self:
@@ -247,7 +248,7 @@ class FastGalois(Field):
 		
 		return self.exponent[(self.logarithm[self] + self.logarithm[other]) % (self.field_size - 1)]
 	
-	def __str__(self):
+	def __str__(self) -> str:
 		if self.field_power == 1:
 			return "#" + super().__str__() + subscript(self.field_base)
 		else:
@@ -260,7 +261,7 @@ class FastGalois(Field):
 			return self
 		return self.exponent[(self.logarithm[self] - self.logarithm[other]) % (self.field_size - 1)]
 	
-	def __pow__(self, n):
+	def __pow__(self, n:int):
 		if not self:
 			if n == 0:
 				raise ArithmeticError("Field zero to zero power.")
@@ -314,7 +315,7 @@ class BinaryGalois: # does not inherit from `Field` class, every method must be 
 	def random_nonzero(cls, randbelow):
 		return cls(randbelow(cls.field_size - 1) + 1)
 	
-	def __init__(self, value):
+	def __init__(self, value:int):
 		try:
 			self.__value = value.__value
 		except AttributeError:
@@ -326,35 +327,35 @@ class BinaryGalois: # does not inherit from `Field` class, every method must be 
 	def __getnewargs__(self):
 		return (self.__value,)
 	
-	def serialize(self):
+	def serialize(self) -> Iterable[int]:
 		yield self.__value
 	
 	@classmethod
 	def deserialize(cls, data):
 		return cls(next(data))
 	
-	def __str__(self):
+	def __str__(self) -> str:
 		if not isinstance(self.__value, int):
 			return f"#({self.__value})"
 		else:
 			return f"#{self.__value:02x}"
 	
-	def __repr__(self):
+	def __repr__(self) -> str:
 		try:
 			return f'{self.__class__.__name__}({repr(self.__value)})'
 		except AttributeError:
 			return '<' + self.__class__.__name__ + ': ' + repr(self.__dict__) + '>'
 	
-	def __bool__(self):
+	def __bool__(self) -> bool:
 		return bool(self.__value)
 	
-	def __int__(self):
+	def __int__(self) -> int:
 		return int(self.__value)
 	
-	def __hash__(self):
+	def __hash__(self) -> int:
 		return hash((self.__value, self.field_power, self.field_base))
 	
-	def __eq__(self, other):
+	def __eq__(self, other) -> bool:
 		try:
 			return self.__value == other.__value
 		except AttributeError:
@@ -385,8 +386,7 @@ class BinaryGalois: # does not inherit from `Field` class, every method must be 
 		if not self.__value * other.__value:
 			return self.zero()
 		
-		field_size = self.field_size
-		return self.__class__(self.exponent[(self.logarithm[self.__value] + self.logarithm[other.__value]) % (field_size - 1)])
+		return self.__class__(self.exponent[(self.logarithm[self.__value] + self.logarithm[other.__value]) % (self.field_size - 1)])
 	
 	__matmul__ = __mul__
 	
@@ -403,8 +403,7 @@ class BinaryGalois: # does not inherit from `Field` class, every method must be 
 		if not self:
 			return self
 		
-		field_size = self.field_size
-		return self.__class__(self.exponent[(self.logarithm[self.__value] - self.logarithm[other.__value]) % (field_size - 1)])
+		return self.__class__(self.exponent[(self.logarithm[self.__value] - self.logarithm[other.__value]) % (self.field_size - 1)])
 	
 	def __pow__(self, n:int):
 		if not self:
