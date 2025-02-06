@@ -7,4 +7,4 @@ _trash
 *.values.txt
 *.png
 trees.txt
-
+!logo.png
