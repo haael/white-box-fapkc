@@ -9,9 +9,90 @@ from pathlib import Path
 from itertools import product
 
 from utils import cached
-from algebra import *
-from machines import *
+from vectors import *
+#from machines import *
 from aes import *
+
+
+
+class FAPKC:
+	def __init__(self, word_size, Table, Array, Field):
+		self.word_size = word_size
+		self.Table = Table
+		self.Array = Array
+		self.Field = Field
+	
+	def word(self, elements):
+		elements = Vector(self.Array(elements))
+		if elements.vector_length != self.word_size:
+			raise ValueError
+	
+	def linear_transducer_pair(self, delay):
+		...
+	
+	def nonlinear_transducer_pair(self, delay):
+		...
+	
+	def encryption_transducer_pair(self, delay):
+		lL, lR = self.linear_transducer_pair(delay // 2)
+		nL, nR = self.nonlinear_transducer_pair(delay // 2)
+		
+		encrypt = self.compose_i(nL, lL)
+		decrypt = self.compose_o(lR, nR, lL)
+		
+		return encrypt, decrypt
+	
+	
+	
+	
+	def matrix_identity(self):
+		MatrixLinears.ident(self.word_size, self.Table, self.Array, self.Field)
+	
+	def matrix_random(self):
+		MatrixLinears.random(self.word_size, self.Table, self.Array, self.Field)
+	
+	def matrix_random_invertible(self):
+		MatrixLinears.random(self.word_size, self.Table, self.Array, self.Field)
+	
+	def matrix_random_singular(self):
+		MatrixLinears.random(self.word_size, self.Table, self.Array, self.Field)
+	
+	def linear_left_annihilator(self, right):
+		space = self.linear_left_null_space(right)
+		right = self.linear_identity()
+		for element in image:
+			right @= self.linear_zero_for(element)
+		return right
+	
+	def linear_right_annihilator(self, left):
+		roots = self.linear_roots(left)
+		right = None
+		while not right:
+			right = sum(self.field_random(randbelow) * _root for _root in roots)
+		return right
+	
+	def matrix_left_annihilator(self, matrix):
+		...
+	
+	def matrix_right_annihilator(self, matrix):
+		...
+	
+	def linear_left_null_space(self, linear):
+		...
+	
+	def linear_right_null_space(self, linear):
+		...
+	
+	def matrix_left_null_space(self, matrix):
+		...
+	
+	def matrix_right_null_space(self, matrix):
+		...
+
+
+
+A[0, k] @ B[k, 0] = 0
+
 
 
 class Transducer1:
@@ -669,7 +750,7 @@ def fapkc_generate_nl(d):
 
 
 
-def linear_automata_pair_io(d):
+#def linear_automata_pair_io(d):
 
 
 
@@ -1209,5 +1290,238 @@ T[2](w[t - 2]) + T[3](w[t - 3]) + ...
 
 
 #Rijndael.sum((f @ T[_k])(w[t - _k]) for _k in T.keys() if (t - _k >= 0))
+
+
+
+'''
+
+
+y[1] = A[1, 1] * x[1] * x[1] + A[1, 2] * x[1] * x[2] + A[1, 3] * x[1] * x[3] + ...
+     + A[2, 1] * x[2] * x[1] + A[2, 2] * x[2] * x[2] + A[2, 3] * x[2] * x[3] + ...
+     + A[3, 1] * x[3] * x[1] + A[3, 2] * x[3] * x[2] + A[3, 3] * x[3] * x[3]
+
+
+z[1] = B[1, 1] * y[1] * y[1] + B[1, 2] * y[1] * y[2] + B[1, 3] * y[1] * y[3] + ...
+     + B[2, 1] * y[2] * y[1] + B[2, 2] * y[2] * y[2] + B[2, 3] * y[2] * y[3] + ...
+     + B[3, 1] * y[3] * y[1] + B[3, 2] * y[3] * y[2] + B[3, 3] * y[3] * y[3]
+
+
+
+y[t] = A[t - i, t - j] * x[t - i] * x[t - j]
+z[t] = B[t - i, t - j] * y[t - i] * y[t - j]
+
+z[t] = B[t - i, t - j] * (A[t - i - k1, t - j - l1] * x[t - i - k1] * x[t - j - l1]) * (A[t - i - k2, t - j - l2] * x[t - i - k2] * x[t - j - l2])
+
+B A x1 x2 x3 x4
+
+B1 sqrt(A) x1 x2
+B3 sqrt(A) x3 x4
+
+
+B[1, 2] = B[3, 4]
+
+  1 2 3 4
+1   *
+2
+3       *
+4
+
+
+B1 * A + B2 * A * x**2
+
+
+a x² + b x
+a x**4 + b x³
+
+
+
+abcd + abc + abd + acd + bcd + ab + ac + ad + bc + bd + cd + a + b + c + d + 1
+
+
+x[0] * x[1]
+
+x[0] * a + b
+
+
+
+
+a[0] a[1] a[2] a[3] = b[0] b[2] @ a[0] a[1] = a[0] a[1] a[2] a[3]
+
+
+x[0] x[1] x[2] = x[0]**c x[1]**d @ x[0]**a * x[1]**b = x[0]**(c * a) x[1]**(c * b) x[1]**(d * a) x[2]**(d * b)
+
+
+c * a = c * b + d * a = d * b
+
+c = b = 1
+a = d = 2
+
+
+x * k * y = (1 + k²) * x * y
+
+
+k = 1 + k²
+k² = k - 1
+
+k² - k + 1 = 0
+
+254 - 4 = 250
+
+
+
+y = Al[0](x[0]) * Ar[0](x[0]) + Al[0](x[0]) * Ar[1](x[1]) + Al[1](x[1]) * Ar[0](x[0]) + Al[1](x[1]) * Ar[1](x[1])
+z = Bl[0](y[0]) * Br[0](y[0]) + Bl[0](y[0]) * Br[1](y[1]) + Bl[1](y[1]) * Br[0](y[0]) + Bl[1](y[1]) * Br[1](y[1])
+
+
+z = Bl[0](Al[0](x[0]) * Ar[0](x[0])) + Bl[0](Al[0](x[0]) * Ar[1](x[1])) + Bl[0](Al[1](x[1]) * Ar[0](x[0])) + Bl[0](Al[1](x[1]) * Ar[1](x[1])) * Br[0](Al[0](x[0]) * Ar[0](x[0])) + Bl[0](Al[0](x[0]) * Ar[1](x[1])) + Bl[0](Al[1](x[1]) * Ar[0](x[0])) + Bl[0](Al[1](x[1]) * Ar[1](x[1]))
+  + Bl[0](Al[0](x[0]) * Ar[0](x[0])) + Bl[0](Al[0](x[0]) * Ar[1](x[1])) + Bl[0](Al[1](x[1]) * Ar[0](x[0])) + Bl[0](Al[1](x[1]) * Ar[1](x[1])) * Br[1](Al[1](x[1]) * Ar[1](x[1])) + Bl[1](Al[1](x[1]) * Ar[2](x[2])) + Bl[1](Al[2](x[2]) * Ar[1](x[1])) + Bl[1](Al[2](x[2]) * Ar[2](x[2]))
+  + Bl[1](Al[0](x[1]) * Ar[0](x[1])) + Bl[1](Al[0](x[1]) * Ar[1](x[2])) + Bl[1](Al[1](x[2]) * Ar[0](x[1])) + Bl[1](Al[1](x[2]) * Ar[1](x[2])) * Br[0](Al[0](x[0]) * Ar[0](x[0])) + Bl[0](Al[0](x[0]) * Ar[1](x[1])) + Bl[0](Al[1](x[1]) * Ar[0](x[0])) + Bl[0](Al[1](x[1]) * Ar[1](x[1]))
+  + Bl[1](Al[0](x[1]) * Ar[0](x[1])) + Bl[1](Al[0](x[1]) * Ar[1](x[2])) + Bl[1](Al[1](x[2]) * Ar[0](x[1])) + Bl[1](Al[1](x[2]) * Ar[1](x[2])) * Br[1](Al[1](x[1]) * Ar[1](x[1])) + Bl[1](Al[1](x[1]) * Ar[2](x[2])) + Bl[1](Al[2](x[2]) * Ar[1](x[1])) + Bl[1](Al[2](x[2]) * Ar[2](x[2]))
+
+'''
+
+
+'''
+	y0 = x0 + x1 * y1
+	x0 = y0 - x1 * y1
+	
+	z0 = A(y0)
+	y0 = A`(z0)
+	
+	z0 = A(x0) + A(x1 * y1)
+	y1 = A`(z1)
+	
+	z0 = A(x0) + A(x1 * A`(z1))
+	
+	x0 = C0(w0) + C1(w1)
+	x1 = C0(w1) + C1(w2)
+	
+	z0 = A(C0(w0) + C1(w1)) + A((C0(w1) + C1(w2)) * A`(z1))
+	z0 = A(C0(w0) + C1(w1)) + A(C0(w1) * A`(z1) + C1(w2) * A`(z1))
+	z0 = A(C0(w0)) + A(C1(w1)) + A(C0(w1) * A`(z1)) + A(C1(w2) * A`(z1))
+	z0 = (A @ C0)(w0) + (A @ C1)(w1) + A(C0(w1) * A`(z1)) + A(C1(w2) * A`(z1))
+
+
+	z0 = D0(u0) + D1(u1)
+	u0 = D0`(z0) + D1`(z1)
+
+	u0 = D0`((A @ C0)(w0) + (A @ C1)(w1) + A(C0(w1) * A`(z1)) + A(C1(w2) * A`(z1))) + D1`((A @ C0)(w1) + (A @ C1)(w2) + A(C0(w2) * A`(z2)) + A(C1(w3) * A`(z2)))
+
+	z1 = D0(u1) + D1(u2)
+	z2 = D0(u2) + D1(u3)
+
+	u0 = D0`((A @ C0)(w0) + (A @ C1)(w1) + A(C0(w1) * A`(D0(u1) + D1(u2))) + A(C1(w2) * A`(D0(u1) + D1(u2)))) + D1`((A @ C0)(w1) + (A @ C1)(w2) + A(C0(w2) * A`(D0(u2) + D1(u3))) + A(C1(w3) * A`(D0(u2) + D1(u3))))
+	u0 = (D0` @ A @ C0)(w0) + (D0` @ A @ C1)(w1) + D0`(A(C0(w1) * A`(D0(u1) + D1(u2)))) + D0`(A(C1(w2) * A`(D0(u1) + D1(u2)))) + (D1` @ A @ C0)(w1) + (D1` @ A @ C1)(w2) + D1`(A(C0(w2) * A`(D0(u2) + D1(u3)))) + D1`(A(C1(w3) * A`(D0(u2) + D1(u3))))
+	u0 = (D0` @ A @ C0)(w0) + (D0` @ A @ C1 + D1` @ A @ C0)(w1) + (D1` @ A @ C1)(w2) + (D0` @ A)(C0(w1) * A`(D0(u1) + D1(u2))) + (D0` @ A)(C1(w2) * A`(D0(u1) + D1(u2))) + (D1` @ A)(C0(w2) * A`(D0(u2) + D1(u3))) + (D1` @ A)(C1(w3) * A`(D0(u2) + D1(u3)))
+	u0 = (D0` @ A @ C0)(w0) + (D0` @ A @ C1 + D1` @ A @ C0)(w1) + (D1` @ A @ C1)(w2) + (D0` @ A)(C0(w1) * ((A` @ D0)(u1) + (A` @ D1)(u2))) + (D0` @ A)(C1(w2) * ((A` @ D0)(u1) + (A` @ D1)(u2))) + (D1` @ A)(C0(w2) * ((A` @ D0)(u2) + (A` @ D1)(u3))) + (D1` @ A)(C1(w3) * ((A` @ D0)(u2) + (A` @ D1)(u3)))
+
+	u0 = (D0` @ A @ C0)(w0) + (D0` @ A @ C1 + D1` @ A @ C0)(w1) + (D1` @ A @ C1)(w2) +
+ (D0` @ A)(C0(w1) * (A` @ D0)(u1)) + (D0` @ A)(C0(w1) * (A` @ D1)(u2)) +
+ (D0` @ A)(C1(w2) * (A` @ D0)(u1)) + (D0` @ A)(C1(w2) * (A` @ D1)(u2)) +
+ (D1` @ A)(C0(w2) * (A` @ D0)(u2)) + (D1` @ A)(C0(w2) * (A` @ D1)(u3)) +
+ (D1` @ A)(C1(w3) * (A` @ D0)(u2)) + (D1` @ A)(C1(w3) * (A` @ D1)(u3))
+
+'''
+
+
+'''
+	xa, xb
+	ya, yb
+	
+	ya = AaaA(xa) * AaaB(xa) + AabA(xa) * AabB(xb) + AbbA(xb) * AbbB(xb)
+	yb = BaaA(xa) * BaaB(xa) + BabA(xa) * BabB(xb) + BbbA(xb) * BbbB(xb)
+	
+	xa[0] = Ca0(u[0]) + Ca1(u[1])
+	xb[0] = Cb0(u[0]) + Cb1(u[1])
+
+	ya = AaaA(Ca0(u[0]) + Ca1(u[1])) * AaaB(Ca0(u[0]) + Ca1(u[1])) + AabA(Ca0(u[0]) + Ca1(u[1])) * AabB(Cb0(u[0]) + Cb1(u[1])) + AbbA(Cb0(u[0]) + Cb1(u[1])) * AbbB(Cb0(u[0]) + Cb1(u[1]))
+
+	ya = ((AaaA @ Ca0)(u[0]) + (AaaA @ Ca1)(u[1])) * ((AaaB @ Ca0)(u[0]) + (AaaB @ Ca1)(u[1])) + ((AabA @ Ca0)(u[0]) + (AabA @ Ca1)(u[1])) * ((AabB @ Cb0)(u[0]) + (AabB @ Cb1)(u[1])) + ((AbbA @ Cb0)(u[0]) + (AbbA @ Cb1)(u[1])) * ((AbbB @ Cb0)(u[0]) + (AbbB @ Cb1)(u[1]))
+
+	y[0] = (aaA @ Ca0)(u[0]) * (aaB @ Ca0)(u[0]) +
+           (aaA @ Ca0)(u[0]) * (aaB @ Ca1)(u[1]) + 
+           (aaA @ Ca1)(u[1]) * (aaB @ Ca0)(u[0]) +
+           (aaA @ Ca1)(u[1]) * (aaB @ Ca1)(u[1]) + 
+
+	       (abA @ Ca0)(u[0]) * (abB @ Cb0)(u[0]) +
+           (abA @ Ca0)(u[0]) * (abB @ Cb1)(u[1]) + 
+           (abA @ Ca1)(u[1]) * (abB @ Cb0)(u[0]) +
+           (abA @ Ca1)(u[1]) * (abB @ Cb1)(u[1]) + 
+
+           (bbA @ Cb0)(u[0]) * (bbB @ Cb0)(u[0]) +
+           (bbA @ Cb0)(u[0]) * (bbB @ Cb1)(u[1]) + 
+           (bbA @ Cb1)(u[1]) * (bbB @ Cb0)(u[0]) +
+           (bbA @ Cb1)(u[1]) * (bbB @ Cb1)(u[1])
+
+	w[0] = D0(y[0]) + D1(y[1])
+
+
+A x * B y + C x * D y
+
+
+
+	y[0] = A0(x[0]) + A1(x[-1])
+	x[0] = A0`(y[0]) + A1`(y[-1])
+	
+	s[0] = C0(x[0]) + C1(x[-1]) + D0(s[-1])
+	x[0] = C0`(s[0]) + C1`(s[-1])
+	
+	y`[0] = y[0] + s[-1]
+	
+	y[0] = y`[0] - s[-1]
+	x[0] = A0`(y`[0] - s[-1]) + A1`(y`[-1] - s[-2])
+	
+	s[0] = C0(A0`(y`[0] - s[-1]) + A1`(y`[-1] - s[-2])) + C1(A0`(y`[-1] - s[-2]) + A1`(y`[-2] - s[-3])) + D0(s[-1])
+
+	
+	z[0] = E0(y[0]) + E1(y[-1]) + F0(t[-1])
+	t[0] = G0(y[0]) + G1(y[-1]) + H0(t[-1])
+
+
+
+	
+	y[0] = A @ x[0:] + B @ s[1:]
+	s[0] = C @ x[0:] + D @ s[1:]
+
+
+	s[0] = E @ (C @ x[0:] + D @ E` @ s[1:])
+
+
+	
+	x[0] = U @ u[0:]
+
+'''
+
+
+
+'''
+	
+	y[0] = x[0] * y[1]
+	
+	x[0] = A0 @ xc[0] + A1 @ xc[1] + ...
+	yc[0] = B0 @ y[0] + B1 @ y[1] + ...
+	
+	y[0] = C0 @ yc[0] + C1 @ yc[1] + ...
+	
+	yc[0] = B0 @ (x[0] * y[1]) + B1 @ y[1] + ...
+	
+	y[1] = C0 @ yc[1] + C1 @ yc[2] + ...
+	
+	yc[0] = B0 @ (x[0] * (C0 @ yc[1] + C1 @ yc[2] + ...)) + B1 @ (C0 @ yc[1] + C1 @ yc[2] + ...) + ...
+	yc[0] = B0 @ ((A0 @ xc[0] + A1 @ xc[1] + ...) * (C0 @ yc[1] + C1 @ yc[2] + ...)) + B1 @ (C0 @ yc[1] + C1 @ yc[2] + ...) + ...
+	
+	
+	
+'''
+
+
+class Transducer:
+	...
+
+
+mult = Transducer(1, 2, 1)
+mult.output[0] = mult.state[1] * mult.input[0]
+mult.state[0] = mult.state[1] * mult.input[0]
+
 
 

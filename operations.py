@@ -7,16 +7,12 @@
 __all__ = 'Linear', 'Quadratic'
 
 
-from itertools import product, chain, repeat
+from itertools import product, chain, repeat, zip_longest
 from collections import defaultdict
-from typing import TypeVar, Iterable
-from collections.abc import Sequence
+from typing import Iterable
 
-from utils import superscript, cached, array_fallback, table_fallback, sm_range
+from utils import *
 from vectors import Matrix
-
-
-Scalar = TypeVar('Scalar')
 
 
 class Linear:
@@ -27,8 +23,7 @@ class Linear:
 	def Field(self):
 		return self.__f[0].Field
 	
-	@classmethod
-	@property
+	@classproperty
 	def Linear(cls):
 		return cls
 	
@@ -46,12 +41,12 @@ class Linear:
 	@classmethod
 	def zero(cls, Array, Field):
 		nArray = array_fallback(Array)		
-		return cls(nArray((Field.zero() for _n in range(Field.field_power)), [None], [Field]))
+		return cls(nArray((Field.zero() for _n in range(Field.field_power)), [Field.field_power, Field.field_bytesize], [Field]))
 	
 	@classmethod
 	def one(cls, Array, Field):
 		nArray = array_fallback(Array)		
-		return cls(nArray(chain([Field.one()], (Field.zero() for _n in range(Field.field_power - 1))), [None], [Field]))
+		return cls(nArray(chain([Field.one()], (Field.zero() for _n in range(Field.field_power - 1))), [Field.field_power, Field.field_bytesize], [Field]))
 	
 	ident = one
 	
@@ -59,12 +54,12 @@ class Linear:
 	def factor(cls, value, Array):
 		nArray = array_fallback(Array)		
 		Field = value.__class__
-		return cls(nArray(chain([value], (Field.zero() for _n in range(Field.field_power - 1))), [None], [Field]))
+		return cls(nArray(chain([value], (Field.zero() for _n in range(Field.field_power - 1))), [Field.field_power, Field.field_bytesize], [Field]))
 	
 	@classmethod
 	def random(cls, Array, Field, randbelow):
-		nArray = array_fallback(Array)		
-		return cls(nArray((Field.random(randbelow) for n in range(Field.field_power)), [None], [Field]))
+		nArray = array_fallback(Array)
+		return cls(nArray((Field.random(randbelow) for n in range(Field.field_power)), [Field.field_power, Field.field_bytesize], [Field]))
 	
 	@classmethod
 	def random_nonzero(cls, Array, Field, randbelow):
@@ -83,9 +78,9 @@ class Linear:
 		else:
 			f.append(Field.random_nonzero(randbelow))
 		
-		return cls(nArray(f, [None], [Field]))
+		return cls(nArray(f, [Field.field_power, Field.field_bytesize], [Field]))
 	
-	def __init__(self, coefficients:Sequence[Scalar]):
+	def __init__(self, coefficients:ArrayType(('field_power',), (FieldType,))):
 		"f[0] * x + f[1] * x**p + f[2] * x**(p ** 2) + ... + f[k] * x**(p ** k)"
 		
 		try:
@@ -93,11 +88,13 @@ class Linear:
 		except (AttributeError, TypeError):
 			self.__f = coefficients
 		
-		if not len(self.__f) == self.Field.field_power:
-			raise ValueError(f"Linear function over {self.Field.__name__} needs {self.Field.field_power} parameters. (Got {len(self.__f)})")
+		l = len(self.__f)
 		
-		if any(_f.Field != self.Field for _f in self.__f):
-			raise ValueError(f"All elements must belong to field {self.Field}.")
+		if __debug__ and l != self.Field.field_power:
+			raise SpecialIndexError(f"Linear function over {self.Field.__name__} needs {self.Field.field_power} parameters. (Got {repr(l)})")
+		
+		if __debug__ and any(_f.Field != self.Field for _f in self.__f):
+			raise SpecialValueError(f"All elements must belong to field {self.Field}.")
 	
 	def __getnewargs__(self):
 		return (self.__f,)
@@ -111,9 +108,9 @@ class Linear:
 	@classmethod
 	def deserialize(cls, Array, Field, data):
 		nArray = array_fallback(Array)
-		return cls(nArray((Field.deserialize(data) for n in range(Field.field_power)), [None], [Field]))
+		return cls(nArray((Field.deserialize(data) for n in range(Field.field_power)), [Field.field_power, Field.field_bytesize], [Field]))
 	
-	def linear_coefficient(self, i:int) -> Scalar:
+	def linear_coefficient(self, i:int) -> FieldType:
 		return self.__f[i]
 	
 	def __str__(self) -> str:
@@ -121,16 +118,18 @@ class Linear:
 	
 	def __repr__(self) -> str:
 		try:
-			return self.__class__.__name__ + '(' + ", ".join([repr(_f) for _f in self.__f]) + ')'
-		except AttributeError:
+			f = self.__f
+		except AttributeError as e:
 			return '<' + "Unfinished construction of " + self.__class__.__qualname__ + '>'
+		else:
+			return self.__class__.__name__ + '(' + repr(f) + ')'  # ", ".join([repr(_f) for _f in self.__f]) 
 	
-	def __call__(self, x:Scalar) -> Scalar:
+	def __call__(self, x:FieldType) -> FieldType:
 		Field = self.Field
 		p = Field.field_base
 		n = Field.field_power
 		f = self.__f
-		return Field.sum(f[_n] * x**(p ** _n) for _n in sm_range(n))
+		return Field.sum(f[_n] * x**(p ** _n) for _n in range(n))
 	
 	def inverse(self, Table=dict):
 		"Find inverse operation to this one, i.e.: `a.inverse()(a(x)) == x`. Argument `Table` is passed to `vectors.Matrix` constructor."
@@ -155,25 +154,31 @@ class Linear:
 				mat[n, m] = self.__f[(m - n) % size]**(self.Field.field_base ** n)
 		
 		"Reconstruct a linear operation from the calculated parameters."
-		return self.__class__(self.Array(result, [size], [self.Field]))
+		return self.__class__(self.Array(result, [size, self.Field.field_bytesize], [self.Field]))
 	
 	def __add__(self, other):
 		try:
-			return self.__class__(self.Array((_a + _b for (_a, _b) in zip(self.__f, other.__f)), [None], [self.Field]))
-		except AttributeError as error:
+			f1 = self.__f
+			f2 = other.__f
+		except AttributeError:
 			return NotImplemented
+		else:
+			return self.__class__(self.Array((_a + _b for (_a, _b) in zip(f1, f2)), [self.Field.field_power, self.Field.field_bytesize], [self.Field]))
 	
 	def __sub__(self, other):
 		try:
-			return self.__class__(self.Array((_a - _b for (_a, _b) in zip(self.__f, other.__f)), [None], [self.Field]))
+			f1 = self.__f
+			f2 = other.__f
 		except AttributeError:
 			return NotImplemented
+		else:
+			return self.__class__(self.Array((_a - _b for (_a, _b) in zip(f1, f2)), [self.Field.field_power, self.Field.field_bytesize], [self.Field]))
 	
 	def __pos__(self):
 		return self
 	
 	def __neg__(self):
-		return self.__class__(self.Array((-_a for _a in self.__f), [None], [self.Field]))
+		return self.__class__(self.Array((-_a for _a in self.__f), [self.Field.field_power, self.Field.field_bytesize], [self.Field]))
 	
 	def __mul__(self, other):
 		"Multiply the linear operation by a scalar (returns linear operation) or by other linear operation (tensor product, returns quadratic operation)."
@@ -185,9 +190,9 @@ class Linear:
 			return NotImplemented
 		
 		if hasattr(other, 'field_power') and hasattr(other, 'field_base'):
-			return self.__class__(self.Array((_a * other for _a in self.__f), [None], [self.Field]))
+			return self.__class__(self.Array((_a * other for _a in self.__f), [self.Field.field_power, self.Field.field_bytesize], [self.Field]))
 		elif hasattr(other, '_Linear__f'):
-			return Quadratic(self.Array((self.__class__(self.Array((self.__f[_j] * other.__f[(_j + _i) % self.Field.field_power] for _j in range(self.Field.field_power)), [None], [self.Field])) for _i in range(self.Field.field_power)), [self.Field.field_power, None], [self.Linear, self.Field]))
+			return Quadratic(self.Array((self.__class__(self.Array((self.__f[_j] * other.__f[(_j + _i) % self.Field.field_power] for _j in range(self.Field.field_power)), [self.Field.field_power, self.Field.field_bytesize], [self.Field])) for _i in range(self.Field.field_power)), [self.Field.field_power, self.Field.field_power, self.Field.field_bytesize], [self.Linear, self.Field]))
 		else:
 			return NotImplemented
 	
@@ -201,7 +206,7 @@ class Linear:
 			return NotImplemented
 		
 		if hasattr(other, 'field_power') and hasattr(other, 'field_base'):
-			return self.__class__(self.Array((other * _a for _a in self.__f), [None], [self.Field]))
+			return self.__class__(self.Array((other * _a for _a in self.__f), [self.Field.field_power, self.Field.field_bytesize], [self.Field]))
 		else:
 			return NotImplemented
 	
@@ -218,13 +223,13 @@ class Linear:
 				for n in range(other.Field.field_power):
 					f[(m + n) % self.Field.field_power] += self.__f[m] * other.__f[n]**(self.Field.field_base ** m)
 			
-			return self.__class__(self.Array(f, [None], [self.Field]))
+			return self.__class__(self.Array(f, [self.Field.field_power, self.Field.field_bytesize], [self.Field]))
 		
 		except AttributeError:
 			return NotImplemented
 	
 	def pow_base(self, n:int):
-		return self.__class__(self.Array((self.__f[(_m - n) % self.Field.field_power] ** (self.Field.field_base ** n) for _m in range(self.Field.field_power)), [None], [self.Field]))
+		return self.__class__(self.Array((self.__f[(_m - n) % self.Field.field_power] ** (self.Field.field_base ** n) for _m in range(self.Field.field_power)), [self.Field.field_power, self.Field.field_bytesize], [self.Field]))
 	
 	def __eq__(self, other) -> bool:
 		try:
@@ -249,8 +254,7 @@ class Quadratic:
 	def Linear(self):
 		return self.__f[0].Linear
 	
-	@classmethod
-	@property
+	@classproperty
 	def Quadratic(cls):
 		return cls
 	
@@ -262,23 +266,21 @@ class Quadratic:
 	@classmethod
 	def zero(cls, Array, Linear, Field):
 		nArray = array_fallback(Array)
-		return cls(nArray((Linear.zero(Array, Field) for _i in range(Field.field_power)), [Field.field_power, None], [Linear, Field]))
+		return cls(nArray((Linear.zero(Array, Field) for _i in range(Field.field_power)), [Field.field_power, Field.field_power, Field.field_bytesize], [Linear, Field]))
 	
 	@classmethod
 	def ident_ident(cls, Array, Linear, Field):
 		nArray = array_fallback(Array)
-		return cls(nArray((chain([Linear.ident(Array, Field)], (Linear.zero(Array, Field) for _i in range(Field.field_power)))), [Field.field_power, None], [Linear, Field]))
+		return cls(nArray((chain([Linear.ident(Array, Field)], (Linear.zero(Array, Field) for _i in range(Field.field_power)))), [Field.field_power, Field.field_power, Field.field_bytesize], [Linear, Field]))
 	
 	@classmethod
 	def random(cls, Array, Linear, Field, randbelow):
 		nArray = array_fallback(Array)
-		return cls(nArray((Linear.random(Array, Field, randbelow) for _i in range(Field.field_power)), [Field.field_power, None], [Linear, Field]))
+		return cls(nArray((Linear.random(Array, Field, randbelow) for _i in range(Field.field_power)), [Field.field_power, Field.field_power, Field.field_bytesize], [Linear, Field]))
 	
 	# TODO: ident, random_nonzero
 	
-	def __init__(self, coefficients:Sequence[Linear]):
-		"f[0](x * y) + f[1](x * y**p) + f[2](x * y ** (p ** 2)) + f[3](x * y ** (p ** 3)) + ... + f[k](x * y ** (p ** k))"
-		
+	def __init__(self, coefficients:ArrayType(('field_power', 'field_power'), (Linear, FieldType))):
 		try:
 			self.__f = coefficients.__f
 			return
@@ -288,7 +290,7 @@ class Quadratic:
 		self.__f = coefficients
 		
 		if not len(self.__f) == self.Field.field_power:
-			raise ValueError(f"Linear function over {self.Field.__name__} needs {self.Field.field_power} parameters. (Got {len(self.__f)}.)")
+			raise SpecialIndexError(f"Linear function over {self.Field.__name__} needs {self.Field.field_power} parameters. (Got {len(self.__f)}.)") # FIXME
 	
 	def __getnewargs__(self):
 		return (self.__f,)
@@ -302,7 +304,7 @@ class Quadratic:
 	@classmethod
 	def deserialize(cls, Array, Linear, Field, data):
 		nArray = array_fallback(Array)
-		return cls(nArray((Linear.deserialize(Array, Field, data) for _i in range(Field.field_power)), [Field.field_power, None], [Linear, Field]))
+		return cls(nArray((Linear.deserialize(Array, Field, data) for _i in range(Field.field_power)), [Field.field_power, Field.field_power, Field.field_bytesize], [Linear, Field]))
 	
 	def __str__(self) -> str:
 		return " + ".join(f"{self.quadratic_coefficient(_i, _j)}·x{superscript(self.Field.field_base ** _i)}·y{superscript(self.Field.field_base ** ((_i + _j) % self.Field.field_power))}" for (_i, _j) in product(range(self.Field.field_power), range(self.Field.field_power)))
@@ -310,10 +312,11 @@ class Quadratic:
 	def __repr__(self) -> str:
 		return self.__class__.__name__ + '(' + ", ".join([repr(_f) for _f in self.__f]) + ')'
 	
-	def quadratic_coefficient(self, i:int, j:int) -> Scalar:
+	def quadratic_coefficient(self, i:int, j:int) -> FieldType:
 		return self.__f[i].linear_coefficient(j)
 	
-	def __call__(self, x:Scalar, y:Scalar) -> Scalar:
+	def __call__(self, x:FieldType, y:FieldType) -> FieldType:
+		"f[0](x * y) + f[1](x * y**p) + f[2](x * y ** (p ** 2)) + f[3](x * y ** (p ** 3)) + ... + f[k](x * y ** (p ** k))"
 		Field = self.Field
 		p = Field.field_base
 		n = Field.field_power
@@ -322,28 +325,28 @@ class Quadratic:
 	
 	def __add__(self, other):
 		try:
-			return self.__class__(self.Array((_a + _b for (_a, _b) in zip(self.__f, other.__f)), [self.Field.field_power, None], [self.Linear, self.Field]))
+			return self.__class__(self.Array((_a + _b for (_a, _b) in zip(self.__f, other.__f)), [self.Field.field_power, self.Field.field_power, self.Field.field_bytesize], [self.Linear, self.Field]))
 		except AttributeError:
 			return NotImplemented
 	
 	def __sub__(self, other):
 		try:
-			return self.__class__(self.Array((_a - _b for (_a, _b) in zip(self.__f, other.__f)), [self.Field.field_power, None], [self.Linear, self.Field]))
+			return self.__class__(self.Array((_a - _b for (_a, _b) in zip(self.__f, other.__f)), [self.Field.field_power, self.Field.field_power, self.Field.field_bytesize], [self.Linear, self.Field]))
 		except AttributeError:
 			return NotImplemented
 	
 	def __mul__(self, other):
-		return self.__class__(self.Array((_a * other for _a in self.__f), [self.Field.field_power, None], [self.Linear, self.Field]))
+		return self.__class__(self.Array((_a * other for _a in self.__f), [self.Field.field_power, self.Field.field_power, self.Field.field_bytesize], [self.Linear, self.Field]))
 	
 	def __rmul__(self, other):
-		return self.__class__(self.Array((other * _a for _a in self.__f), [self.Field.field_power, None], [self.Linear, self.Field]))
+		return self.__class__(self.Array((other * _a for _a in self.__f), [self.Field.field_power, self.Field.field_power, self.Field.field_bytesize], [self.Linear, self.Field]))
 	
 	def __matmul__(self, other):
 		"Composition of quadratic operation with 2 linear operations. `(q @ (l1, l2))(x, y) = q(l1(x), l2(y))`"
 		
 		try:
 			b, c = other
-		except ValueError:
+		except ConstraintError:
 			return NotImplemented
 		
 		m = self.Field.field_power
@@ -355,14 +358,14 @@ class Quadratic:
 		
 		f = []
 		for j in range(m):
-			f.append(b.__class__(b.Array((d[i, j] for i in range(m)), [None], [self.Field])))
+			f.append(b.__class__(b.Array((d[i, j] for i in range(m)), [self.Field.field_power, self.Field.field_bytesize], [self.Field])))
 		
-		return self.__class__(self.Array(f, [m, None], [self.Linear, self.Field]))
+		return self.__class__(self.Array(f, [self.Field.field_power, self.Field.field_power, self.Field.field_bytesize], [self.Linear, self.Field]))
 	
 	def __rmatmul__(self, other):
 		"Composition of linear operation with quadratic operation. `(l @ q)(x, y) = l(q(x, y))`"
 		
-		return self.__class__(self.Array((other @ _f for _f in self.__f), [self.Field.field_power, None], [self.Linear, self.Field]))
+		return self.__class__(self.Array((other @ _f for _f in self.__f), [self.Field.field_power, self.Field.field_power, self.Field.field_bytesize], [self.Linear, self.Field]))
 	
 	def __eq__(self, other) -> bool:
 		try:
@@ -377,7 +380,7 @@ class Quadratic:
 		return self
 	
 	def __neg__(self):
-		return self.__class__(self.Array((-_a for _a in self.__f), [self.Field.field_power, None], [self.Linear, self.Field]))
+		return self.__class__(self.Array((-_a for _a in self.__f), [self.Field.field_power, self.Field.field_power, self.Field.field_bytesize], [self.Linear, self.Field]))
 
 
 if __debug__ and __name__ == '__main__':
@@ -499,7 +502,7 @@ if __debug__ and __name__ == '__main__':
 				assert (c * a)(x1, x2) == c * a(x1, x2)
 				assert (b * c)(x1, x2) == c * b(x1, x2)
 				assert (c * b)(x1, x2) == c * b(x1, x2)
-				
+		
 		print("Linear vs. quadratic operations test.")
 		for n in range(20):
 			a1 = Quadratic.random(list, Linear, F, randrange)
@@ -523,4 +526,6 @@ if __debug__ and __name__ == '__main__':
 				#print(type(e * a2))
 				assert isinstance(e * a2, Quadratic)
 				assert (e * a2)(x, y) == e * a2(x, y)
+
+
 

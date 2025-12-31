@@ -17,6 +17,7 @@ __all__ = [
 
 from fields import Galois
 from vectors import Vector
+from copy import deepcopy
 
 
 class Rijndael(Galois('Rijndael', 2, [1, 0, 0, 0, 1, 1, 0, 1, 1])):
@@ -60,7 +61,7 @@ def shift_rows_forward(state):
 	for m in range(4):
 		for n in range(4):
 			values[4 * m + n] = state[4 * ((m + n) % 4) + n]
-	return state.__class__(state.Array(values, [16], [state.Field]))
+	return state.__class__(state.Array(values, [16, state.Field.field_bytesize], [state.Field]))
 
 
 def shift_rows_backward(state):
@@ -70,7 +71,7 @@ def shift_rows_backward(state):
 	for m in range(4):
 		for n in range(4):
 			values[4 * m + n] = state[4 * ((m - n) % 4) + n]
-	return state.__class__(state.Array(values, [16], [state.Field]))
+	return state.__class__(state.Array(values, [16, state.Field.field_bytesize], [state.Field]))
 
 
 def mix_columns_forward(state):
@@ -90,7 +91,7 @@ def mix_columns_forward(state):
 		values[4 * m + 1] = _1 * b0 + _2 * b1 + _3 * b2 + _1 * b3
 		values[4 * m + 2] = _1 * b0 + _1 * b1 + _2 * b2 + _3 * b3
 		values[4 * m + 3] = _3 * b0 + _1 * b1 + _1 * b2 + _2 * b3
-	return state.__class__(state.Array(values, [16], [Field]))
+	return state.__class__(state.Array(values, [16, state.Field.field_bytesize], [Field]))
 
 
 def mix_columns_backward(state):
@@ -111,13 +112,13 @@ def mix_columns_backward(state):
 		values[4 * m + 1] =  _9 * b0 + _14 * b1 + _11 * b2 + _13 * b3
 		values[4 * m + 2] = _13 * b0 +  _9 * b1 + _14 * b2 + _11 * b3
 		values[4 * m + 3] = _11 * b0 + _13 * b1 +  _9 * b2 + _14 * b3
-	return state.__class__(state.Array(values, [16], [Field]))
+	return state.__class__(state.Array(values, [16, state.Field.field_bytesize], [Field]))
 
 
 def aes_encrypt_round(state):
 	"Bit operations of AES encryption round."
 	
-	state = state.__class__(state.Array([s_box_forward(_word) for _word in state], [16], [state.Field]))
+	state = state.__class__(state.Array([s_box_forward(_word) for _word in state], [16, state.Field.field_bytesize], [state.Field]))
 	state = shift_rows_forward(state)
 	state = mix_columns_forward(state)
 	return state
@@ -128,7 +129,7 @@ def aes_decrypt_round(state):
 	
 	state = mix_columns_backward(state)
 	state = shift_rows_backward(state)
-	state = state.__class__(state.Array([s_box_backward(_word) for _word in state], [16], [state.Field]))
+	state = state.__class__(state.Array([s_box_backward(_word) for _word in state], [16, state.Field.field_bytesize], [state.Field]))
 	return state
 
 
@@ -137,7 +138,7 @@ def key_schedule_128_forward(state):
 	
 	_2 = state.Field(2)
 	
-	yield state[:]
+	yield deepcopy(state)
 	
 	for n in range(10):
 		l = [_x for _x in state[12:16]]
@@ -147,12 +148,12 @@ def key_schedule_128_forward(state):
 		l.append(l0)
 		l[0] += _2 ** n
 		
-		state[0:4] += state.__class__(state.Array(l, 4, [state.Field]))
+		state[0:4] += state.__class__(state.Array(l, [4, state.Field.field_bytesize], [state.Field]))
 		state[4:8] += state[0:4]
 		state[8:12] += state[4:8]
 		state[12:16] += state[8:12]
 		
-		yield state[:]
+		yield deepcopy(state)
 
 
 def key_schedule_128_backward(state):
@@ -160,7 +161,7 @@ def key_schedule_128_backward(state):
 	
 	_2 = state.Field(2)
 	
-	yield state[:]
+	yield deepcopy(state)
 	
 	for n in reversed(range(10)):
 		state[12:16] -= state[8:12]
@@ -174,15 +175,15 @@ def key_schedule_128_backward(state):
 		l.append(l0)
 		l[0] += _2 ** n
 		
-		state[0:4] -= state.__class__(state.Array(l, 4, [state.Field]))
+		state[0:4] -= state.__class__(state.Array(l, [4, state.Field.field_bytesize], [state.Field]))
 		
-		yield state[:]
+		yield deepcopy(state)
 
 
 def aes_128_encrypt(forward_key, data):
 	"AES-128 encryption. Modifies the key in place, so in the end it will be equal to the last round key."
 	
-	data = data[:]
+	data = deepcopy(data)
 	for n, round_key in enumerate(key_schedule_128_forward(forward_key)):
 		data += round_key
 		if n != 10:
@@ -195,7 +196,7 @@ def aes_128_encrypt(forward_key, data):
 def aes_128_decrypt(backward_key, data):
 	"AES-128 decryption. Expects key from last encryption round. Modifies the key in place, so in the end it will be equal to the original key."
 	
-	data = data[:]
+	data = deepcopy(data)
 	for n, round_key in enumerate(key_schedule_128_backward(backward_key)):
 		data -= round_key
 		if n == 0:
@@ -205,8 +206,10 @@ def aes_128_decrypt(backward_key, data):
 	return data
 
 
-if False and __name__ == '__main__':
+if __debug__ and __name__ == '__main__':
 	from random import randrange
+	from memory import Array
+	#Array = list
 	
 	_0 = Rijndael(0)
 	_1 = Rijndael(1)
@@ -221,7 +224,7 @@ if False and __name__ == '__main__':
 		assert s_box_forward(s_box_backward(x)) == x
 	
 	for m in range(100):
-		state = Vector.random(16, list, Rijndael, randrange)
+		state = Vector.random(16, Array, Rijndael, randrange)
 		
 		assert shift_rows_backward(shift_rows_forward(state)) == state
 		assert mix_columns_backward(mix_columns_forward(state)) == state
@@ -244,94 +247,5 @@ if False and __name__ == '__main__':
 	
 	assert out_vec == aes_128_encrypt(forward_key=key, data=in_vec)
 	assert in_vec == aes_128_decrypt(backward_key=key, data=out_vec)
-
-
-if __name__ == '__main__':
-	from tracing import *
-	
-	Rijndael = type(Rijndael.__name__ + '_symbolic', (Rijndael,), {})
-	Rijndael.exponent = SymbolicValue._ptr_list_uint('Rijndael.exponent', len(Rijndael.exponent))
-	Rijndael.logarithm = SymbolicValue._ptr_list_uint('Rijndael.logarithm', len(Rijndael.logarithm))
-	
-	key = Vector([symbolize(Rijndael(_x))[1] for _x in bytes.fromhex('00000000000000000000000000000000')])
-	in_vec = Vector([symbolize(Rijndael(SymbolicValue._arg_uint(_n)))[1] for _n in range(16)])
-	
-	shift_rows_forward_trace = optimize_expr(symbolize(trace(transform(shift_rows_forward, 'shift_rows_forward'), [in_vec]))[1])
-	shift_rows_forward_trace._print_tree()
-	
-	#aes_128_encrypt_trace = optimize_expr(symbolize(trace(transform(aes_128_encrypt, 'aes_128_encrypt'), [key, in_vec]))[1])
-	#aes_128_encrypt_trace._print_tree()
-	
-	
-	#s_box_forward_trace = optimize_expr(symbolize(trace(transform(s_box_forward, 's_box_forward'), [RijndaelO(SymbolicValue._arg_uint(0))]))[1])
-	
-	#aes_trace._print_tree()
-
-
-
-
-
-
-
-
-
-
-'''
-quit()
-
-
-class RijndaelPolynomial(Polynomial):
-	Field = Rijndael
-	
-	def __init__(self, *coefficients):
-		if len(coefficients) > self.Field.field_size:
-			short = coefficients[:self.Field.field_size]
-			for n, x in enumerate(coefficients[self.Field.field_size:]):
-				short[n % self.Field.field_size] += x
-			super().__init__(*short)
-		else:
-			super().__init__(*coefficients)
-
-
-	X = RijndaelPolynomial(_1, _0)
-	Q = RijndaelPolynomial(_0)
-	e = Rijndael(Rijndael.exponent[1])
-	for n, x in enumerate(Rijndael.domain()):
-		y = x**2 + _1
-		print(x, y)
-		
-		P = RijndaelPolynomial(_1)
-		for a in Rijndael.domain():
-			if a == x: continue
-			P *= X - RijndaelPolynomial(a)
-		P *= RijndaelPolynomial(y)
-		
-		Q += P
-	
-	print(Q)
-	
-	for n, x in enumerate(Rijndael.domain()):
-		y0 = Q(x)
-		y1 = x**2 + _1
-		#print(x, y0, y1)
-		assert y0 == y1
-	
-	Rijndael.__add__ = lambda x, y: Rijndael(SymbolicValue._fun_uint('Rijndael.__add__')(symbolize(x)[1], symbolize(y)[1]))
-	Rijndael.__sub__ = lambda x, y: Rijndael(SymbolicValue._fun_uint('Rijndael.__sub__')(symbolize(x)[1], symbolize(y)[1]))
-	Rijndael.__mul__ = lambda x, y: Rijndael(SymbolicValue._fun_uint('Rijndael.__mul__')(symbolize(x)[1], symbolize(y)[1]))
-	Rijndael.__truediv__ = lambda x, y: Rijndael(SymbolicValue._fun_uint('Rijndael.__truediv__')(symbolize(x)[1], symbolize(y)[1]))
-	Rijndael.__pow__ = lambda x, y: Rijndael(SymbolicValue._fun_uint('Rijndael.__pow__')(symbolize(x)[1], symbolize(y)[1]))
-	
-	shl_1_sym = trace(shl_1, [Rijndael(SymbolicValue._arg_uint(0))])
-	print(shl_1_sym)
-	quit()
-
-	
-	state = Vector(SymbolicArray([Rijndael(SymbolicValue._arg_uint(_i)) for _i in range(16)], [16], [Rijndael]))
-	state = trace(aes_encrypt_round, [state])
-	print(state)
-
-'''
-
 
 

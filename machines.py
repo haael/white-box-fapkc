@@ -272,6 +272,54 @@ class QuadraticCircuit:
 		return self.__class__(self.Table((((m, n, o), other @ self[m, n, o]) for (m, n, o) in product(range(self.output_size), range(self.input_size), range(self.input_size))), [self.output_size, self.input_size, self.input_size], [self.Field.field_power, self.Field.field_power, None], [self.Quadratic, self.Linear, self.Field], Array=self.Array))
 
 
+class Transducer:
+	def __init__(self, in_op, in_state_op, out_state_op):
+		self.in_op = in_op
+		self.in_state_op = in_state_op
+		self.out_state_op = out_state_op
+	
+	def __call__(self, stream, in_state=None, out_state=None):
+		if in_state is None:
+			in_state = deque()
+		
+		if out_state is None:
+			out_state = deque()
+		
+		for x in stream:
+			y = in_op(x) + in_state_op(in_state) + out_state_op(out_state)
+			yield y
+			in_state.insert(0, x)
+			in_state.pop()
+			out_state.insert(0, y)
+			out_state.pop()
+	
+	def __add__(self, other):
+		in_op = self.in_op + other.in_op
+		in_state_op = self.in_state_op + other.in_state_op
+		out_state_op = self.out_state_op + other.out_state_op
+		return self.__class__(in_op, in_state_op, out_op)
+	
+	def __sub__(self, other):
+		in_op = self.in_op - other.in_op
+		in_state_op = self.in_state_op - other.in_state_op
+		out_state_op = self.out_state_op - other.out_state_op
+		return self.__class__(in_op, in_state_op, out_op)
+	
+	def __matmul__(self, other):
+		if not self.in_state_op and not other.out_state_op:
+			in_op = self.in_op @ other.in_op
+			in_state_op = self.in_op @ other.in_state_op
+			out_state_op = self.out_state_op
+			return self.__class__(in_op, in_state_op, out_state_op)
+		else:
+			raise NotImplementedError
+		
+		#y = other.in_op(x) + other.in_state_op(xx)
+		#z = self.in_op(y) + self.in_state_op(yy) + other.out_state_op(zz)
+		#z = (self.in_op @ other.in_op)(x) + (self.in_op @ other.in_state_op)(xx) + (self.in_state_op @ other.in_op)(x) + (self.in_state_op @ other.in_state_op)(xx) + other.out_state_op(zz)
+		#z = (self.in_op @ other.in_op + (self.in_state_op @ other.in_op))(x) + (self.in_op @ other.in_state_op + self.in_state_op @ other.in_state_op)(xx) + other.out_state_op(zz)
+
+
 class Automaton:
 	@classmethod
 	def random_linear_linear(cls, output_size, input_size, state_size, Dictionary, Array, Vector, LinearCircuit, Linear, Field, randbelow):

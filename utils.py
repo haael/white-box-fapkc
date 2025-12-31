@@ -1,20 +1,49 @@
 #!/usr/bin/python3
 
 
-__all__ = 'subscript', 'superscript', 'cached', 'array_fallback', 'table_fallback'
+__all__ = 'subscript', 'superscript', 'cached', 'array_fallback', 'table_fallback', 'classproperty', 'FieldType', 'ArrayType', 'TableType', 'SpecialError', 'SpecialValueError', 'SpecialTypeError', 'SpecialIndexError', 'SpecialKeyError'
+
+
+from typing import TypeVar
+from collections import namedtuple
+
+
+FieldType = TypeVar('FieldType')
+ArrayType = namedtuple('ArrayType', ['sizes', 'types'])
+TableType = namedtuple('TableType', ['key_sizes', 'value_sizes', 'types'])
+
+
+class SpecialError(Exception):
+	pass
+
+
+class SpecialValueError(ValueError, SpecialError):
+	pass
+
+
+class SpecialTypeError(TypeError, SpecialError):
+	pass
+
+
+class SpecialIndexError(IndexError, SpecialError):
+	pass
+
+
+class SpecialKeyError(KeyError, SpecialError):
+	pass
 
 
 subscripts = str.maketrans("0123456789", "₀₁₂₃₄₅₆₇₈₉")
 
 def subscript(n):
-	if not n >= 0: raise ValueError
+	if not n >= 0: raise ValueError("Argument can not be negative.")
 	return str(n).translate(subscripts)
 
 
 superscripts = str.maketrans("0123456789", "⁰¹²³⁴⁵⁶⁷⁸⁹")
 
 def superscript(n):
-	if not n >= 0: raise ValueError
+	if not n >= 0: raise ValueError("Argument can not be negative.")
 	return str(n).translate(superscripts)
 
 
@@ -57,35 +86,14 @@ def table_fallback(Table):
 	try:
 		return Table.Table
 	except AttributeError:
-		return lambda items, ksize, sizes, types, Array: Table(items)
+		return lambda items, sizes, types, Array: Table(items)
 
 
 def singleton(symbol):
 	return symbol()
 
 
-def sm_range(n):
-	return range(n)
-
-
-def set_sm_range(f):
-	global sm_range
-	sm_range = f
-	return f
-
-
-'''
-def sm_range(*args):
-	if len(args) == 1 and hasattr(args[0], 'sm_range'):
-		return args[0].sm_range()
-	else:
-		return range(*args)
-
-
-def sm_len(a):
-	if hasattr(a, 'sm_length'):
-		return a.sm_length()
-	else:
-		return len(a)
-'''
+class classproperty(property):
+	def __get__(self, owner_self, owner_cls):
+		return self.fget(owner_cls)
 

@@ -12,20 +12,59 @@ from math import sqrt, ceil
 from collections import defaultdict
 from fractions import Fraction
 from typing import Self, Iterable
+from inspect import getmro
 
 from utils import *
+
+
+def _compatible(first, second):
+	"Check if both objects belong to the same field and have the `__value` attr from the same class."
+	
+	if first is second:
+		return True
+	
+	try:
+		if first.Field != second.Field:
+			return False
+	except AttributeError:
+		return False
+	
+	for cls in getmro(first.__class__):
+		if '__eq__' in cls.__dict__:
+			first_class = cls
+			break
+	else:
+		return False
+	
+	for cls in getmro(second.__class__):
+		if '__eq__' in cls.__dict__:
+			second_class = cls
+			break
+	else:
+		return False
+	
+	for attr in {f'_{first_class.__name__}__value', f'_{second_class.__name__}__value'}: # at least one attr must be present in both objects
+		try:
+			getattr(first, attr) # cause AttributeError if missing
+			getattr(second, attr) # cause AttributeError if missing
+		except AttributeError:
+			continue
+		else:
+			break
+	else:
+		return False
+	
+	return True
 
 
 class Field:
 	"Finite field template class. Needs a class attribute `modulus` that supports modulo operation. If the modulus is a prime number, this gives modular fields. If it's an irreducible polynomial, this gives Galois fields."
 	
-	@classmethod
-	@property
+	@classproperty
 	def Field(cls):
 		return cls
 	
-	@classmethod
-	@property
+	@classproperty
 	@cached
 	def field_power(cls):
 		try:
@@ -33,8 +72,7 @@ class Field:
 		except AttributeError:
 			return 1
 	
-	@classmethod
-	@property
+	@classproperty
 	@cached
 	def field_base(cls):
 		try:
@@ -42,11 +80,15 @@ class Field:
 		except AttributeError:
 			return cls.modulus
 	
-	@classmethod
-	@property
+	@classproperty
 	@cached
 	def field_size(cls):
 		return cls.field_base ** cls.field_power
+	
+	@classproperty
+	@cached
+	def field_bytesize(cls):
+		return (cls.field_size.bit_length() - 1) // 8 + 1
 	
 	@classmethod
 	def domain(cls):
@@ -85,17 +127,23 @@ class Field:
 		self.__value = self.modulus.__class__(*values)
 		
 		if __debug__ and not 0 <= int(self) < self.field_size:
-			raise ValueError(f"Value out of bounds: 0 <= {int(self)} < {self.field_size} (class `{self.__class__.__name__}`).")
+			raise SpecialValueError(f"Value out of bounds: 0 <= {int(self)} < {self.field_size} (class `{self.__class__.__name__}`).")
 	
 	def __getnewargs__(self):
 		return (self.__value,)
 	
 	def serialize(self) -> Iterable[int]:
-		yield self.__value
+		if hasattr(self.__value, 'serialize'):
+			yield from self.__value.serialize()
+		else:
+			yield from self.__value.to_bytes(length=self.field_bytesize, byteorder='little', signed=False)
 	
 	@classmethod
 	def deserialize(cls, data):
-		return cls(next(data))
+		if hasattr(cls.modulus, 'deserialize'):
+			return cls(cls.modulus.deserialize(data))
+		else:
+			return cls(int.from_bytes(bytes(next(data) for _n in range(cls.field_bytesize)), byteorder='little', signed=False))
 	
 	def __str__(self) -> str:
 		try:
@@ -117,10 +165,8 @@ class Field:
 		return hash((self.__value, self.field_power, self.field_base))
 	
 	def __eq__(self, other) -> bool:
-		try:
-			return self.__value == other.__value
-		except AttributeError:
-			return NotImplemented
+		if not _compatible(self, other): return NotImplemented
+		return self.__value == other.__value
 	
 	def __pos__(self):
 		return self
@@ -129,26 +175,22 @@ class Field:
 		return self.__class__((-self.__value) % self.modulus)
 	
 	def __add__(self, other):
-		try:
-			return self.__class__((self.__value + other.__value) % self.modulus)
-		except AttributeError:
-			return NotImplemented
+		if not _compatible(self, other): return NotImplemented
+		return self.__class__((self.__value + other.__value) % self.modulus)
 	
 	def __sub__(self, other):
-		try:
-			return self.__class__((self.__value - other.__value) % self.modulus)
-		except AttributeError:
-			return NotImplemented
+		if not _compatible(self, other): return NotImplemented
+		return self.__class__((self.__value - other.__value) % self.modulus)
 	
 	def __mul__(self, other):
-		try:
-			return self.__class__((self.__value * other.__value) % self.modulus)
-		except AttributeError:
-			return NotImplemented
+		if not _compatible(self, other): return NotImplemented
+		return self.__class__((self.__value * other.__value) % self.modulus)
 	
 	__matmul__ = __mul__
 	
 	def __truediv__(self, other):
+		if not _compatible(self, other): return NotImplemented
+		
 		if not other:
 			raise ZeroDivisionError(f"Division by zero field element modulo {self.modulus}.")
 		
@@ -156,7 +198,7 @@ class Field:
 			return self
 		
 		one = self.one()
-		for r in self.domain():
+		for r in self.domain(): # brute force search
 			if r * other == self:
 				return r
 		else:
@@ -204,22 +246,19 @@ class Binary(Field):
 		return self
 	
 	def __add__(self, other):
-		try:
-			return self.__class__(self.__value ^ other.__value)
-		except AttributeError:
-			return NotImplemented
+		if not _compatible(self, other): return NotImplemented
+		return self.__class__(self.__value ^ other.__value)
 	
 	__sub__ = __add__
 	
 	def __mul__(self, other):
-		try:
-			return self.__class__(self.__value & other.__value)
-		except AttributeError:
-			return NotImplemented
+		if not _compatible(self, other): return NotImplemented
+		return self.__class__(self.__value & other.__value)
 	
 	__matmul__ = __mul__
 	
 	def __truediv__(self, other):
+		if not _compatible(self, other): return NotImplemented
 		if not other:
 			raise ZeroDivisionError(f"Division by zero field element modulo {self.modulus}.")
 		else:
@@ -238,8 +277,7 @@ class FastGalois(Field):
 	"Implementation of fast multiplication and division in finite field. Logarithm and exponent tables must be calculated externally."
 	
 	def __mul__(self, other):
-		if not hasattr(other, '_Field__value'):
-			return NotImplemented
+		if not _compatible(self, other): return NotImplemented
 		
 		if not self:
 			return self
@@ -255,10 +293,13 @@ class FastGalois(Field):
 			return "#" + ".".join(str(int(self._Field__value[n])) for n in range(self.field_power)) + subscript(self.field_base)
 	
 	def __truediv__(self, other):
+		if not _compatible(self, other): return NotImplemented
+		
 		if not other:
 			raise ZeroDivisionError
 		if not self:
 			return self
+		
 		return self.exponent[(self.logarithm[self] - self.logarithm[other]) % (self.field_size - 1)]
 	
 	def __pow__(self, n:int):
@@ -269,6 +310,7 @@ class FastGalois(Field):
 				raise ArithmeticError("Field zero to zero negative power.")
 			else:
 				return self
+		
 		return self.exponent[(self.logarithm[self] * n) % (self.field_size - 1)] # assumes Python semantics of modulus od negative values
 
 
@@ -276,23 +318,26 @@ class BinaryGalois: # does not inherit from `Field` class, every method must be 
 	"Fast binary Galois field. Needs `field_power` attribute determining its size and irreducible polynomial `modulus` of the right degree."
 	
 	@classmethod
-	def sum(cls, values):
+	def sum(cls, values:Iterable[Self]):
 		r = 0
 		for v in values:
 			r ^= v.__value
+		
 		return cls(r)
 	
-	@classmethod
-	@property
+	@classproperty
 	def Field(cls):
 		return cls
 	
 	field_base = 2
 	
-	@classmethod
-	@property
+	@classproperty
 	def field_size(cls):
 		return 1 << cls.field_power
+	
+	@classproperty
+	def field_bytesize(cls):
+		return (cls.field_power - 1) // 8 + 1
 	
 	@classmethod
 	def domain(cls):
@@ -328,11 +373,11 @@ class BinaryGalois: # does not inherit from `Field` class, every method must be 
 		return (self.__value,)
 	
 	def serialize(self) -> Iterable[int]:
-		yield self.__value
+		yield from self.__value.to_bytes(length=self.field_bytesize, byteorder='little', signed=False)
 	
 	@classmethod
 	def deserialize(cls, data):
-		return cls(next(data))
+		return cls(int.from_bytes(bytes(next(data) for _n in range(cls.field_bytesize)), byteorder='little', signed=False))
 	
 	def __str__(self) -> str:
 		if not isinstance(self.__value, int):
@@ -356,10 +401,8 @@ class BinaryGalois: # does not inherit from `Field` class, every method must be 
 		return hash((self.__value, self.field_power, self.field_base))
 	
 	def __eq__(self, other) -> bool:
-		try:
-			return self.__value == other.__value
-		except AttributeError:
-			return NotImplemented
+		if not _compatible(self, other): return NotImplemented
+		return self.__value == other.__value
 	
 	def __pos__(self):
 		return self
@@ -368,22 +411,15 @@ class BinaryGalois: # does not inherit from `Field` class, every method must be 
 		return self
 	
 	def __add__(self, other):
-		try:
-			return self.__class__(self.__value ^ other.__value)
-		except AttributeError:
-			return NotImplemented
+		if not _compatible(self, other): return NotImplemented
+		return self.__class__(self.__value ^ other.__value)
 	
 	__sub__ = __add__
 	
 	def __mul__(self, other):
-		try:
-			other.__value
-			if self.Field != other.Field:
-				return NotImplemented
-		except AttributeError:
-			return NotImplemented
+		if not _compatible(self, other): return NotImplemented
 		
-		if not self.__value * other.__value:
+		if not self.__value or not other.__value:
 			return self.zero()
 		
 		return self.__class__(self.exponent[(self.logarithm[self.__value] + self.logarithm[other.__value]) % (self.field_size - 1)])
@@ -391,12 +427,7 @@ class BinaryGalois: # does not inherit from `Field` class, every method must be 
 	__matmul__ = __mul__
 	
 	def __truediv__(self, other):
-		try:
-			other.__value
-			if self.Field != other.Field:
-				return NotImplemented
-		except AttributeError:
-			return NotImplemented
+		if not _compatible(self, other): return NotImplemented
 		
 		if not other:
 			raise ZeroDivisionError("Division by zero in field.")
@@ -512,6 +543,10 @@ class Polynomial:
 	def serialize(self):
 		yield int(self)
 	
+	@classmethod
+	def deserialize(cls, data):
+		return cls(next(data))
+	
 	def __getitem__(self, n):
 		values = self.__values
 		if n in values:
@@ -522,7 +557,7 @@ class Polynomial:
 	def __iter__(self):
 		try:
 			od = self.degree
-		except ValueError:
+		except SpecialValueError:
 			yield self[0]
 		else:
 			for n in range(od + 1):
@@ -540,7 +575,7 @@ class Polynomial:
 		if self.__values:
 			return max(self.__values.keys())
 		else:
-			raise ValueError("Zero polynomial does not have a degree.")
+			raise SpecialValueError("Zero polynomial does not have a degree.")
 	
 	@cached
 	def __str__(self):
@@ -566,7 +601,7 @@ class Polynomial:
 	def __hash__(self):
 		try:
 			od = self.degree + 1
-		except ValueError:
+		except SpecialValueError:
 			od = 0
 		return hash((self.__class__.__name__, tuple(self.keys()), tuple(self.items())))
 	
@@ -669,7 +704,7 @@ def gcd(p, q):
 def Galois(name, prime, coefficients):
 	"Construct Galois field with the specified `prime` base and polynomial specified in `coefficients` (starting from the highest power)."
 	
-	for n in range(2, ceil(sqrt(int(prime)))):
+	for n in range(2, ceil(sqrt(prime))):
 		if prime % n == 0:
 			raise ValueError(f"Provided number {prime} is not a prime.")
 	
@@ -829,7 +864,7 @@ if __debug__:
 		
 		try:
 			zero.degree
-		except ValueError:
+		except SpecialValueError:
 			pass
 		else:
 			assert False, "Zero polynomial should not have a degree."

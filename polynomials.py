@@ -13,7 +13,6 @@ from operator import __mul__
 from utils import superscript, cached, array_fallback, table_fallback
 
 
-
 def karatsuba(z, a, b):
 	"Karatsuba's „divide and conquer” polynomial multiplication algorithm."
 	
@@ -449,8 +448,8 @@ class NonUniform:
 if __debug__ and __name__ == '__main__':
 	from fields import Galois
 	from random import randrange
-	from pycallgraph2 import PyCallGraph
-	from pycallgraph2.output.graphviz import GraphvizOutput
+	#from pycallgraph2 import PyCallGraph
+	#from pycallgraph2.output.graphviz import GraphvizOutput
 	
 	'''
 	Rijndael = Galois('Rijndael', 2, [1, 0, 0, 0, 1, 1, 0, 1, 1])

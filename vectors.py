@@ -35,7 +35,7 @@ class Vector:
 	@classmethod
 	def random(cls, length, Array, Field, randbelow):
 		nArray = array_fallback(Array)
-		return cls(nArray((Field.random(randbelow) for _n in range(length)), [None], [Field]))
+		return cls(nArray((Field.random(randbelow) for _n in range(length)), [length, Field.field_bytesize], [Field]))
 	
 	@classmethod
 	def random_nonzero(cls, length, Array, Field, randbelow):
@@ -54,12 +54,12 @@ class Vector:
 			
 			values.append(f)
 		
-		return cls(nArray(values, [None], [Field]))
+		return cls(nArray(values, [length, Field.field_bytesize], [Field]))
 	
 	@classmethod
 	def zero(cls, length, Array, Field):
 		nArray = array_fallback(Array)
-		return cls(nArray((Field.zero() for _n in range(length)), [None], [Field]))
+		return cls(nArray((Field.zero() for _n in range(length)), [length, Field.field_bytesize], [Field]))
 	
 	def __init__(self, values):
 		try:
@@ -85,7 +85,7 @@ class Vector:
 	@classmethod
 	def deserialize(cls, length, Array, Field, data):
 		nArray = array_fallback(Array)
-		return cls(nArray((Field.deserialize(data) for _n in range(length)), [None], [Field]))
+		return cls(nArray((Field.deserialize(data) for _n in range(length)), [length, Field.field_bytesize], [Field]))
 	
 	def __repr__(self) -> str:
 		return f'{self.__class__.__name__}({{{ ", ".join(str(_n) + ": " + str(self.__values[_n]) for _n in self.keys()) }}})'
@@ -107,7 +107,7 @@ class Vector:
 	
 	def __getitem__(self, index:int) -> Scalar:
 		if index is Ellipsis:
-			return self.__class__(self.Array(iter(self), [None], [self.Field]))
+			return self.__class__(self.__values[...])
 		elif hasattr(index, 'start') and hasattr(index, 'stop') and hasattr(index, 'step'):
 			return self.__class__(self.__values[index])
 		else:
@@ -129,16 +129,16 @@ class Vector:
 			return NotImplemented
 	
 	def __or__(self, other):
-		return self.__class__(self.Array(chain(self, other), [None], [self.Field]))
+		return self.__class__(self.Array(chain(self, other), [self.vector_length, self.Field.field_bytesize], [self.Field]))
 	
 	def __ror__(self, other):
-		return self.__class__(self.Array(chain(other, self), [None], [self.Field]))
+		return self.__class__(self.Array(chain(other, self), [self.vector_length, self.Field.field_bytesize], [self.Field]))
 	
 	def __add__(self, other):
 		if hasattr(other, 'vector_length'):
 			if self.vector_length != other.vector_length:
 				raise ValueError(f"Vector lengths don't match ({self.vector_length} vs. {other.vector_length}).")
-			return self.__class__(self.Array((self[_n] + other[_n] for _n in self.keys()), [None], [self.Field]))
+			return self.__class__(self.Array((self[_n] + other[_n] for _n in self.keys()), [self.vector_length, self.Field.field_bytesize], [self.Field]))
 		else:
 			return NotImplemented
 	
@@ -146,7 +146,7 @@ class Vector:
 		if hasattr(other, 'vector_length'):
 			if self.vector_length != other.vector_length:
 				raise ValueError(f"Vector lengths don't match ({self.vector_length} vs. {other.vector_length}).")
-			return self.__class__(self.Array((self[_n] - other[_n] for _n in self.keys()), [None], [self.Field]))
+			return self.__class__(self.Array((self[_n] - other[_n] for _n in self.keys()), [self.vector_length, self.Field.field_bytesize], [self.Field]))
 		else:
 			return NotImplemented
 	
@@ -154,17 +154,27 @@ class Vector:
 		return self
 	
 	def __neg__(self):
-		return self.__class__(self.Array((-self[_n] for _n in self.keys()), [None], [self.Field]))
+		return self.__class__(self.Array((-self[_n] for _n in self.keys()), [self.vector_length, self.Field.field_bytesize], [self.Field]))
 	
 	def __mul__(self, other):
 		try:
-			return self.__class__(self.Array((self[_n] * other for _n in self.keys()), [None], [self.Field]))
+			if hasattr(other, 'vector_length'):
+				if self.vector_length != other.vector_length:
+					raise ValueError("Vector lengths don't match.")
+				return self.__class__(self.Array((self[_n] * other[_n] for _n in self.keys()), [self.vector_length, self.Field.field_bytesize], [self.Field]))
+			else:
+				return self.__class__(self.Array((self[_n] * other for _n in self.keys()), [self.vector_length, self.Field.field_bytesize], [self.Field]))
 		except TypeError:
 			return NotImplemented
 	
 	def __rmul__(self, other):
 		try:
-			return self.__class__(self.Array((other * self[_n] for _n in self.keys()), [None], [self.Field]))
+			if hasattr(other, 'vector_length'):
+				if self.vector_length != other.vector_length:
+					raise ValueError("Vector lengths don't match.")
+				return self.__class__(self.Array((other[_n] * self[_n] for _n in self.keys()), [self.vector_length, self.Field.field_bytesize], [self.Field]))
+			else:
+				return self.__class__(self.Array((other * self[_n] for _n in self.keys()), [self.vector_length, self.Field.field_bytesize], [self.Field]))
 		except TypeError:
 			return NotImplemented
 	
@@ -176,7 +186,7 @@ class Vector:
 		elif hasattr(other, 'field_power') and hasattr(other, 'field_base'):
 			if not (self.Field.field_power == other.field_power and self.Field.field_base == other.field_base):
 				raise ValueError("Multiplying vector by a scalar from a different field.")
-			return self.__class__(self.Array((self[_n] @ other for _n in self.keys()), [None], [self.Field]))
+			return self.__class__(self.Array((self[_n] @ other for _n in self.keys()), [self.vector_length, self.Field.field_bytesize], [self.Field]))
 		else:
 			return NotImplemented
 	
@@ -188,7 +198,7 @@ class Vector:
 		elif hasattr(other, 'field_power') and hasattr(other, 'field_base'):
 			if not (self.Field.field_power == other.field_power and self.Field.field_base == other.field_base):
 				raise ValueError("Multiplying vector by a scalar from a different field.")
-			return self.__class__(self.Array((other @ self[_n] for _n in self.keys()), [None], [self.Field]))
+			return self.__class__(self.Array((other @ self[_n] for _n in self.keys()), [self.vector_length, self.Field.field_bytesize], [self.Field]))
 		else:
 			return NotImplemented
 
@@ -220,19 +230,19 @@ class Matrix:
 	@classmethod
 	def random(cls, height, width, Table, Array, Field, randbelow):
 		nTable = table_fallback(Table)
-		return cls(nTable((((_m, _n), Field.random(randbelow)) for (_m, _n) in product(range(height), range(width))), [height, width], [None], [Field], Array=Array))
+		return cls(nTable((((_m, _n), Field.random(randbelow)) for (_m, _n) in product(range(height), range(width))), [(height, width), Field.field_bytesize], [Field], Array=Array))
 	
 	@classmethod
 	def zero(cls, height, width, Table, Array, Field):
 		nTable = table_fallback(Table)
-		return cls(nTable((((_m, _n), Field.zero()) for (_m, _n) in product(range(height), range(width))), [height, width], [None], [Field], Array=Array))
+		return cls(nTable((((_m, _n), Field.zero()) for (_m, _n) in product(range(height), range(width))), [(height, width), Field.field_bytesize], [Field], Array=Array))
 	
 	@classmethod
 	def one(cls, height, width, Table, Array, Field):
 		if height != width:
 			raise ValueError("Unit matrix height must be equal to width.")
 		nTable = table_fallback(Table)
-		return cls(nTable((((_m, _n), (Field.one() if _m == _n else Field.zero())) for (_m, _n) in product(range(height), range(width))), [height, width], [None], [Field], Array=Array))
+		return cls(nTable((((_m, _n), (Field.one() if _m == _n else Field.zero())) for (_m, _n) in product(range(height), range(width))), [(height, width), Field.field_bytesize], [Field], Array=Array))
 	
 	ident = one
 	
@@ -257,6 +267,21 @@ class Matrix:
 		self.__values = values
 		self.matrix_height = height
 		self.matrix_width = width
+	
+	def __getnewargs__(self):
+		return self.__values,
+	
+	def serialize(self) -> Iterable[int]:
+		try:
+			return self.__values.serialize()
+		except AttributeError:
+			return self.__values
+	
+	@classmethod
+	def deserialize(cls, height, width, Table, Array, Field, data):
+		nTable = table_fallback(Table)
+		nArray = array_fallback(Array)
+		return cls(nTable((((_m, _n), Field.deserialize(data)) for (_m, _n) in product(range(height), range(width))), [(height, width), Field.field_bytesize], [Field], Array=Array))
 	
 	def __bool__(self) -> bool:
 		return any(self.values())
@@ -311,7 +336,7 @@ class Matrix:
 		if hasattr(other, 'matrix_width') and hasattr(other, 'matrix_height'):
 			if not (self.matrix_width == other.matrix_width and self.matrix_height == other.matrix_height):
 				raise ValueError("Matrix dimensions don't match.")
-			return self.__class__(self.Table((((_m, _n), self[_m, _n] + other[_m, _n]) for (_m, _n) in self.keys()), [self.matrix_height, self.matrix_width], [None], [self.Field], Array=self.Array))
+			return self.__class__(self.Table((((_m, _n), self[_m, _n] + other[_m, _n]) for (_m, _n) in self.keys()), [(self.matrix_height, self.matrix_width), self.Field.field_bytesize], [self.Field], Array=self.Array))
 		else:
 			return NotImplemented
 	
@@ -319,32 +344,32 @@ class Matrix:
 		if hasattr(other, 'matrix_width') and hasattr(other, 'matrix_height'):
 			if not (self.matrix_width == other.matrix_width and self.matrix_height == other.matrix_height):
 				raise ValueError("Matrix dimensions don't match.")
-			return self.__class__(self.Table((((_m, _n), self[_m, _n] - other[_m, _n]) for (_m, _n) in self.keys()), [self.matrix_height, self.matrix_width], [None], [self.Field], Array=self.Array))
+			return self.__class__(self.Table((((_m, _n), self[_m, _n] - other[_m, _n]) for (_m, _n) in self.keys()), [(self.matrix_height, self.matrix_width), self.Field.field_bytesize], [self.Field], Array=self.Array))
 		else:
 			return NotImplemented
 	
 	def __neg__(self):
-		return self.__class__(self.Table((((_m, _n), -self[_m, _n]) for (_m, _n) in self.keys()), [self.matrix_height, self.matrix_width], [None], [self.Field], Array=self.Array))
+		return self.__class__(self.Table((((_m, _n), -self[_m, _n]) for (_m, _n) in self.keys()), [(self.matrix_height, self.matrix_width), self.Field.field_bytesize], [self.Field], Array=self.Array))
 	
 	def __mul__(self, other):
-		return self.__class__(self.Table((((_m, _n), self[_m, _n] * other) for (_m, _n) in self.keys()), [self.matrix_height, self.matrix_width], [None], [self.Field], Array=self.Array))
+		return self.__class__(self.Table((((_m, _n), self[_m, _n] * other) for (_m, _n) in self.keys()), [(self.matrix_height, self.matrix_width), self.Field.field_bytesize], [self.Field], Array=self.Array))
 	
 	def __rmul__(self, other):
-		return self.__class__(self.Table((((_m, _n), other * self[_m, _n]) for (_m, _n) in self.keys()), [self.matrix_height, self.matrix_width], [None], [self.Field], Array=self.Array))
+		return self.__class__(self.Table((((_m, _n), other * self[_m, _n]) for (_m, _n) in self.keys()), [(self.matrix_height, self.matrix_width), self.Field.field_bytesize], [self.Field], Array=self.Array))
 	
 	def __matmul__(self, other):
 		if hasattr(other, 'field_power') and hasattr(other, 'field_base'):
 			if not (self.Field.field_power == other.field_power and self.Field.field_base == other.field_base):
 				raise ValueError("Multiplying matrix by a scalar from a different field.")
-			return self.__class__(self.Table((((_m, _n), self[_m, _n] @ other) for (_m, _n) in self.keys()), [self.matrix_height, self.matrix_width], [None], [self.Field], Array=self.Array))
+			return self.__class__(self.Table((((_m, _n), self[_m, _n] @ other) for (_m, _n) in self.keys()), [(self.matrix_height, self.matrix_width), self.Field.field_bytesize], [self.Field], Array=self.Array))
 		elif hasattr(other, 'vector_length'):
 			if self.matrix_width != other.vector_length:
 				raise ValueError("Matrix width does not equal vector length.")
-			return other.__class__(other.Array((self.Field.sum(self[_m, _n] @ other[_n] for _n in range(self.matrix_width)) for _m in range(self.matrix_height)), [None], [self.Field]))
+			return other.__class__(other.Array((self.Field.sum(self[_m, _n] @ other[_n] for _n in range(self.matrix_width)) for _m in range(self.matrix_height)), [self.matrix_height, self.Field.field_bytesize], [self.Field]))
 		elif hasattr(other, 'matrix_width') and hasattr(other, 'matrix_height'):
 			if self.matrix_width != other.matrix_height:
 				raise ValueError("Left matrix height does not equal right matrix width.")
-			return self.__class__(self.Table((((_m, _n), self.Field.sum(self[_m, _k] @ other[_k, _n] for _k in range(self.matrix_width))) for (_m, _n) in product(range(self.matrix_height), range(other.matrix_width))), [self.matrix_height, other.matrix_width], [None], [self.Field], Array=self.Array))
+			return self.__class__(self.Table((((_m, _n), self.Field.sum(self[_m, _k] @ other[_k, _n] for _k in range(self.matrix_width))) for (_m, _n) in product(range(self.matrix_height), range(other.matrix_width))), [(self.matrix_height, other.matrix_width), self.Field.field_bytesize], [self.Field], Array=self.Array))
 		else:
 			return NotImplemented
 	
@@ -354,20 +379,20 @@ class Matrix:
 		if hasattr(other, 'field_power') and hasattr(other, 'field_base'):
 			if not (self.Field.field_power == other.field_power and self.Field.field_base == other.field_base):
 				raise ValueError("Multiplying matrix by a scalar from a different field.")
-			return self.__class__(self.Table((((_m, _n), other @ self[_m, _n]) for (_m, _n) in self.keys()), [self.matrix_height, self.matrix_width], [None], [self.Field], Array=self.Array))
+			return self.__class__(self.Table((((_m, _n), other @ self[_m, _n]) for (_m, _n) in self.keys()), [(self.matrix_height, self.matrix_width), self.Field.field_bytesize], [self.Field], Array=self.Array))
 		elif hasattr(other, 'vector_length'):
 			if self.matrix_height != other.vector_length:
 				raise ValueError("Matrix height does not equal vector length.")
-			return other.__class__(other.Array((self.Field.sum(other[_m] @ self[_m, _n] for _m in range(self.matrix_height)) for _n in range(self.matrix_width)), [None], [self.Field]))
+			return other.__class__(other.Array((self.Field.sum(other[_m] @ self[_m, _n] for _m in range(self.matrix_height)) for _n in range(self.matrix_width)), [self.matrix_width, self.Field.field_bytesize], [self.Field]))
 		elif hasattr(other, 'matrix_width') and hasattr(other, 'matrix_height'):
 			if self.matrix_height != other.matrix_width:
 				raise ValueError("Left matrix height does not equal right matrix width.")
-			return self.__class__(self.Table((((_m, _n), self.Field.sum(other[_m, _k] @ self[_k, _n] for _k in range(other.matrix_width))) for (_m, _n) in product(range(other.matrix_height), range(self.matrix_width))), [other.matrix_height, self.matrix_width], [None], [self.Field], Array=self.Array))
+			return self.__class__(self.Table((((_m, _n), self.Field.sum(other[_m, _k] @ self[_k, _n] for _k in range(other.matrix_width))) for (_m, _n) in product(range(other.matrix_height), range(self.matrix_width))), [(other.matrix_height, self.matrix_width), self.Field.field_bytesize], [self.Field], Array=self.Array))
 		else:
 			return NotImplemented
 	
 	def transpose(self):
-		return self.__class__(self.Table((((_n, _m), self[_m, _n]) for (_m, _n) in self.keys()), [self.matrix_width, self.matrix_height], [None], [self.Field], Array=self.Array))
+		return self.__class__(self.Table((((_n, _m), self[_m, _n]) for (_m, _n) in self.keys()), [(self.matrix_width, self.matrix_height), self.Field.field_bytesize], [self.Field], Array=self.Array))
 	
 	def inverse(self):
 		if self.matrix_width != self.matrix_height:
@@ -377,10 +402,10 @@ class Matrix:
 		
 		while True:
 			try:
-				L_less_1 = self.__class__(self.Table((((i, j), self.zero_element() if i == j else l(i, j)) for (i, j) in self.keys()), [self.matrix_height, self.matrix_width], [None], [self.Field], Array=self.Array))
-				D_inv = self.__class__(self.Table((((i, j), u(i, j)**-1 if i == j else self.zero_element()) for (i, j) in self.keys()), [self.matrix_height, self.matrix_width], [None], [self.Field], Array=self.Array))
-				U_less_1 = self.__class__(self.Table((((i, j), self.zero_element() if i == j else u(i, j) @ u(i, i)**-1) for (i, j) in self.keys()), [self.matrix_height, self.matrix_width], [None], [self.Field], Array=self.Array))
-				P_inv = self.__class__(self.Table((((i, j), self.one_element() if perm[i] == j else self.zero_element()) for (i, j) in self.keys()), [self.matrix_height, self.matrix_width], [None], [self.Field], Array=self.Array))
+				L_less_1 = self.__class__(self.Table((((i, j), self.zero_element() if i == j else l(i, j)) for (i, j) in self.keys()), [(self.matrix_height, self.matrix_width), self.Field.field_bytesize], [self.Field], Array=self.Array))
+				D_inv = self.__class__(self.Table((((i, j), u(i, j)**-1 if i == j else self.zero_element()) for (i, j) in self.keys()), [(self.matrix_height, self.matrix_width), self.Field.field_bytesize], [self.Field], Array=self.Array))
+				U_less_1 = self.__class__(self.Table((((i, j), self.zero_element() if i == j else u(i, j) @ u(i, i)**-1) for (i, j) in self.keys()), [(self.matrix_height, self.matrix_width), self.Field.field_bytesize], [self.Field], Array=self.Array))
+				P_inv = self.__class__(self.Table((((i, j), self.one_element() if perm[i] == j else self.zero_element()) for (i, j) in self.keys()), [(self.matrix_height, self.matrix_width), self.Field.field_bytesize], [self.Field], Array=self.Array))
 				break
 			
 			except self.__PermutationNeeded as pn:
@@ -536,10 +561,10 @@ class Matrix:
 		l, u, perm = self.__ldup()
 		while True:
 			try:
-				L = self.__class__(self.Table((((i, j), self.one_element() if i == j else l(i, j)) for (i, j) in self.keys()), [size, size], [None], [self.Field], Array=self.Array))
-				D = self.__class__(self.Table((((i, j), u(i, j) if i == j else self.zero_element()) for (i, j) in self.keys()), [size, size], [None], [self.Field], Array=self.Array))
-				U = self.__class__(self.Table((((i, j), self.one_element() if i == j else u(i, j) @ u(i, i)**-1 if u(i, j) else self.zero_element()) for (i, j) in self.keys()), [size, size], [None], [self.Field], Array=self.Array))
-				P = self.__class__(self.Table((((i, j), self.one_element() if perm[i] == j else self.zero_element()) for (i, j) in self.keys()), [size, size], [None], [self.Field], Array=self.Array))
+				L = self.__class__(self.Table((((i, j), self.one_element() if i == j else l(i, j)) for (i, j) in self.keys()), [(size, size), self.Field.field_bytesize], [self.Field], Array=self.Array))
+				D = self.__class__(self.Table((((i, j), u(i, j) if i == j else self.zero_element()) for (i, j) in self.keys()), [(size, size), self.Field.field_bytesize], [self.Field], Array=self.Array))
+				U = self.__class__(self.Table((((i, j), self.one_element() if i == j else u(i, j) @ u(i, i)**-1 if u(i, j) else self.zero_element()) for (i, j) in self.keys()), [(size, size), self.Field.field_bytesize], [self.Field], Array=self.Array))
+				P = self.__class__(self.Table((((i, j), self.one_element() if perm[i] == j else self.zero_element()) for (i, j) in self.keys()), [(size, size), self.Field.field_bytesize], [self.Field], Array=self.Array))
 				return L, D, U, P
 			
 			except self.__PermutationNeeded as pn:
