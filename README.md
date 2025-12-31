@@ -2,6 +2,8 @@
 
 White-Box Cryptography based on FAPKC algorithm.
 
+<img src="logo.png" height="600">
+
 If you are interested in contributing, especially cryptoanalysis, please contact me via <haael@interia.pl>.
 
 
