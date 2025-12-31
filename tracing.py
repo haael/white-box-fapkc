@@ -509,7 +509,7 @@ class SymbolicInt(SymbolicExpression):
 			else:
 				sop = ts(self.operator)
 			ops.append(sop)
-
+		
 		if parent_op is not None:		
 			priority = {
 				self.Operator.ADD: 1,

@@ -42,7 +42,8 @@ class FAPKC:
 		
 		return encrypt, decrypt
 	
-	
+	def operation_transducers(self, func):
+		...
 	
 	
 	def matrix_identity(self):
